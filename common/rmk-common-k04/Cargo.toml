@@ -148,6 +148,10 @@ path = "src/lib.rs"
 doctest = false
 
 [[test]]
+name = "battery_cache_test"
+path = "tests/battery_cache_test.rs"
+
+[[test]]
 name = "keyboard_combo_test"
 path = "tests/keyboard_combo_test.rs"
 

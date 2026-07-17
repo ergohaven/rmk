@@ -947,6 +947,11 @@ async fn run_ble_keyboard<
     #[cfg(feature = "host")] rmk_config: &'d mut RmkConfig<'static>,
     #[cfg(feature = "storage")] storage: &mut Storage<F, ROW, COL, NUM_LAYER, NUM_ENCODER>,
 ) {
+    // Seed the readable GATT value before processing host requests. Otherwise
+    // Windows can read the characteristic's default 0% before the delayed
+    // battery notification publishes the central half's measured level.
+    seed_battery_level(server, crate::input_device::battery::current_local_battery_percent());
+
     let ble_hid_server = BleHidServer::new(server, conn);
     #[cfg(feature = "host")]
     let ble_host_server = BleHostServer::new(server, conn);
@@ -993,6 +998,31 @@ async fn run_ble_keyboard<
         ble_hid_server,
     )
     .await;
+}
+
+fn seed_battery_level(server: &Server<'_>, level: Option<u8>) {
+    if let Some(level) = level {
+        server.set(&server.battery_service.level, &level).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Server, seed_battery_level};
+
+    #[test]
+    fn cached_battery_level_is_seeded_into_gatt_server() {
+        let server = Server::new_default("test").unwrap();
+
+        seed_battery_level(&server, Some(87));
+        assert_eq!(server.get(&server.battery_service.level).unwrap(), 87);
+
+        seed_battery_level(&server, None);
+        assert_eq!(server.get(&server.battery_service.level).unwrap(), 87);
+
+        seed_battery_level(&server, Some(0));
+        assert_eq!(server.get(&server.battery_service.level).unwrap(), 0);
+    }
 }
 
 // Update the PHY to 2M

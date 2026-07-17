@@ -29,6 +29,11 @@ pub fn set_remote_battery_percent(level: u8) {
     REMOTE_BATTERY_PERCENT.store(level.min(100), Ordering::Release);
 }
 
+pub fn current_local_battery_percent() -> Option<u8> {
+    let level = LOCAL_BATTERY_PERCENT.load(Ordering::Acquire);
+    (level != BATTERY_PERCENT_UNKNOWN).then_some(level)
+}
+
 pub fn battery_halves_percent() -> (u8, u8) {
     (
         LOCAL_BATTERY_PERCENT.load(Ordering::Acquire),
