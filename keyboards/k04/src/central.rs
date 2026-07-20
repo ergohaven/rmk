@@ -16,6 +16,27 @@ mod keyboard_central {
         TWISPI1 => ::embassy_nrf::twim::InterruptHandler<::embassy_nrf::peripherals::TWISPI1>;
     );
 
+    // Hardware diagnostic: keep the production K:04 matrix, storage, Vial,
+    // USB descriptor and linker layout, but do not initialize or run the BLE
+    // stack. This isolates the common BLE central backend from the base USB
+    // runtime without changing production firmware.
+    #[Overwritten(ChipInit)]
+    fn usb_only_chip_init() {
+        let mut config = ::embassy_nrf::config::Config::default();
+        config.dcdc.reg0_voltage = Some(::embassy_nrf::config::Reg0Voltage::_3V3);
+        config.dcdc.reg0 = true;
+        config.dcdc.reg1 = true;
+        let p = ::embassy_nrf::init(config);
+    }
+
+    #[Overwritten(Entry)]
+    async fn usb_only_entry() {
+        use ::rmk::core_traits::Runnable;
+
+        let mut usb_transport = ::rmk::usb::UsbTransport::new(driver, rmk_config.device_config);
+        ::rmk::run_all!(matrix, storage, keyboard, host_service, usb_transport)
+    }
+
     #[register_processor(event)]
     fn layer_led() -> crate::layer_led::LayerLed {
         let mut config = ::embassy_nrf::pwm::Config::default();
