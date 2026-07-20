@@ -58,7 +58,6 @@ embassy-executor = { version = "0.10", features = [
     "platform-cortex-m",
     "executor-thread",
 ] }
-embassy-usb = { version = "0.6", features = ["defmt"] }
 defmt = "1.0"
 defmt-rtt = "1.0"
 panic-probe = { version = "1.0", features = ["print-defmt"] }
