@@ -5,6 +5,7 @@ use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Duration, Timer, with_timeout};
+use rmk_types::battery::BatteryStatus;
 use rmk_types::ble::BleState;
 use rmk_types::connection::ConnectionType;
 use rmk_types::led_indicator::LedIndicator;
@@ -636,6 +637,12 @@ pub(crate) async fn set_conn_params<
 /// `writer_task`, `led_task`, and `host_task` are all infinite, so the outer
 /// `select(communication_task, inner)` cancels them as a side-effect of
 /// `communication_task` returning. `inner` itself never completes.
+fn seed_battery_level(server: &Server<'_>, status: BatteryStatus) {
+    if let BatteryStatus::Available { level: Some(level), .. } = status {
+        server.set(&server.battery_service.level, &level).unwrap();
+    }
+}
+
 async fn run_ble_keyboard<
     'a,
     'b,
@@ -647,6 +654,13 @@ async fn run_ble_keyboard<
     #[cfg(feature = "storage")] active_bond_info: Option<crate::ble::profile::ProfileInfo>,
     config: &BleBatteryConfig<'a>,
 ) {
+    // Seed the readable GATT value before processing host requests. Otherwise
+    // Windows can read the characteristic's default 0% before the delayed
+    // battery notification publishes the measured level.
+    if config.enabled {
+        seed_battery_level(server, crate::input_device::battery::current_battery_status());
+    }
+
     let mut ble_hid_server = BleHidServer::new(server, conn);
     let mut ble_led_reader = BleLedReader;
     let mut ble_battery_server = config.enabled.then(|| BleBatteryServer::new(server, conn));
@@ -769,8 +783,10 @@ mod tests {
     use embassy_futures::join::join;
     use embassy_futures::select::select;
     use embassy_time::Timer;
+    use rmk_types::battery::{BatteryStatus, ChargeState};
     use rmk_types::ble::{BleState, BleStatus};
 
+    use super::{Server, seed_battery_level};
     use crate::event::{Axis, AxisEvent, AxisValType, KeyboardEvent, PointingEvent, SubscribableEvent, publish_event};
     use crate::state::{current_ble_status, set_ble_profile, set_ble_state};
     use crate::test_support::test_block_on as block_on;
@@ -778,6 +794,32 @@ mod tests {
     fn ble_status_test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn cached_battery_level_is_seeded_into_gatt_server() {
+        let server = Server::new_default("test").unwrap();
+
+        seed_battery_level(
+            &server,
+            BatteryStatus::Available {
+                charge_state: ChargeState::Discharging,
+                level: Some(87),
+            },
+        );
+        assert_eq!(server.get(&server.battery_service.level).unwrap(), 87);
+
+        seed_battery_level(&server, BatteryStatus::Unavailable);
+        assert_eq!(server.get(&server.battery_service.level).unwrap(), 87);
+
+        seed_battery_level(
+            &server,
+            BatteryStatus::Available {
+                charge_state: ChargeState::Discharging,
+                level: Some(0),
+            },
+        );
+        assert_eq!(server.get(&server.battery_service.level).unwrap(), 0);
     }
 
     #[test]
