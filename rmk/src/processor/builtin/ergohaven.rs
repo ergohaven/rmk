@@ -46,6 +46,12 @@ pub struct ErgohavenUserKeys {
     clear_peer_key: Option<KeyboardEvent>,
 }
 
+impl Default for ErgohavenUserKeys {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ErgohavenUserKeys {
     pub const fn new() -> Self {
         Self {
