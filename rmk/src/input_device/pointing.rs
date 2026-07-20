@@ -644,7 +644,7 @@ impl QubePointingSettings {
             flags: 0,
             auto_layer: 4,
             auto_flags: 1,
-            module_select: (QUBE_MODULE_SELECT_TOUCH << 0) | (QUBE_MODULE_SELECT_BALL << 2),
+            module_select: QUBE_MODULE_SELECT_TOUCH | (QUBE_MODULE_SELECT_BALL << 2),
             axis_flags: 0,
             auto_layer_timeout_index: QUBE_DEFAULT_AUTO_LAYER_TIMEOUT_INDEX,
         }
