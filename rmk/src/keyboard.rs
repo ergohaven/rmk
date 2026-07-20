@@ -1513,10 +1513,7 @@ impl<'a> Keyboard<'a> {
             KeyboardAction::OutputUsb => {
                 if !event.pressed {
                     #[cfg(not(feature = "_no_usb"))]
-                    crate::state::set_preferred_connection_persistent(
-                        rmk_types::connection::ConnectionType::Usb,
-                    )
-                    .await;
+                    crate::state::set_preferred_connection_persistent(rmk_types::connection::ConnectionType::Usb).await;
 
                     #[cfg(feature = "_no_usb")]
                     warn!("USB output is not available in this build");
@@ -1525,10 +1522,7 @@ impl<'a> Keyboard<'a> {
             KeyboardAction::OutputBluetooth => {
                 if !event.pressed {
                     #[cfg(feature = "_ble")]
-                    crate::state::set_preferred_connection_persistent(
-                        rmk_types::connection::ConnectionType::Ble,
-                    )
-                    .await;
+                    crate::state::set_preferred_connection_persistent(rmk_types::connection::ConnectionType::Ble).await;
 
                     #[cfg(not(feature = "_ble"))]
                     warn!("Bluetooth output is not available in this build");

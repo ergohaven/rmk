@@ -5,19 +5,17 @@ use embedded_hal::digital::InputPin;
 use embedded_hal_async::digital::Wait;
 use futures::future::pending;
 use rmk_macro::{input_device, processor};
+#[cfg(feature = "split")]
+use rmk_types::action::Action;
 use rmk_types::keycode::HidKeyCode;
 use usbd_hid::descriptor::MouseReport;
 
 use crate::channel::send_hid_report;
-use crate::event::{
-    Axis, AxisEvent, AxisValType, PointingEvent, PointingProcessorEvent, PointingSetCpiEvent,
-};
 #[cfg(feature = "split")]
 use crate::event::{ActionEvent, KeyboardEvent, PeripheralSettingsEvent};
+use crate::event::{Axis, AxisEvent, AxisValType, PointingEvent, PointingProcessorEvent, PointingSetCpiEvent};
 use crate::hid::{KeyboardReport, Report};
 use crate::keymap::KeyMap;
-#[cfg(feature = "split")]
-use rmk_types::action::Action;
 
 pub const ALL_POINTING_DEVICES: u8 = 255;
 
@@ -681,8 +679,7 @@ impl QubePointingSettings {
         let selected = (self.module_select >> shift) & 0x03;
         matches!(
             (selected, source.kind),
-            (QUBE_MODULE_SELECT_BALL, QubePointingKind::Ball)
-                | (QUBE_MODULE_SELECT_TOUCH, QubePointingKind::Touch)
+            (QUBE_MODULE_SELECT_BALL, QubePointingKind::Ball) | (QUBE_MODULE_SELECT_TOUCH, QubePointingKind::Touch)
         )
     }
 
@@ -838,12 +835,8 @@ impl<'a> QubePointingModeProcessor<'a> {
     async fn on_peripheral_settings_event(&mut self, event: PeripheralSettingsEvent) {
         self.settings.apply_packet(&event.0);
         if self.active_auto_layer != QUBE_AUTO_LAYER_NONE
-            && !self
-                .settings
-                .auto_layer_enabled(self.mode_for_side(0))
-            && !self
-                .settings
-                .auto_layer_enabled(self.mode_for_side(1))
+            && !self.settings.auto_layer_enabled(self.mode_for_side(0))
+            && !self.settings.auto_layer_enabled(self.mode_for_side(1))
         {
             self.deactivate_auto_layer();
         }
@@ -950,12 +943,8 @@ impl<'a> QubePointingModeProcessor<'a> {
                     1
                 };
                 let divisor = self.settings.sens(source.side, QubePointingMode::Scroll);
-                let (h, v) = qube_divided_motion(
-                    state,
-                    x.saturating_mul(invert_x),
-                    y.saturating_mul(invert_y),
-                    divisor,
-                );
+                let (h, v) =
+                    qube_divided_motion(state, x.saturating_mul(invert_x), y.saturating_mul(invert_y), divisor);
                 send_mouse_report(buttons, 0, 0, 0, v, h).await;
             }
             QubePointingMode::Text => {
@@ -970,13 +959,7 @@ impl<'a> QubePointingModeProcessor<'a> {
                     1
                 };
                 let divisor = self.settings.sens(source.side, QubePointingMode::Text);
-                qube_send_text_motion(
-                    state,
-                    x.saturating_mul(invert_x),
-                    y.saturating_mul(invert_y),
-                    divisor,
-                )
-                .await;
+                qube_send_text_motion(state, x.saturating_mul(invert_x), y.saturating_mul(invert_y), divisor).await;
             }
         }
     }
@@ -985,9 +968,7 @@ impl<'a> QubePointingModeProcessor<'a> {
         if self.active_auto_layer == QUBE_AUTO_LAYER_NONE || self.auto_layer_held_keys != 0 {
             return;
         }
-        if now_ms_u32().wrapping_sub(self.last_auto_motion_ms)
-            >= self.settings.auto_layer_timeout_ms()
-        {
+        if now_ms_u32().wrapping_sub(self.last_auto_motion_ms) >= self.settings.auto_layer_timeout_ms() {
             self.deactivate_auto_layer();
         }
     }
@@ -998,9 +979,7 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     fn mode_for_side(&self, side: usize) -> QubePointingMode {
-        self.sides[side]
-            .mode_override
-            .unwrap_or(self.settings.mode[side])
+        self.sides[side].mode_override.unwrap_or(self.settings.mode[side])
     }
 
     fn handle_mode_key(&mut self, sides: [bool; 2], mode: QubePointingMode, pressed: bool) {
@@ -1014,9 +993,7 @@ impl<'a> QubePointingModeProcessor<'a> {
                 self.sides[side].mode_key_pressed_at_ms = now_ms_u32();
                 self.sides[side].reset_accum();
             } else {
-                let tapped = now_ms_u32()
-                    .wrapping_sub(self.sides[side].mode_key_pressed_at_ms)
-                    <= QUBE_MODE_KEY_TAP_MS;
+                let tapped = now_ms_u32().wrapping_sub(self.sides[side].mode_key_pressed_at_ms) <= QUBE_MODE_KEY_TAP_MS;
                 self.sides[side].mode_override = self.sides[side].mode_key_prev_override;
                 if self.settings.sticky_mode(side) && tapped {
                     if self.sides[side].mode_override == Some(mode) {
@@ -1086,12 +1063,7 @@ fn qube_pointing_source(device_id: u8) -> Option<QubePointingSource> {
     }
 }
 
-fn qube_divided_motion(
-    state: &mut QubePointingSideState,
-    x: i16,
-    y: i16,
-    divisor: i32,
-) -> (i16, i16) {
+fn qube_divided_motion(state: &mut QubePointingSideState, x: i16, y: i16, divisor: i32) -> (i16, i16) {
     let divisor = divisor.max(1);
     state.remainder_x = state.remainder_x.saturating_add(x as i32);
     state.remainder_y = state.remainder_y.saturating_add(y as i32);
@@ -1107,9 +1079,7 @@ fn qube_divided_motion(
 
 async fn qube_send_text_motion(state: &mut QubePointingSideState, x: i16, y: i16, divisor: i32) {
     let now = now_ms_u32();
-    if state.text_last_motion_ms != 0
-        && now.wrapping_sub(state.text_last_motion_ms) > QUBE_TEXT_AXIS_IDLE_MS
-    {
+    if state.text_last_motion_ms != 0 && now.wrapping_sub(state.text_last_motion_ms) > QUBE_TEXT_AXIS_IDLE_MS {
         state.reset_accum();
     }
     state.text_last_motion_ms = now;

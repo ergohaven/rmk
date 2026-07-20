@@ -14,7 +14,6 @@ use crate::NUM_BLE_PROFILE;
 use crate::ble::profile::BleProfileAction;
 use crate::channel::BLE_PROFILE_CHANNEL;
 use crate::event::{ActionEvent, KeyboardEvent};
-
 #[cfg(feature = "split")]
 use crate::event::{ClearPeerEvent, PeripheralBatteryRefreshEvent, publish_event};
 

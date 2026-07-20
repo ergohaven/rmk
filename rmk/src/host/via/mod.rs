@@ -59,9 +59,7 @@ fn host_data_text(data: &[u8; 32]) -> &str {
 
 fn battery_level_byte(status: rmk_types::battery::BatteryStatus) -> Option<u8> {
     match status {
-        rmk_types::battery::BatteryStatus::Available {
-            level: Some(level), ..
-        } if level <= 100 => Some(level),
+        rmk_types::battery::BatteryStatus::Available { level: Some(level), .. } if level <= 100 => Some(level),
         _ => None,
     }
 }
@@ -184,15 +182,11 @@ impl<'a> VialService<'a> {
 
                     #[cfg(all(feature = "split", feature = "_ble"))]
                     {
-                        if let Some(level) =
-                            battery_level_byte(self.ctx.peripheral_battery_status(0))
-                        {
+                        if let Some(level) = battery_level_byte(self.ctx.peripheral_battery_status(0)) {
                             report.input_data[4] |= 0x01;
                             report.input_data[5] = level;
                         }
-                        if let Some(level) =
-                            battery_level_byte(self.ctx.peripheral_battery_status(1))
-                        {
+                        if let Some(level) = battery_level_byte(self.ctx.peripheral_battery_status(1)) {
                             report.input_data[4] |= 0x02;
                             report.input_data[6] = level;
                         }

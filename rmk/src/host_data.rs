@@ -1,7 +1,5 @@
-use core::{
-    cell::RefCell,
-    sync::atomic::{AtomicU8, Ordering},
-};
+use core::cell::RefCell;
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
 
@@ -67,10 +65,7 @@ fn known(value: u8) -> Option<u8> {
     (value != UNKNOWN).then_some(value)
 }
 
-fn update_media_text(
-    slot: &Mutex<RawMutex, RefCell<heapless::String<HOST_TEXT_LEN>>>,
-    value: &str,
-) {
+fn update_media_text(slot: &Mutex<RawMutex, RefCell<heapless::String<HOST_TEXT_LEN>>>, value: &str) {
     slot.lock(|cell| {
         let mut text = cell.borrow_mut();
         text.clear();

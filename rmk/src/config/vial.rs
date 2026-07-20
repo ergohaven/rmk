@@ -35,10 +35,7 @@ mod device_settings_data_serde {
 
     use super::VIAL_DEVICE_SETTINGS_MAX_LEN;
 
-    pub fn serialize<S>(
-        data: &[u8; VIAL_DEVICE_SETTINGS_MAX_LEN],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(data: &[u8; VIAL_DEVICE_SETTINGS_MAX_LEN], serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -49,9 +46,7 @@ mod device_settings_data_serde {
         seq.end()
     }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> Result<[u8; VIAL_DEVICE_SETTINGS_MAX_LEN], D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; VIAL_DEVICE_SETTINGS_MAX_LEN], D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -101,11 +96,7 @@ pub struct VialConfig<'a> {
 }
 
 impl<'a> VialConfig<'a> {
-    pub fn new(
-        vial_keyboard_id: &'a [u8],
-        vial_keyboard_def: &'a [u8],
-        unlock_keys: &'a [(u8, u8)],
-    ) -> Self {
+    pub fn new(vial_keyboard_id: &'a [u8], vial_keyboard_def: &'a [u8], unlock_keys: &'a [(u8, u8)]) -> Self {
         Self {
             vial_keyboard_id,
             vial_keyboard_def,
