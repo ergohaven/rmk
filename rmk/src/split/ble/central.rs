@@ -1,9 +1,10 @@
-use core::cell::RefCell;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::cell::{Cell, RefCell};
+use core::sync::atomic::Ordering;
 
 use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeSetPhy, LeSetScanParams};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use embassy_futures::select::{Either, Either3, select, select3};
+use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer, with_timeout};
@@ -27,7 +28,7 @@ pub(crate) static PERIPHERAL_FOUND: Signal<crate::RawMutex, (u8, BdAddr)> = Sign
 static START_SCANNING: Signal<crate::RawMutex, ()> = Signal::new();
 static STOP_SCANNING: Signal<crate::RawMutex, ()> = Signal::new();
 static SCANNING_MUTEX: Mutex<crate::RawMutex, ()> = Mutex::new(());
-static UNCOMMITTED_PEER_CANDIDATES: AtomicU32 = AtomicU32::new(0);
+static UNCOMMITTED_PEER_CANDIDATES: BlockingMutex<crate::RawMutex, Cell<u32>> = BlockingMutex::new(Cell::new(0));
 
 /// Sleep management signal for BLE Split Central
 ///
@@ -372,16 +373,22 @@ fn bit_for_peri(peri_id: usize) -> u32 {
 }
 
 fn mark_uncommitted_peer_candidate(peri_id: usize) {
-    UNCOMMITTED_PEER_CANDIDATES.fetch_or(bit_for_peri(peri_id), Ordering::AcqRel);
+    let bit = bit_for_peri(peri_id);
+    UNCOMMITTED_PEER_CANDIDATES.lock(|cell| cell.set(cell.get() | bit));
 }
 
 fn clear_uncommitted_peer_candidate(peri_id: usize) {
-    UNCOMMITTED_PEER_CANDIDATES.fetch_and(!bit_for_peri(peri_id), Ordering::AcqRel);
+    let bit = bit_for_peri(peri_id);
+    UNCOMMITTED_PEER_CANDIDATES.lock(|cell| cell.set(cell.get() & !bit));
 }
 
 fn take_uncommitted_peer_candidate(peri_id: usize) -> bool {
     let bit = bit_for_peri(peri_id);
-    UNCOMMITTED_PEER_CANDIDATES.fetch_and(!bit, Ordering::AcqRel) & bit != 0
+    UNCOMMITTED_PEER_CANDIDATES.lock(|cell| {
+        let current = cell.get();
+        cell.set(current & !bit);
+        current & bit != 0
+    })
 }
 
 fn drop_uncommitted_peer_candidate(peri_id: usize, addrs: &RefCell<VecView<Option<[u8; 6]>>>) {

@@ -171,8 +171,13 @@ jobs:
           base_remap="--remap-path-prefix=$worktree=/rmk-build"
 
           base_dir="$worktree/${{ matrix.dir }}"
+          base_available=false
           if [[ -d "$base_dir" ]]; then
-            (cd "$base_dir" && RUSTFLAGS="$base_remap" cargo build --release)
+            if (cd "$base_dir" && RUSTFLAGS="$base_remap" cargo build --release); then
+              base_available=true
+            else
+              echo "Base build failed for $base_dir; skipping bloat diff against base."
+            fi
           fi
 
           # ── Output directory ──
@@ -196,7 +201,7 @@ jobs:
             read -r h_text h_data h_bss head_size < <(awk 'NR==2 {print $1, $2, $3, $4}' "$outdir/size-head${bin_suffix}.txt")
 
             # cargo size + bloaty for BASE
-            if [[ -d "$base_dir" ]]; then
+            if [[ "$base_available" == "true" ]]; then
               (cd "$base_dir" && RUSTFLAGS="$base_remap" cargo size --release $bin_flag 2>/dev/null) > "$outdir/size-base${bin_suffix}.txt"
               read -r b_text b_data b_bss base_size < <(awk 'NR==2 {print $1, $2, $3, $4}' "$outdir/size-base${bin_suffix}.txt")
 

@@ -3,6 +3,7 @@ set -euo pipefail
 # shellcheck source=_lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
+export CARGO_BUILD_TARGET="${CARGO_BUILD_TARGET:-x86_64-unknown-linux-gnu}"
 mkdir -p "$target_root"
 
 # Emit "--- <cmd> ..." tuples for rmk (every feature set) plus the other
