@@ -860,6 +860,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a25746d8b152b72fbf2a217f489a083dbbe243f281f09184a1f2cfbe9bbb245f"
 dependencies = [
  "bitflags 2.11.0",
+ "defmt 1.0.1",
  "embassy-futures",
  "embassy-net-driver-channel",
  "embassy-sync 0.8.0",
@@ -1430,6 +1431,7 @@ dependencies = [
  "embassy-futures",
  "embassy-nrf",
  "embassy-time",
+ "embassy-usb",
  "embassy-usb-driver",
  "heapless 0.9.2",
  "json",
