@@ -55,6 +55,11 @@ const TOUCH_FAST_PROBE_INTERVAL: Duration = Duration::from_millis(500);
 const TOUCH_SLOW_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const TOUCH_FAST_PROBE_WINDOW: Duration = Duration::from_secs(10);
 const TOUCH_READ_FAILURE_REINIT_THRESHOLD: u8 = 4;
+// Consecutive two-finger samples required before scroll is believed. Holding a
+// finger still for 10-15 s lets the IQS5xx reference track towards it, and the
+// contact patch can momentarily read as a second finger; a single such sample
+// used to turn ordinary cursor motion into a scroll jump.
+const TOUCH_SCROLL_CONFIRM_SAMPLES: u8 = 3;
 const TOUCH_MOTION_ACCUM_LIMIT: i32 = (i8::MAX as i32) * 2;
 // Keep sampling and report pacing aligned so continuous motion is emitted on
 // every active sample instead of falling into an alternating 15/30 ms cadence.
@@ -67,6 +72,14 @@ const GESTURE_0_PRESS_AND_HOLD: u8 = 1 << 1;
 const GESTURE_1_TWO_FINGER_TAP: u8 = 1 << 0;
 const GESTURE_1_SCROLL: u8 = 1 << 1;
 const SYSTEM_INFO_0_SHOW_RESET: u8 = 1 << 7;
+// System Info 0 also carries the charging (power) mode in its low three bits,
+// plus the ATI status flags; see the datasheet section quoted in
+// rmk/src/input_device/iqs5xx.rs.
+const SYSTEM_INFO_0_CHARGING_MODE: u8 = 0b111;
+const CHARGING_MODE_ACTIVE: u8 = 0b000;
+const CHARGING_MODE_IDLE_TOUCH: u8 = 0b001;
+const SYSTEM_INFO_0_ATI_ERROR: u8 = 1 << 3;
+const SYSTEM_INFO_0_REATI_OCCURRED: u8 = 1 << 4;
 const SYSTEM_INFO_1_TP_MOVEMENT: u8 = 1 << 0;
 const SYSTEM_CONTROL_0_ACK_RESET: u8 = 1 << 7;
 const FILTER_IIR: u8 = 1 << 0;
@@ -80,6 +93,7 @@ pub struct Touchpad {
     side: u8,
     ready: bool,
     read_failures: u8,
+    multi_finger_samples: u8,
     acc_x: i32,
     acc_y: i32,
     last_report: Instant,
@@ -98,6 +112,7 @@ impl Touchpad {
             side: side_for_device_id(device_id),
             ready: false,
             read_failures: 0,
+            multi_finger_samples: 0,
             acc_x: 0,
             acc_y: 0,
             last_report: Instant::MIN,
@@ -277,6 +292,27 @@ impl Touchpad {
             return TouchReadResult::ReadFailed;
         }
 
+        // A real touch pulls the chip into active mode in the same cycle, so
+        // finger counts and relative deltas reported from a low-power mode are
+        // never a user's finger — they are whatever the transition left in the
+        // registers. Same for the cycle in which the chip re-runs ATI: after a
+        // long contact the reference drifts, and the recalibration lands as a
+        // burst of bogus fingers and deltas on an empty pad, which used to
+        // surface as a phantom scroll ten to twenty seconds after lifting off.
+        let charging_mode = system_info_0 & SYSTEM_INFO_0_CHARGING_MODE;
+        let scanning_for_touch = charging_mode == CHARGING_MODE_ACTIVE || charging_mode == CHARGING_MODE_IDLE_TOUCH;
+        if !scanning_for_touch || (system_info_0 & (SYSTEM_INFO_0_ATI_ERROR | SYSTEM_INFO_0_REATI_OCCURRED)) != 0 {
+            self.multi_finger_samples = 0;
+            return TouchReadResult::Idle { touching: false };
+        }
+
+        self.multi_finger_samples = if number_of_fingers >= 2 {
+            self.multi_finger_samples.saturating_add(1)
+        } else {
+            0
+        };
+        let two_fingers_settled = self.multi_finger_samples >= TOUCH_SCROLL_CONFIRM_SAMPLES;
+
         let gestures_enabled = module_settings::touch_gestures_enabled(self.side);
 
         if gestures_enabled && (gesture_0 & (GESTURE_0_SINGLE_TAP | GESTURE_0_PRESS_AND_HOLD)) != 0 {
@@ -288,7 +324,10 @@ impl Touchpad {
             return TouchReadResult::Gesture { buttons: BUTTON_RIGHT };
         }
 
-        if gestures_enabled && ((gesture_1 & GESTURE_1_SCROLL) != 0 || (number_of_fingers >= 2 && (x != 0 || y != 0))) {
+        // Both the chip's scroll gesture and the bare two-finger fallback now
+        // require the second finger to persist: a one-sample blip no longer
+        // reroutes cursor motion into the wheel.
+        if gestures_enabled && two_fingers_settled && ((gesture_1 & GESTURE_1_SCROLL) != 0 || x != 0 || y != 0) {
             return match scroll_delta(x, y) {
                 Some((h, v)) => TouchReadResult::Scroll { h, v },
                 None => TouchReadResult::Idle {
