@@ -7,6 +7,7 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
+use embassy_sync::watch::{Receiver, Watch};
 use embassy_time::{Duration, Instant, Timer, with_timeout};
 use heapless::VecView;
 use trouble_host::prelude::*;
@@ -40,10 +41,17 @@ static SPLIT_WINDOW_GENERATION: AtomicU32 = AtomicU32::new(0);
 static LAST_ACTIVITY_MS: AtomicU32 = AtomicU32::new(0);
 static LAST_POINTING_ACTIVITY_MS: AtomicU32 = AtomicU32::new(0);
 static SPLIT_SLEEP_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// Notifies every power-mode watcher that activity was just recorded, so waking
+/// a sleeping link doesn't wait out a poll tick. `Watch` rather than `Signal`
+/// because each split link has its own manager and none may consume another's
+/// wake-up.
+static SPLIT_ACTIVITY_WATCH: Watch<crate::RawMutex, u32, SPLIT_POWER_WATCHERS> = Watch::new();
 
 const SPLIT_POINTING_ACTIVE_WINDOW_MS: u32 = 500;
 const SPLIT_ACTIVE_WINDOW_MS: u32 = 2_000;
 const SPLIT_POWER_POLL_MS: u64 = 100;
+/// One watcher per split link, plus the central's own power state manager.
+const SPLIT_POWER_WATCHERS: usize = crate::SPLIT_PERIPHERALS_NUM + 1;
 
 const SPLIT_SERVICE_UUID: [u8; 16] = [70, 153, 101, 152, 54, 53, 10, 191, 7, 75, 229, 24, 170, 251, 213, 77];
 const SPLIT_COMPANY_ID: u16 = 0xe118;
@@ -558,11 +566,15 @@ fn idle_central_conn_param() -> RequestedConnParams {
 
 fn sleeping_central_conn_param() -> RequestedConnParams {
     RequestedConnParams {
-        min_connection_interval: Duration::from_millis(200),
-        max_connection_interval: Duration::from_millis(200),
-        // A sleeping peripheral must still attend every 200ms connection
-        // event. Allowing 25 skipped events delayed the first key or pointing
-        // packet from a split peripheral by up to five seconds.
+        // The interval bounds both the first packet after a long idle and the
+        // ramp back to the active parameters, since a connection update takes
+        // effect only after several connection events. At 200ms a touchpad on
+        // the peripheral half stuttered for over a second before smoothing out.
+        min_connection_interval: Duration::from_millis(100),
+        max_connection_interval: Duration::from_millis(100),
+        // A sleeping peripheral must still attend every connection event.
+        // Allowing 25 skipped events delayed the first key or pointing packet
+        // from a split peripheral by up to five seconds.
         max_latency: 0,
         supervision_timeout: Duration::from_secs(11),
         ..Default::default()
@@ -870,8 +882,9 @@ pub async fn run_split_power_state_manager() -> ! {
         publish_event(SleepStateEvent::new(true));
     }
 
+    let mut activity = power_activity_receiver();
     loop {
-        Timer::after_millis(SPLIT_POWER_POLL_MS).await;
+        wait_for_power_reevaluation(&mut activity).await;
         let next_sleeping = desired_split_power_mode(
             Instant::now().as_millis() as u32,
             LAST_ACTIVITY_MS.load(Ordering::Acquire),
@@ -908,8 +921,9 @@ async fn sleep_manager_task<
     );
 
     let mut current_mode = SplitPowerMode::Active;
+    let mut activity = power_activity_receiver();
     loop {
-        Timer::after_millis(SPLIT_POWER_POLL_MS).await;
+        wait_for_power_reevaluation(&mut activity).await;
         let next_mode = desired_split_power_mode(
             Instant::now().as_millis() as u32,
             LAST_ACTIVITY_MS.load(Ordering::Acquire),
@@ -960,8 +974,10 @@ async fn sleep_manager_task<
 
 /// Update the activity time to indicate user activity
 pub(crate) fn update_activity_time() {
-    LAST_ACTIVITY_MS.store(Instant::now().as_millis() as u32, Ordering::Release);
+    let now_ms = Instant::now().as_millis() as u32;
+    LAST_ACTIVITY_MS.store(now_ms, Ordering::Release);
     SPLIT_SLEEP_REQUESTED.store(false, Ordering::Release);
+    SPLIT_ACTIVITY_WATCH.sender().send(now_ms);
     debug!("Activity detected, restoring active split link");
 }
 
@@ -971,7 +987,36 @@ pub(crate) fn update_pointing_activity_time() {
     LAST_POINTING_ACTIVITY_MS.store(now_ms, Ordering::Release);
     LAST_ACTIVITY_MS.store(now_ms, Ordering::Release);
     SPLIT_SLEEP_REQUESTED.store(false, Ordering::Release);
+    SPLIT_ACTIVITY_WATCH.sender().send(now_ms);
     debug!("Pointing activity detected, restoring low-latency split link");
+}
+
+/// Subscribe to activity notifications with whatever is already recorded marked
+/// as seen.
+///
+/// A fresh `Watch` receiver starts before every past update, so its first wait
+/// would return instantly and re-evaluate the power mode while the link is
+/// still being brought up — renegotiating connection parameters right as the
+/// peripheral's settings snapshot is being pushed, which drops it.
+fn power_activity_receiver() -> Option<Receiver<'static, crate::RawMutex, u32, SPLIT_POWER_WATCHERS>> {
+    let mut receiver = SPLIT_ACTIVITY_WATCH.receiver();
+    if let Some(receiver) = receiver.as_mut() {
+        let _ = receiver.try_changed();
+    }
+    receiver
+}
+
+/// Wait until the split power mode is worth re-evaluating: either the poll
+/// interval elapsed (activity aging into idle/sleep) or activity was reported.
+async fn wait_for_power_reevaluation(activity: &mut Option<Receiver<'_, crate::RawMutex, u32, SPLIT_POWER_WATCHERS>>) {
+    match activity {
+        Some(activity) => {
+            select(Timer::after_millis(SPLIT_POWER_POLL_MS), activity.changed()).await;
+        }
+        // More watchers than slots should be impossible, but falling back to
+        // plain polling keeps the link manageable instead of panicking.
+        None => Timer::after_millis(SPLIT_POWER_POLL_MS).await,
+    }
 }
 
 /// Request deep split-link sleep from a host suspend or transport timeout.
@@ -1065,8 +1110,8 @@ mod advertisement_tests {
     fn sleeping_split_link_bounds_first_peripheral_event_latency() {
         let params = sleeping_central_conn_param();
 
-        assert_eq!(params.min_connection_interval, Duration::from_millis(200));
-        assert_eq!(params.max_connection_interval, Duration::from_millis(200));
+        assert_eq!(params.min_connection_interval, Duration::from_millis(100));
+        assert_eq!(params.max_connection_interval, Duration::from_millis(100));
         assert_eq!(params.max_latency, 0);
     }
 }

@@ -36,7 +36,10 @@ const REPORT_RATE_ACTIVE_MS: u16 = 8;
 const REPORT_RATE_IDLE_TOUCH_MS: u16 = 8;
 const REPORT_RATE_IDLE_MS: u16 = 40;
 const REPORT_RATE_LP1_MS: u16 = 160;
-const REPORT_RATE_LP2_MS: u16 = 320;
+// LP2 keeps the LP1 cycle time: the extra current of scanning twice as often in
+// the deepest mode is a few microamps, far below the radio's share of the power
+// budget, while a 320 ms cycle costs up to 320 ms before a touch is noticed.
+const REPORT_RATE_LP2_MS: u16 = 160;
 const ACTIVE_MODE_TIMEOUT_SECS: u8 = 1;
 const IDLE_TOUCH_MODE_TIMEOUT_SECS: u8 = 255;
 const IDLE_MODE_TIMEOUT_SECS: u8 = 5;
@@ -142,9 +145,12 @@ impl Touchpad {
                 self.send_scroll(h, v);
                 true
             }
-            TouchReadResult::NoMotion => {
+            TouchReadResult::Idle { touching } => {
                 self.read_failures = 0;
-                false
+                // A finger already on the pad counts as activity even before it
+                // produces a delta, so the first stroke is sampled at the
+                // active rate instead of waiting out the deep-sleep interval.
+                touching
             }
             TouchReadResult::ReadFailed => {
                 self.read_failures = self.read_failures.saturating_add(1);
@@ -264,7 +270,7 @@ impl Touchpad {
             let _ = self.write_u8(REG_SYSTEM_CONTROL_0, SYSTEM_CONTROL_0_ACK_RESET).await;
             let _ = self.end_session().await;
             self.reset();
-            return TouchReadResult::NoMotion;
+            return TouchReadResult::Idle { touching: false };
         }
 
         if !self.end_session().await {
@@ -285,12 +291,16 @@ impl Touchpad {
         if gestures_enabled && ((gesture_1 & GESTURE_1_SCROLL) != 0 || (number_of_fingers >= 2 && (x != 0 || y != 0))) {
             return match scroll_delta(x, y) {
                 Some((h, v)) => TouchReadResult::Scroll { h, v },
-                None => TouchReadResult::NoMotion,
+                None => TouchReadResult::Idle {
+                    touching: number_of_fingers > 0,
+                },
             };
         }
 
         if number_of_fingers != 1 || (x == 0 && y == 0) {
-            return TouchReadResult::NoMotion;
+            return TouchReadResult::Idle {
+                touching: number_of_fingers > 0,
+            };
         }
 
         TouchReadResult::Motion {
@@ -410,11 +420,13 @@ fn side_for_device_id(device_id: u8) -> u8 {
     }
 }
 
+// `Idle::touching` reports a finger resting on the pad: no delta this cycle,
+// but the host must not treat it as inactivity.
 enum TouchReadResult {
     Motion { x: i16, y: i16 },
     Gesture { buttons: u8 },
     Scroll { h: i16, v: i16 },
-    NoMotion,
+    Idle { touching: bool },
     ReadFailed,
 }
 
