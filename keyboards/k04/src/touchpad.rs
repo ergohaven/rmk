@@ -35,11 +35,13 @@ const REG_END_COMMS: u16 = 0xeeee;
 
 const REPORT_RATE_ACTIVE_MS: u16 = 8;
 const REPORT_RATE_IDLE_TOUCH_MS: u16 = 8;
-const REPORT_RATE_IDLE_MS: u16 = 40;
-const REPORT_RATE_LP1_MS: u16 = 160;
-// Keep the deepest scan cadence at LP1 speed. The extra current is only a few
-// microamps, while 320 ms made the first contact after a long idle visibly lag.
-const REPORT_RATE_LP2_MS: u16 = 160;
+// No-RDY performance test: keep every IQS5xx power state at the active cadence.
+// Otherwise the first contact can wait for a 40/160 ms controller cycle before
+// timed polling sees it. This intentionally trades battery life for a clean
+// diagnosis; a final low-power solution should wake from RDY instead.
+const REPORT_RATE_IDLE_MS: u16 = 8;
+const REPORT_RATE_LP1_MS: u16 = 8;
+const REPORT_RATE_LP2_MS: u16 = 8;
 const ACTIVE_MODE_TIMEOUT_SECS: u8 = 1;
 const IDLE_TOUCH_MODE_TIMEOUT_SECS: u8 = 255;
 const IDLE_MODE_TIMEOUT_SECS: u8 = 5;

@@ -437,10 +437,22 @@ fn module_set_setting(qsid: u16, data: &[u8]) -> bool {
 }
 
 pub fn publish_module_settings() {
-    publish_event(PeripheralSettingsEvent(module_settings_sync_packet()));
+    let settings = module_settings_sync_packet();
+    // Storage is deserialized before registered event processors subscribe.
+    // Apply the snapshot directly as well as publishing it so the selected
+    // module and its split-link profile are correct on the very first boot
+    // pass instead of waiting for a later refresh from Vial or the split link.
+    crate::module_settings::apply_settings_packet(&settings);
+    publish_event(PeripheralSettingsEvent(settings));
     #[cfg(not(feature = "qube"))]
-    publish_event(PeripheralSettingsEvent(module_profile_settings_sync_packet()));
-    publish_event(PeripheralSettingsEvent(module_encoder_settings_sync_packet()));
+    {
+        let profile = module_profile_settings_sync_packet();
+        crate::module_settings::apply_settings_packet(&profile);
+        publish_event(PeripheralSettingsEvent(profile));
+    }
+    let encoder = module_encoder_settings_sync_packet();
+    crate::module_settings::apply_settings_packet(&encoder);
+    publish_event(PeripheralSettingsEvent(encoder));
 }
 
 /// Re-sends the settings snapshot whenever a half's link comes up.

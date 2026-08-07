@@ -5,6 +5,8 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_sync::mutex::Mutex;
 #[cfg(feature = "host")]
 use embassy_sync::signal::Signal;
+#[cfg(feature = "ble_zero_latency")]
+use embassy_time::Instant;
 use embassy_time::{Duration, Timer, with_timeout};
 use rmk_types::battery::BatteryStatus;
 use rmk_types::ble::BleState;
@@ -26,7 +28,7 @@ use crate::channel::{BLE_REPORT_CHANNEL, LED_SIGNAL};
 use crate::config::{BleBatteryConfig, RmkConfig};
 use crate::core_traits::Runnable;
 use crate::event::{BleAdvertisingMode, SubscribableEvent};
-use crate::hid::{HidWriterTrait, run_led_reader};
+use crate::hid::{HidWriterTrait, Report, run_led_reader};
 use crate::state::set_ble_state;
 
 pub(crate) mod battery_service;
@@ -49,11 +51,20 @@ const DIRECTED_RECONNECT_WINDOW_MS: u64 = 1_300;
 const FAST_ADVERTISING_TIMEOUT_SECS: u64 = 30;
 const HOST_PHY_UPDATE_ATTEMPTS: u8 = 3;
 const HOST_PHY_UPDATE_SETTLE_MS: u64 = 80;
+#[cfg(not(feature = "ble_zero_latency"))]
 const HOST_IDLE_MAX_LATENCY: u16 = 30;
+#[cfg(feature = "ble_zero_latency")]
+const HOST_IDLE_MAX_LATENCY: u16 = 0;
 const HOST_INTERACTIVE_MAX_LATENCY: u16 = 0;
 const VIAL_LINK_IDLE_TIMEOUT_SECS: u64 = 30;
 const HCI_LINK_UPDATE_ATTEMPTS: u8 = 12;
 const HCI_LINK_UPDATE_RETRY_MS: u64 = 20;
+// A HID notification can enter the BLE stack much faster than the radio can
+// put it on air. Give 125 Hz pointing sources one sample period to accumulate
+// here, before that hidden FIFO, so a 15 ms host link receives one fresh summed
+// delta instead of replaying two increasingly stale 8 ms deltas.
+#[cfg(feature = "ble_zero_latency")]
+const BLE_MOUSE_COALESCE_WINDOW: Duration = Duration::from_millis(8);
 
 // The controller accepts only one link-control procedure at a time. Host PHY
 // updates and one or more split links share it, so serialize our commands
@@ -799,7 +810,7 @@ pub(crate) async fn set_conn_params<
     )
     .await;
 
-    #[cfg(feature = "host")]
+    #[cfg(all(feature = "host", not(feature = "ble_zero_latency")))]
     loop {
         // Slave latency 30 lets an idle keyboard skip up to 30 connection
         // events, but it also makes every sequential Vial round trip wait up
@@ -829,8 +840,67 @@ pub(crate) async fn set_conn_params<
         .await;
     }
 
-    #[cfg(not(feature = "host"))]
+    #[cfg(any(not(feature = "host"), feature = "ble_zero_latency"))]
     core::future::pending::<()>().await;
+}
+
+/// A contiguous run of relative mouse motion that can be represented by one
+/// or more fresh BLE reports instead of replaying every stale queued sample.
+/// Button transitions, scroll/pan and direction changes remain ordering
+/// barriers and are never folded into the accumulator.
+struct BleMouseMotion {
+    buttons: u8,
+    x: i32,
+    y: i32,
+}
+
+impl BleMouseMotion {
+    fn new(report: &usbd_hid::descriptor::MouseReport) -> Option<Self> {
+        if report.wheel != 0 || report.pan != 0 || (report.x == 0 && report.y == 0) {
+            return None;
+        }
+        Some(Self {
+            buttons: report.buttons,
+            x: i32::from(report.x),
+            y: i32::from(report.y),
+        })
+    }
+
+    fn try_merge(&mut self, report: &usbd_hid::descriptor::MouseReport) -> bool {
+        if report.buttons != self.buttons
+            || report.wheel != 0
+            || report.pan != 0
+            || (report.x == 0 && report.y == 0)
+            || !same_motion_direction(self.x, i32::from(report.x))
+            || !same_motion_direction(self.y, i32::from(report.y))
+        {
+            return false;
+        }
+        self.x = self.x.saturating_add(i32::from(report.x));
+        self.y = self.y.saturating_add(i32::from(report.y));
+        true
+    }
+
+    fn next_report(&mut self) -> Option<usbd_hid::descriptor::MouseReport> {
+        if self.x == 0 && self.y == 0 {
+            return None;
+        }
+        let x = self.x.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8;
+        let y = self.y.clamp(i32::from(i8::MIN), i32::from(i8::MAX)) as i8;
+        self.x -= i32::from(x);
+        self.y -= i32::from(y);
+        Some(usbd_hid::descriptor::MouseReport {
+            buttons: self.buttons,
+            x,
+            y,
+            wheel: 0,
+            pan: 0,
+        })
+    }
+}
+
+fn same_motion_direction(accumulated: i32, next: i32) -> bool {
+    accumulated == 0 || next == 0 || accumulated.is_positive() == next.is_positive()
 }
 
 fn host_connection_params(interval: Duration, max_latency: u16) -> RequestedConnParams {
@@ -916,8 +986,66 @@ async fn run_ble_keyboard<
     };
 
     let writer_task = async {
+        let mut pending_report = None;
         loop {
-            let report = BLE_REPORT_CHANNEL.receive().await;
+            let report = match pending_report.take() {
+                Some(report) => report,
+                None => BLE_REPORT_CHANNEL.receive().await,
+            };
+
+            if let Report::MouseReport(mouse) = &report
+                && let Some(mut motion) = BleMouseMotion::new(mouse)
+            {
+                let mut batch = 1usize;
+
+                #[cfg(feature = "ble_zero_latency")]
+                {
+                    let deadline = Instant::now() + BLE_MOUSE_COALESCE_WINDOW;
+                    while pending_report.is_none() && batch < crate::REPORT_CHANNEL_SIZE {
+                        match select(Timer::at(deadline), BLE_REPORT_CHANNEL.receive()).await {
+                            Either::First(_) => break,
+                            Either::Second(Report::MouseReport(candidate)) => {
+                                if motion.try_merge(&candidate) {
+                                    batch += 1;
+                                } else {
+                                    pending_report = Some(Report::MouseReport(candidate));
+                                }
+                            }
+                            Either::Second(other) => pending_report = Some(other),
+                        }
+                    }
+                }
+
+                while pending_report.is_none() && batch < crate::REPORT_CHANNEL_SIZE {
+                    match BLE_REPORT_CHANNEL.try_receive() {
+                        Ok(Report::MouseReport(candidate)) => {
+                            if motion.try_merge(&candidate) {
+                                batch += 1;
+                            } else {
+                                pending_report = Some(Report::MouseReport(candidate));
+                                break;
+                            }
+                        }
+                        Ok(other) => {
+                            pending_report = Some(other);
+                            break;
+                        }
+                        Err(_) => break,
+                    }
+                }
+
+                if batch > 1 {
+                    debug!("[ble_hid] coalesced {} queued mouse reports", batch);
+                }
+                while let Some(mouse) = motion.next_report() {
+                    if let Err(e) = ble_hid_server.write_report(&Report::MouseReport(mouse)).await {
+                        error!("Failed to send report: {:?}", e);
+                        break;
+                    }
+                }
+                continue;
+            }
+
             if let Err(e) = ble_hid_server.write_report(&report).await {
                 error!("Failed to send report: {:?}", e);
             }
@@ -1117,10 +1245,12 @@ mod tests {
     use rmk_types::ble::{BleState, BleStatus};
     use trouble_host::Error;
     use trouble_host::prelude::PhyKind;
+    use usbd_hid::descriptor::MouseReport;
 
     use super::{
-        HostPhyUpdateState, Server, advertising_mode, directed_reconnect_should_continue, host_phy_update_state,
-        is_hci_link_update_busy, pairing_window_timeout_secs, seed_battery_level,
+        BleMouseMotion, HostPhyUpdateState, Server, advertising_mode, directed_reconnect_should_continue,
+        host_phy_update_state, is_hci_link_update_busy, pairing_window_timeout_secs, same_motion_direction,
+        seed_battery_level,
     };
     use crate::event::{
         Axis, AxisEvent, AxisValType, BleAdvertisingMode, KeyboardEvent, PointingEvent, SubscribableEvent,
@@ -1134,6 +1264,39 @@ mod tests {
     fn ble_status_test_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn mouse(buttons: u8, x: i8, y: i8, wheel: i8, pan: i8) -> MouseReport {
+        MouseReport {
+            buttons,
+            x,
+            y,
+            wheel,
+            pan,
+        }
+    }
+
+    #[test]
+    fn ble_mouse_motion_coalesces_same_direction_and_preserves_total() {
+        let mut motion = BleMouseMotion::new(&mouse(1, 120, -120, 0, 0)).unwrap();
+        assert!(motion.try_merge(&mouse(1, 120, -120, 0, 0)));
+
+        let first = motion.next_report().unwrap();
+        let second = motion.next_report().unwrap();
+        assert_eq!((first.buttons, first.x, first.y), (1, 127, -128));
+        assert_eq!((second.buttons, second.x, second.y), (1, 113, -112));
+        assert!(motion.next_report().is_none());
+    }
+
+    #[test]
+    fn ble_mouse_motion_keeps_ordering_barriers() {
+        let mut motion = BleMouseMotion::new(&mouse(0, 10, 5, 0, 0)).unwrap();
+        assert!(!motion.try_merge(&mouse(1, 2, 1, 0, 0)));
+        assert!(!motion.try_merge(&mouse(0, 2, 1, 1, 0)));
+        assert!(!motion.try_merge(&mouse(0, -2, 1, 0, 0)));
+        assert!(!motion.try_merge(&mouse(0, 0, 0, 0, 0)));
+        assert!(same_motion_direction(10, 0));
+        assert!(!same_motion_direction(-10, 1));
     }
 
     #[test]
@@ -1204,7 +1367,7 @@ mod tests {
     }
 
     #[test]
-    fn vial_interactive_connection_params_remove_only_slave_latency() {
+    fn host_connection_latency_matches_feature_policy() {
         let idle = super::host_connection_params(Duration::from_micros(7500), super::HOST_IDLE_MAX_LATENCY);
         let interactive =
             super::host_connection_params(Duration::from_micros(7500), super::HOST_INTERACTIVE_MAX_LATENCY);
@@ -1213,7 +1376,10 @@ mod tests {
         assert!(interactive.is_valid());
         assert_eq!(idle.min_connection_interval, interactive.min_connection_interval);
         assert_eq!(idle.max_connection_interval, interactive.max_connection_interval);
+        #[cfg(not(feature = "ble_zero_latency"))]
         assert_eq!(idle.max_latency, 30);
+        #[cfg(feature = "ble_zero_latency")]
+        assert_eq!(idle.max_latency, 0);
         assert_eq!(interactive.max_latency, 0);
         assert_eq!(idle.supervision_timeout, interactive.supervision_timeout);
     }

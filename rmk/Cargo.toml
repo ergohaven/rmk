@@ -120,6 +120,9 @@ host = ["dep:byteorder"]
 ## Enable firmware-native EN/RU Universal Symbols actions.
 universal_symbols = []
 
+## Keep BLE host slave latency at zero for latency-sensitive pointing devices.
+ble_zero_latency = []
+
 ## Enable vial support
 vial = ["host"]
 

@@ -36,6 +36,7 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "vial",
     "vial_lock",
     "universal_symbols",
+    "ble_zero_latency",
     "nrf52840_ble",
     "split",
     "async_matrix",
