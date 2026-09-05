@@ -170,6 +170,10 @@
 
           env = {
             CARGO_NET_GIT_FETCH_WITH_CLI = "true";
+            # nrf-mpsl-sys and nrf-sdc-sys run bindgen, which dlopens libclang
+            # at build-script time. Without this every nRF firmware build fails
+            # with "Unable to find libclang".
+            LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
             RUST_MIN_STACK = "67108864";
             RUST_SRC_PATH = "${stableToolchain}/lib/rustlib/src/rust/library";
           };
