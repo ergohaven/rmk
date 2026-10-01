@@ -1521,9 +1521,15 @@ impl<'a> Keyboard<'a> {
             Action::Special(special_key) => self.process_action_special(special_key, event).await,
             Action::User(id) => {
                 #[cfg(feature = "universal_symbols")]
-                self.process_universal_symbols_user_action(id, event).await;
+                let had_action_report = self.process_universal_symbols_user_action(id, event).await;
                 #[cfg(not(feature = "universal_symbols"))]
-                let _ = id;
+                let (had_action_report, _) = (false, id);
+
+                let osm_consumed = self.update_osm(event);
+                if osm_consumed && !had_action_report && self.keymap.one_shot_modifiers_config().activate_on_keypress {
+                    self.send_keyboard_report_with_resolved_modifiers(false).await;
+                }
+                self.update_osl(event);
             }
             Action::TriLayerLower => {
                 // Tri-layer lower, turn layer 1 on and update layer state
@@ -2003,21 +2009,22 @@ impl<'a> Keyboard<'a> {
     }
 
     #[cfg(feature = "universal_symbols")]
-    async fn process_universal_symbols_user_action(&mut self, user_id: u8, event: KeyboardEvent) {
+    async fn process_universal_symbols_user_action(&mut self, user_id: u8, event: KeyboardEvent) -> bool {
         if !event.pressed {
-            return;
+            return false;
         }
 
         let host_layout = crate::host_data::snapshot().layout;
         let Some(command) = self.universal_symbols.handle(user_id, host_layout) else {
-            return;
+            return false;
         };
         let platform = self.universal_symbols.platform();
 
         match command {
-            crate::universal_symbols::Command::None => {}
+            crate::universal_symbols::Command::None => false,
             crate::universal_symbols::Command::SwitchLayout => {
                 self.send_universal_symbols_layout_switch(platform).await;
+                true
             }
             crate::universal_symbols::Command::Type(resolved) => {
                 if resolved.temporary_english {
@@ -2028,6 +2035,7 @@ impl<'a> Keyboard<'a> {
                 if resolved.temporary_english {
                     self.send_universal_symbols_layout_switch(platform).await;
                 }
+                true
             }
             crate::universal_symbols::Command::TypeRussianLetter(keycode) => {
                 let mut letter_event = event;
@@ -2037,6 +2045,7 @@ impl<'a> Keyboard<'a> {
                 letter_event.pressed = false;
                 self.process_action_key_with_caps_word_key(keycode, HidKeyCode::A, letter_event)
                     .await;
+                true
             }
         }
     }

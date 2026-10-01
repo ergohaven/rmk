@@ -8,16 +8,16 @@ mod one_shot_test {
     use rmk::config::{OneShotConfig, PositionalConfig};
     use rmk::keyboard::Keyboard;
     use rmk::types::action::KeyAction;
-    use rmk::{k, osl, osm, th, wm};
+    use rmk::{k, osl, osm, th, user, wm};
 
     use super::*;
     use crate::common::{KC_LCTRL, KC_LGUI, KC_LSHIFT, wrap_keymap};
 
     // KEYMAP
-    // Layer 0: OSM(LShift)        OSL(1)  A  TH(B)  OSM(LCtrl)  WM(B)
-    // Layer 1: OSM(LShift|LCtrl)  No      C  D      E           F
+    // Layer 0: OSM(LShift)        OSL(1)  A  TH(B)  OSM(LCtrl)  WM(B)  User(0)
+    // Layer 1: OSM(LShift|LCtrl)  No      C  D      E           F      User(0x90)
 
-    const KEYMAP: [[[KeyAction; 6]; 1]; 2] = [
+    const KEYMAP: [[[KeyAction; 7]; 1]; 2] = [
         [[
             // Layer 0
             osm!(ModifierCombination::new_from(false, false, false, true, false)), // OSM LShift
@@ -26,6 +26,7 @@ mod one_shot_test {
             th!(B, C),                                                             // Tap-hold key B, C
             osm!(ModifierCombination::new_from(false, false, false, false, true)), // OSM LCtrl
             wm!(B, ModifierCombination::new_from(false, true, false, false, false)), // WM B with LGUI
+            user!(0),                                                              // User action without HID output
         ]],
         [[
             // Layer 1
@@ -35,18 +36,19 @@ mod one_shot_test {
             k!(D),                                                                // Layer 1 key D
             k!(E),                                                                // Layer 1 key E
             k!(F),                                                                // Layer 1 key F
+            user!(0x90),                                                          // Universal symbol Dot
         ]],
     ];
 
     fn create_test_keyboard() -> Keyboard<'static> {
         let behavior_config: &'static mut BehaviorConfig = Box::leak(Box::new(BehaviorConfig::default()));
-        let per_key_config: &'static PositionalConfig<1, 6> = Box::leak(Box::new(PositionalConfig::default()));
+        let per_key_config: &'static PositionalConfig<1, 7> = Box::leak(Box::new(PositionalConfig::default()));
         Keyboard::new(wrap_keymap(KEYMAP, per_key_config, behavior_config))
     }
 
     fn create_test_keyboard_with_behavior_config(config: BehaviorConfig) -> Keyboard<'static> {
         let behavior_config: &'static mut BehaviorConfig = Box::leak(Box::new(config));
-        let per_key_config: &'static PositionalConfig<1, 6> = Box::leak(Box::new(PositionalConfig::default()));
+        let per_key_config: &'static PositionalConfig<1, 7> = Box::leak(Box::new(PositionalConfig::default()));
         Keyboard::new(wrap_keymap(KEYMAP, per_key_config, behavior_config))
     }
 
@@ -55,7 +57,7 @@ mod one_shot_test {
             one_shot_modifiers: config,
             ..BehaviorConfig::default()
         }));
-        let per_key_config: &'static PositionalConfig<1, 6> = Box::leak(Box::new(PositionalConfig::default()));
+        let per_key_config: &'static PositionalConfig<1, 7> = Box::leak(Box::new(PositionalConfig::default()));
         Keyboard::new(wrap_keymap(KEYMAP, per_key_config, behavior_config))
     }
 
@@ -752,6 +754,104 @@ mod one_shot_test {
                 [KC_LSHIFT | KC_LCTRL, [kc_to_u8!(A), 0, 0, 0, 0, 0]], // A with LShift+LCtrl
                 [0, [kc_to_u8!(A), 0, 0, 0, 0, 0]], // Quick-release: modifiers removed
                 [0, [0, 0, 0, 0, 0, 0]], // All released
+            ]
+        };
+    }
+
+    /// Regression test for Action::User without HID output when activate_on_keypress=true and quick_release=true.
+    /// Modifier should be released on Action::User press because OSM is consumed immediately.
+    #[test]
+    fn test_osm_action_user_no_hid_output_activate_on_keypress_quick_release() {
+        key_sequence_test! {
+            keyboard: create_test_keyboard_with_one_shot_modifiers_config(OneShotModifiersConfig {
+                activate_on_keypress: true,
+                quick_release: true,
+                ..OneShotModifiersConfig::default()
+            }),
+            sequence: [
+                [0, 0, true, 10],   // Press OSM LShift
+                [0, 0, false, 10],  // Release OSM LShift
+                [0, 6, true, 10],   // Press Action::User without HID output (user!(0))
+                [0, 6, false, 10],  // Release Action::User
+            ],
+            expected_reports: [
+                [KC_LSHIFT, [0, 0, 0, 0, 0, 0]], // LShift sent on OSM press
+                [0, [0, 0, 0, 0, 0, 0]],         // Modifier released on Action::User press (quick release)
+            ]
+        };
+    }
+
+    /// Regression test for Action::User without HID output when activate_on_keypress=true and quick_release=false (chain mode).
+    /// Modifier should be released on Action::User release when OSM is consumed.
+    #[test]
+    fn test_osm_action_user_no_hid_output_activate_on_keypress_chain_mode() {
+        key_sequence_test! {
+            keyboard: create_test_keyboard_with_one_shot_modifiers_config(OneShotModifiersConfig {
+                activate_on_keypress: true,
+                quick_release: false,
+                ..OneShotModifiersConfig::default()
+            }),
+            sequence: [
+                [0, 0, true, 10],   // Press OSM LShift
+                [0, 0, false, 10],  // Release OSM LShift
+                [0, 6, true, 10],   // Press Action::User without HID output (user!(0))
+                [0, 6, false, 10],  // Release Action::User
+            ],
+            expected_reports: [
+                [KC_LSHIFT, [0, 0, 0, 0, 0, 0]], // LShift sent on OSM press
+                [0, [0, 0, 0, 0, 0, 0]],         // Modifier released on Action::User release
+            ]
+        };
+    }
+
+    /// Regression test verifying that modifier release preserves existing held keys.
+    #[test]
+    fn test_osm_action_user_no_hid_output_preserves_held_key() {
+        key_sequence_test! {
+            keyboard: create_test_keyboard_with_one_shot_modifiers_config(OneShotModifiersConfig {
+                activate_on_keypress: true,
+                quick_release: true,
+                ..OneShotModifiersConfig::default()
+            }),
+            sequence: [
+                [0, 2, true, 10],   // Press and hold A
+                [0, 0, true, 10],   // Press OSM LShift
+                [0, 0, false, 10],  // Release OSM LShift
+                [0, 6, true, 10],   // Press Action::User without HID output
+                [0, 6, false, 10],  // Release Action::User
+                [0, 2, false, 10],  // Release A
+            ],
+            expected_reports: [
+                [0, [kc_to_u8!(A), 0, 0, 0, 0, 0]],         // A pressed
+                [KC_LSHIFT, [kc_to_u8!(A), 0, 0, 0, 0, 0]], // LShift added on OSM press while A held
+                [0, [kc_to_u8!(A), 0, 0, 0, 0, 0]],         // LShift removed on User action press, A still held
+                [0, [0, 0, 0, 0, 0, 0]],                    // A released
+            ]
+        };
+    }
+
+    /// Focused regression test for OSL + Universal Symbols release behavior:
+    /// Activating layer 1 via OSL and triggering a Universal Symbol should deactivate
+    /// the one-shot layer on release, so subsequent keypresses resolve on layer 0.
+    #[test]
+    #[cfg(feature = "universal_symbols")]
+    fn test_osl_universal_symbols_release() {
+        key_sequence_test! {
+            keyboard: create_test_keyboard(),
+            sequence: [
+                [0, 1, true, 10],   // Press OSL Layer 1
+                [0, 1, false, 10],  // Release OSL Layer 1
+                [0, 6, true, 10],   // Press Universal Symbol Dot at (0,6) on Layer 1
+                [0, 6, false, 10],  // Release Universal Symbol Dot (should deactivate Layer 1)
+                [0, 2, true, 10],   // Press key at (0,2), should get A from Layer 0 (not C from Layer 1)
+                [0, 2, false, 10],  // Release key
+            ],
+            expected_reports: [
+                [0, [kc_to_u8!(Dot), 0, 0, 0, 0, 0]], // Dot stroke from universal symbols
+                [0, [0, 0, 0, 0, 0, 0]],              // Tap released key
+                [0, [0, 0, 0, 0, 0, 0]],              // Resolved modifiers restored
+                [0, [kc_to_u8!(A), 0, 0, 0, 0, 0]],   // A from Layer 0 (proves Layer 1 was deactivated)
+                [0, [0, 0, 0, 0, 0, 0]],              // All released
             ]
         };
     }
