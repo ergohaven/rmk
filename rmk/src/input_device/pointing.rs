@@ -661,7 +661,11 @@ const QUBE_USER_LEFT_TEXT: u8 = 33;
 const QUBE_USER_RIGHT_SNIPER: u8 = 34;
 const QUBE_USER_RIGHT_SCROLL: u8 = 35;
 const QUBE_USER_RIGHT_TEXT: u8 = 36;
-const QUBE_SETTINGS_VERSION: u8 = 9;
+const QUBE_SETTINGS_VERSION: u8 = if cfg!(feature = "k04_standalone_timeout_14") {
+    10
+} else {
+    9
+};
 /// Marks the module-settings packet that carries the encoder step counts;
 /// mirrored by `module_encoder_settings_sync_packet` in the K:04 firmware.
 const QUBE_ENCODER_SETTINGS_PACKET: u8 = 0x40;
@@ -676,8 +680,17 @@ const QUBE_TEXT_THRESHOLD: i32 = 1;
 const QUBE_TOUCH_CLICK_MS: u64 = 40;
 const QUBE_TOUCH_LEFT_BUTTON: u8 = 1 << 0;
 const QUBE_TOUCH_RIGHT_BUTTON: u8 = 1 << 1;
+#[cfg(feature = "k04_standalone_timeout_14")]
+const QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE: [u32; 14] =
+    [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 750, 1000, 1250, 1500];
+#[cfg(not(feature = "k04_standalone_timeout_14"))]
 const QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE: [u32; 6] = [250, 500, 750, 1000, 1250, 1500];
-const QUBE_DEFAULT_AUTO_LAYER_TIMEOUT_INDEX: u8 = 1;
+const QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX: u8 = (QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE.len() - 1) as u8;
+const QUBE_DEFAULT_AUTO_LAYER_TIMEOUT_INDEX: u8 = if cfg!(feature = "k04_standalone_timeout_14") {
+    9
+} else {
+    1
+};
 const QUBE_AUTO_FLAG_DEACTIVATE_ON_KEY_BIT: u8 = 7;
 const QUBE_FLAG_LEFT_INVERT_SCROLL_Y: u8 = 1 << 0;
 const QUBE_FLAG_RIGHT_INVERT_SCROLL_Y: u8 = 1 << 1;
@@ -786,7 +799,7 @@ impl QubePointingSettings {
         self.flags = data[11];
         self.auto_flags = data[12];
         self.axis_flags = data[26] & 0x0f;
-        self.auto_layer_timeout_index = (data[26] >> 4).min(5);
+        self.auto_layer_timeout_index = (data[26] >> 4).min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX);
     }
 
     fn orientation(&self, source: QubePointingSource) -> u8 {
@@ -819,7 +832,8 @@ impl QubePointingSettings {
     }
 
     fn auto_layer_timeout_ms(&self) -> u32 {
-        QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE[usize::from(self.auto_layer_timeout_index.min(5))]
+        QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE
+            [usize::from(self.auto_layer_timeout_index.min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX))]
     }
 
     fn deactivate_auto_layer_on_key(&self) -> bool {
@@ -1841,6 +1855,31 @@ mod tests {
         main[0] = QUBE_SETTINGS_VERSION;
         settings.apply_packet(&main);
         assert_eq!(settings.auto_layer_threshold, 24);
+    }
+
+    #[test]
+    fn qube_auto_layer_timeout_presets_match_the_vial_indices() {
+        let mut settings = QubePointingSettings::new();
+        #[cfg(feature = "k04_standalone_timeout_14")]
+        {
+            assert_eq!(QUBE_SETTINGS_VERSION, 10);
+            assert_eq!(
+                QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE,
+                [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 750, 1000, 1250, 1500]
+            );
+        }
+        #[cfg(not(feature = "k04_standalone_timeout_14"))]
+        {
+            assert_eq!(QUBE_SETTINGS_VERSION, 9);
+            assert_eq!(QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE, [250, 500, 750, 1000, 1250, 1500]);
+        }
+        assert_eq!(settings.auto_layer_timeout_ms(), 500);
+        for (index, duration) in QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE.iter().enumerate() {
+            settings.auto_layer_timeout_index = index as u8;
+            assert_eq!(settings.auto_layer_timeout_ms(), *duration);
+        }
+        settings.auto_layer_timeout_index = 15;
+        assert_eq!(settings.auto_layer_timeout_ms(), 1500);
     }
 
     #[test]

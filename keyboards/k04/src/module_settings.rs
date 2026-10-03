@@ -5,7 +5,7 @@ use rmk::event::{PeripheralSettingsEvent, SleepStateEvent};
 use rmk::macros::processor;
 use rmk::split::ble::central::{set_split_link_profile, SplitLinkProfile};
 
-const VERSION: u8 = 9;
+const VERSION: u8 = if cfg!(feature = "standalone") { 10 } else { 9 };
 const SETTINGS_LEN: usize = 45;
 const TOUCH_DPI_BASE: u16 = 400;
 

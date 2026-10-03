@@ -29,7 +29,31 @@ const SETTING_KEYS: [u16; 84] = [
     320, 321, 322, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335,
 ];
 
-const MODULE_SETTINGS_VERSION: u8 = 9;
+const MODULE_SETTINGS_VERSION: u8 = if cfg!(feature = "standalone") { 10 } else { 9 };
+const LEGACY_TIMEOUT_SETTINGS_VERSION: u8 = 9;
+const AUTO_LAYER_TIMEOUT_MAX_INDEX: u8 = if cfg!(feature = "standalone") { 13 } else { 5 };
+
+// v9 saved the six original 250..=1500 ms presets as indices 0..=5.
+// Keep their effective durations when adding shorter presets in v10.
+const fn migrate_legacy_timeout_index(index: u8) -> u8 {
+    match index {
+        0 => 4,
+        1 => 9,
+        2 => 10,
+        3 => 11,
+        4 => 12,
+        _ => 13,
+    }
+}
+
+const _: () = {
+    assert!(migrate_legacy_timeout_index(0) == 4);
+    assert!(migrate_legacy_timeout_index(1) == 9);
+    assert!(migrate_legacy_timeout_index(2) == 10);
+    assert!(migrate_legacy_timeout_index(3) == 11);
+    assert!(migrate_legacy_timeout_index(4) == 12);
+    assert!(migrate_legacy_timeout_index(5) == 13);
+};
 const MODULE_SETTINGS_LEN: usize = 46;
 const LEGACY_MODULE_SETTINGS_STORAGE_LEN: usize = 32;
 const V4_MODULE_SETTINGS_STORAGE_LEN: usize = 33;
@@ -117,7 +141,7 @@ const MODULE_DEFAULTS: [u8; MODULE_SETTINGS_LEN] = {
     data[IDX_LED_TIMEOUT_SEC] = 1;
     // Keep the former 30-minute index for downgrade compatibility.
     data[IDX_RESERVED_HOST_DISCONNECT_TIMEOUT] = 3;
-    data[IDX_AUTO_LAYER_TIMEOUT] = 1;
+    data[IDX_AUTO_LAYER_TIMEOUT] = if cfg!(feature = "standalone") { 9 } else { 1 };
     data[IDX_LEFT_ENCODER_INTERVAL] = 4;
     data[IDX_RIGHT_ENCODER_INTERVAL] = 4;
     data[IDX_LEFT_ENCODER_STEPS] = 0;
@@ -157,8 +181,7 @@ const _: () = {
     let mut i = 0;
     while i < SETTING_KEYS.len() {
         let qsid = SETTING_KEYS[i];
-        let is_layer_name =
-            qsid >= LAYER_NAME_QSID_BASE && qsid < LAYER_NAME_QSID_BASE + LAYER_NAME_COUNT as u16;
+        let is_layer_name = qsid >= LAYER_NAME_QSID_BASE && qsid < LAYER_NAME_QSID_BASE + LAYER_NAME_COUNT as u16;
         assert!(
             is_layer_name || module_qsid_width(qsid).is_some(),
             "every SETTING_KEYS entry needs a module_qsid_width arm"
@@ -486,7 +509,7 @@ fn module_set_setting(qsid: u16, data: &[u8]) -> bool {
         316 => module_set_byte(IDX_LED_BRIGHTNESS, value),
         317 => module_set_byte(IDX_LED_TIMEOUT_SEC, value),
         318..=322 => module_set_bt_profile_color_index((qsid - 318) as u8, value.min(24)),
-        324 => module_set_byte(IDX_AUTO_LAYER_TIMEOUT, value.min(5)),
+        324 => module_set_byte(IDX_AUTO_LAYER_TIMEOUT, value.min(AUTO_LAYER_TIMEOUT_MAX_INDEX)),
         325 => module_set_byte(IDX_LEFT_ENCODER_INTERVAL, value.min(9)),
         326 => module_set_byte(IDX_RIGHT_ENCODER_INTERVAL, value.min(9)),
         327 => module_set_axis_flag(AXIS_FLAG_LEFT_INVERT_SCROLL_X, value != 0),
@@ -582,7 +605,8 @@ fn module_settings_sync_packet() -> [u8; MODULE_SETTINGS_SYNC_LEN] {
         layer += 1;
     }
     data[25] = module_byte(IDX_MODULE_SELECT) & 0x0f;
-    data[26] = (module_byte(IDX_AXIS_FLAGS) & 0x0f) | ((module_byte(IDX_AUTO_LAYER_TIMEOUT).min(5) & 0x0f) << 4);
+    data[26] = (module_byte(IDX_AXIS_FLAGS) & 0x0f)
+        | ((module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX) & 0x0f) << 4);
     data
 }
 
@@ -625,7 +649,7 @@ fn module_qsid_value(qsid: u16) -> Option<u8> {
         316 => module_byte(IDX_LED_BRIGHTNESS),
         317 => module_byte(IDX_LED_TIMEOUT_SEC),
         318..=322 => module_bt_profile_color_index((qsid - 318) as u8),
-        324 => module_byte(IDX_AUTO_LAYER_TIMEOUT).min(5),
+        324 => module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX),
         325 => module_byte(IDX_LEFT_ENCODER_INTERVAL).min(9),
         326 => module_byte(IDX_RIGHT_ENCODER_INTERVAL).min(9),
         327 => module_axis_flag(AXIS_FLAG_LEFT_INVERT_SCROLL_X) as u8,
@@ -676,8 +700,8 @@ fn serialize_module_settings() -> [u8; MODULE_SETTINGS_STORAGE_LEN] {
     }
     data[29] = (module_byte(IDX_RESERVED_HOST_DISCONNECT_TIMEOUT) & 0x0f)
         | ((module_byte(IDX_LEFT_ENCODER_INTERVAL).min(9) & 0x0f) << 4);
-    data[30] =
-        module_byte(IDX_AUTO_LAYER_TIMEOUT).min(5) | ((module_byte(IDX_RIGHT_ENCODER_INTERVAL).min(9) & 0x0f) << 4);
+    data[30] = module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX)
+        | ((module_byte(IDX_RIGHT_ENCODER_INTERVAL).min(9) & 0x0f) << 4);
     data[31] = (module_byte(IDX_MODULE_SELECT) & 0x0f) | ((module_byte(IDX_AXIS_FLAGS) & 0x0f) << 4);
     data[32] = (module_byte(IDX_LEFT_ENCODER_STEPS).min(7) & 0x0f)
         | ((module_byte(IDX_RIGHT_ENCODER_STEPS).min(7) & 0x0f) << 4);
@@ -689,8 +713,10 @@ fn deserialize_module_settings(data: &[u8]) {
     if !matches!(
         data.len(),
         LEGACY_MODULE_SETTINGS_STORAGE_LEN | V4_MODULE_SETTINGS_STORAGE_LEN | MODULE_SETTINGS_STORAGE_LEN
-    ) || data[0] != MODULE_SETTINGS_VERSION
-    {
+    ) || !data.first().is_some_and(|version| {
+        *version == MODULE_SETTINGS_VERSION
+            || (cfg!(feature = "standalone") && *version == LEGACY_TIMEOUT_SETTINGS_VERSION)
+    }) {
         reset_module_settings();
         return;
     }
@@ -729,7 +755,12 @@ fn deserialize_module_settings(data: &[u8]) {
     }
     MODULE_SETTINGS[IDX_RESERVED_HOST_DISCONNECT_TIMEOUT].store(data[29] & 0x0f, Ordering::Relaxed);
     MODULE_SETTINGS[IDX_LEFT_ENCODER_INTERVAL].store((data[29] >> 4).min(9), Ordering::Relaxed);
-    MODULE_SETTINGS[IDX_AUTO_LAYER_TIMEOUT].store((data[30] & 0x0f).min(5), Ordering::Relaxed);
+    let auto_layer_timeout_index = if cfg!(feature = "standalone") && data[0] == LEGACY_TIMEOUT_SETTINGS_VERSION {
+        migrate_legacy_timeout_index(data[30] & 0x0f)
+    } else {
+        (data[30] & 0x0f).min(AUTO_LAYER_TIMEOUT_MAX_INDEX)
+    };
+    MODULE_SETTINGS[IDX_AUTO_LAYER_TIMEOUT].store(auto_layer_timeout_index, Ordering::Relaxed);
     MODULE_SETTINGS[IDX_RIGHT_ENCODER_INTERVAL].store((data[30] >> 4).min(9), Ordering::Relaxed);
     MODULE_SETTINGS[IDX_MODULE_SELECT].store(data[31] & 0x0f, Ordering::Relaxed);
     MODULE_SETTINGS[IDX_AXIS_FLAGS].store((data[31] >> 4) & 0x0f, Ordering::Relaxed);
@@ -926,4 +957,66 @@ const fn set_default_layer_color(
         data[byte_idx + 1] |= (raw >> 8) as u8;
     }
     data
+}
+
+#[cfg(all(test, feature = "standalone"))]
+mod timeout_migration_tests {
+    use super::*;
+
+    #[test]
+    fn persisted_v9_timeout_survives_v10_round_trip() {
+        const OLD_MS: [u32; 6] = [250, 500, 750, 1000, 1250, 1500];
+        const NEW_MS: [u32; 14] = [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 750, 1000, 1250, 1500];
+
+        // The v9 storage layout packs timeout in the low nibble of byte 30
+        // and the right encoder interval in its high nibble.
+        for (old_index, expected_ms) in OLD_MS.iter().enumerate() {
+            let mut saved = [0u8; MODULE_SETTINGS_STORAGE_LEN];
+            saved[0] = LEGACY_TIMEOUT_SETTINGS_VERSION;
+            saved[30] = (6 << 4) | old_index as u8;
+            saved[29] = (7 << 4) | (saved[29] & 0x0f);
+            saved[13] = 17; // independent LED brightness setting
+
+            deserialize_module_settings(&saved);
+            let migrated = module_byte(IDX_AUTO_LAYER_TIMEOUT);
+            assert_eq!(NEW_MS[usize::from(migrated)], *expected_ms);
+            assert_eq!(module_byte(IDX_RIGHT_ENCODER_INTERVAL), 6);
+            assert_eq!(module_byte(IDX_LEFT_ENCODER_INTERVAL), 7);
+            assert_eq!(module_byte(IDX_LED_BRIGHTNESS), 17);
+
+            let rewritten = serialize_module_settings();
+            assert_eq!(rewritten[0], MODULE_SETTINGS_VERSION);
+            assert_eq!(rewritten[30] >> 4, 6);
+            deserialize_module_settings(&rewritten);
+            assert_eq!(NEW_MS[usize::from(module_byte(IDX_AUTO_LAYER_TIMEOUT))], *expected_ms);
+            assert_eq!(module_byte(IDX_RIGHT_ENCODER_INTERVAL), 6);
+            assert_eq!(module_byte(IDX_LEFT_ENCODER_INTERVAL), 7);
+            assert_eq!(module_byte(IDX_LED_BRIGHTNESS), 17);
+        }
+    }
+}
+
+#[cfg(all(test, not(feature = "standalone")))]
+mod qube_legacy_timeout_tests {
+    use super::*;
+
+    #[test]
+    fn qube_keeps_six_v9_timeout_indices() {
+        assert_eq!(MODULE_SETTINGS_VERSION, 9);
+        assert_eq!(AUTO_LAYER_TIMEOUT_MAX_INDEX, 5);
+        reset_module_settings();
+        assert_eq!(module_byte(IDX_AUTO_LAYER_TIMEOUT), 1); // 500 ms
+
+        for index in 0..6 {
+            let mut saved = [0u8; MODULE_SETTINGS_STORAGE_LEN];
+            saved[0] = 9;
+            saved[30] = (6 << 4) | index;
+            deserialize_module_settings(&saved);
+            assert_eq!(module_byte(IDX_AUTO_LAYER_TIMEOUT), index);
+            assert_eq!(module_byte(IDX_RIGHT_ENCODER_INTERVAL), 6);
+            let rewritten = serialize_module_settings();
+            assert_eq!(rewritten[0], 9);
+            assert_eq!(rewritten[30], saved[30]);
+        }
+    }
 }

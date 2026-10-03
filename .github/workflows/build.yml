@@ -21,6 +21,12 @@ jobs:
       - name: Validate profile contract
         run: ./scripts/check_ergohaven_profile.sh
 
+      - name: Install Rust for K:04 migration test
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test K:04 persisted timeout migration
+        run: python3 scripts/test_k04_timeout_migration.py
+
   build:
     name: Build ${{ matrix.output_name }} firmware
     runs-on: ubuntu-latest

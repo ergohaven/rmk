@@ -13,7 +13,7 @@ autoexamples = false
 
 [features]
 default = ["standalone"]
-standalone = ["rmk/defmt"]
+standalone = ["rmk/defmt", "rmk/k04_standalone_timeout_14"]
 usb_debug = ["rmk/usb_log"]
 usb_debug_force_ble = ["usb_debug"]
 rtt_diag = ["rmk/rtt_diag"]
