@@ -35,6 +35,7 @@ cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features
 cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "split,async_matrix,_ble"
 cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "async_matrix,storage"
 cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "vial,storage"
+cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "split,vial_lock,storage"
 cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "vial,_ble"
 cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "passkey_entry"
 cargo "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "split,vial,storage,passkey_entry"

@@ -633,6 +633,12 @@ impl<'a> VialService<'a> {
                 self.ctx.reset_storage().await;
                 // TODO: Reboot after a eeprom reset?
             }
+            // Match Vial QMK: a locked board must not reboot into a bootloader
+            // that accepts any firmware from the host.
+            #[cfg(feature = "vial_lock")]
+            ViaCommand::BootloaderJump if !self.locker.is_unlocked() => {
+                warn!("Bootloader jump ignored while Vial is locked");
+            }
             ViaCommand::BootloaderJump => {
                 warn!("Bootloader jumping");
                 boot::jump_to_bootloader();
@@ -925,6 +931,42 @@ mod tests {
         block_on(service.process_via_packet(&mut report));
 
         assert_eq!(&report.input_data[2..6], &[0x00, 0x00, 0x01, 0x03]);
+    }
+
+    #[cfg(feature = "vial_lock")]
+    #[test]
+    fn bootloader_jump_requires_vial_unlock() {
+        use core::sync::atomic::Ordering;
+
+        use crate::boot::BOOTLOADER_JUMPS;
+
+        let jump = |vial_insecure: bool| {
+            let mut data = KeymapData::new([[[KeyAction::No]]]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = block_on(KeyMap::new(&mut data, &mut behavior, &positional));
+            let ctx = KeyboardContext::new(&keymap);
+            let config = RmkConfig {
+                vial_config: VialConfig {
+                    vial_insecure,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut service = VialService::new(&ctx, &config);
+            let mut output_data = [0u8; 32];
+            output_data[0] = ViaCommand::BootloaderJump as u8;
+            let mut report = ViaReport {
+                input_data: output_data,
+                output_data,
+            };
+            let before = BOOTLOADER_JUMPS.load(Ordering::Relaxed);
+            block_on(service.process_via_packet(&mut report));
+            BOOTLOADER_JUMPS.load(Ordering::Relaxed) - before
+        };
+
+        assert_eq!(jump(false), 0, "a locked board must not jump to the bootloader");
+        assert_eq!(jump(true), 1, "an unlocked board still jumps to the bootloader");
     }
 
     // `output_data` is [u8; 32], so the handler slices `output_data[4..4 + size]`.
