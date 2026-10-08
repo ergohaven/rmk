@@ -17,7 +17,10 @@ use crate::event::KeyboardEvent;
 
 const MAX_DYNAMIC_ENCODERS: usize = 32;
 const MAX_ENCODER_STEPS: u8 = 8;
+const ENCODER_INTERVAL_UNSET: u8 = u8::MAX;
 static ENCODER_STEPS: [AtomicU8; MAX_DYNAMIC_ENCODERS] = [const { AtomicU8::new(1) }; MAX_DYNAMIC_ENCODERS];
+static ENCODER_INTERVAL_MS: [AtomicU8; MAX_DYNAMIC_ENCODERS] =
+    [const { AtomicU8::new(ENCODER_INTERVAL_UNSET) }; MAX_DYNAMIC_ENCODERS];
 // ARMv6-M does not provide atomic read-modify-write operations for `u32`.
 // Keep the shared bitset behind RMK's blocking mutex so every supported
 // target can update it without polling disabled encoder tasks.
@@ -42,6 +45,50 @@ pub fn encoder_steps(id: u8) -> u8 {
         .get(usize::from(id))
         .map(|value| value.load(Ordering::Relaxed))
         .unwrap_or(1)
+}
+
+/// Override the minimum interval between events for one encoder at runtime.
+///
+/// Values up to 254 ms are accepted. Until an override is installed, the
+/// encoder keeps using its statically generated TOML `debounce_ms` value.
+pub fn set_encoder_interval_ms(id: u8, interval_ms: u16) -> bool {
+    let Some(value) = ENCODER_INTERVAL_MS.get(usize::from(id)) else {
+        return false;
+    };
+    let Ok(interval_ms) = u8::try_from(interval_ms) else {
+        return false;
+    };
+    if interval_ms == ENCODER_INTERVAL_UNSET {
+        return false;
+    }
+    value.store(interval_ms, Ordering::Relaxed);
+    true
+}
+
+/// Read a runtime interval override. `None` means either an invalid encoder ID
+/// or that the encoder still uses its static TOML debounce value.
+pub fn encoder_interval_ms(id: u8) -> Option<u16> {
+    let value = ENCODER_INTERVAL_MS.get(usize::from(id))?.load(Ordering::Relaxed);
+    (value != ENCODER_INTERVAL_UNSET).then_some(u16::from(value))
+}
+
+/// Restore the statically configured TOML debounce interval for one encoder.
+pub fn clear_encoder_interval_override(id: u8) -> bool {
+    let Some(value) = ENCODER_INTERVAL_MS.get(usize::from(id)) else {
+        return false;
+    };
+    value.store(ENCODER_INTERVAL_UNSET, Ordering::Relaxed);
+    true
+}
+
+/// Compatibility spelling for callers that describe the interval as debounce.
+pub fn set_encoder_debounce_ms(id: u8, debounce_ms: u16) -> bool {
+    set_encoder_interval_ms(id, debounce_ms)
+}
+
+/// Compatibility spelling for [`encoder_interval_ms`].
+pub fn encoder_debounce_ms(id: u8) -> Option<u16> {
+    encoder_interval_ms(id)
 }
 
 /// Enable or park one encoder task at runtime.
@@ -365,8 +412,9 @@ impl<
     /// returning `true`.
     fn debounce_check(&mut self) -> bool {
         let now = embassy_time::Instant::now();
+        let interval_ms = encoder_interval_ms(self.id).unwrap_or(self.debounce_ms);
         let ok = match self.last_event_time {
-            Some(last) => now.duration_since(last).as_millis() >= self.debounce_ms as u64,
+            Some(last) => now.duration_since(last).as_millis() >= u64::from(interval_ms),
             None => true,
         };
         if ok {
@@ -498,6 +546,30 @@ mod test {
         assert_eq!(encoder_steps(31), 8);
         assert!(!set_encoder_steps(32, 3));
         assert_eq!(encoder_steps(32), 1);
+    }
+
+    #[test]
+    fn encoder_interval_runtime_api_checks_bounds_and_roundtrips() {
+        assert!(clear_encoder_interval_override(29));
+        assert_eq!(encoder_interval_ms(29), None);
+        assert!(set_encoder_interval_ms(29, 100));
+        assert_eq!(encoder_interval_ms(29), Some(100));
+        assert_eq!(encoder_debounce_ms(29), Some(100));
+        assert!(set_encoder_debounce_ms(29, 0));
+        assert_eq!(encoder_interval_ms(29), Some(0));
+        assert!(!set_encoder_interval_ms(29, 255));
+        assert!(!set_encoder_interval_ms(29, 256));
+        assert!(!set_encoder_interval_ms(32, 10));
+        assert_eq!(encoder_interval_ms(32), None);
+    }
+
+    #[test]
+    fn absent_runtime_interval_preserves_static_debounce() {
+        assert!(clear_encoder_interval_override(28));
+        let static_debounce_ms = 37;
+        assert_eq!(encoder_interval_ms(28).unwrap_or(static_debounce_ms), 37);
+        assert!(set_encoder_interval_ms(28, 5));
+        assert_eq!(encoder_interval_ms(28).unwrap_or(static_debounce_ms), 5);
     }
 
     #[test]

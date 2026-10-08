@@ -6,14 +6,15 @@ use std::{env, fs};
 use xz2::read::XzEncoder;
 
 fn main() {
-    const FIRMWARE_VERSION: &str = "0.1.8";
-    const FIRMWARE_VERSION_BCD: &str = "0x0108";
+    // Test-only cache-busting version for the runtime encoder settings build.
+    const FIRMWARE_VERSION: &str = "0.1.9";
+    const FIRMWARE_VERSION_BCD: &str = "0x0109";
 
     println!("cargo:rerun-if-changed=vial.json");
     println!("cargo:rerun-if-changed=keyboard.toml");
     println!("cargo:rustc-env=RMK_FIRMWARE_VERSION={FIRMWARE_VERSION}");
     println!("cargo:rustc-env=RMK_FIRMWARE_VERSION_BCD={FIRMWARE_VERSION_BCD}");
-    println!("cargo:rustc-env=RMK_VIAL_DEVICE_SETTINGS_FN=crate::layer_names::vial_device_settings");
+    println!("cargo:rustc-env=RMK_VIAL_DEVICE_SETTINGS_FN=crate::encoder_device_settings::vial_device_settings");
     println!("cargo:rustc-env=RMK_BLE_HOST_POWER_CONFIG_FN=crate::ble_host_power::ble_host_power_config");
 
     generate_vial_config();

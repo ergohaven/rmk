@@ -534,6 +534,11 @@ for file in "${build_scripts[@]}"; do
             || fail "$file: K:04 Qube firmware version must be 0.1.10"
         rg -q 'const QUBE_FIRMWARE_VERSION_BCD: &str = "0x0110";' "$file" \
             || fail "$file: K:04 Qube BCD firmware version must be 0x0110"
+    elif [[ "$file" == "keyboards/k03/build.rs" || "$file" == "keyboards/imperial44/build.rs" ]]; then
+        rg -q 'const FIRMWARE_VERSION: &str = "0\.1\.9";' "$file" \
+            || fail "$file: firmware version must be 0.1.9"
+        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0109";' "$file" \
+            || fail "$file: BCD firmware version must be 0x0109"
     else
         rg -q 'const FIRMWARE_VERSION: &str = "0\.1\.8";' "$file" \
             || fail "$file: firmware version must be 0.1.8"
@@ -551,6 +556,9 @@ mapfile -t vial_definitions < <(
 for file in "${vial_definitions[@]}"; do
     expected_version="0.1.8"
     case "$file" in
+        keyboards/k03/vial.json|keyboards/imperial44/vial.json)
+            expected_version="0.1.9"
+            ;;
         keyboards/k04/vial.json|keyboards/k04/vial_mini.json|keyboards/k04/vial_micro.json|\
         keyboards/k04/vial_qube.json|keyboards/k04/vial_qube_mini.json|keyboards/k04/vial_qube_micro.json)
             expected_version="0.1.10"

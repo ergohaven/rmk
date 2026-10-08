@@ -4,14 +4,16 @@
     "vendorId": "0xE126",
     "productId": "0x0044",
     "entropy": {
-        "firmwareUpdate": { "asset": "imperial44" },
+        "firmwareUpdate": {
+            "asset": "imperial44"
+        },
         "batteryHalves": true
     },
     "firmware": {
         "name": "RMK",
-        "version": "0.1.8"
+        "version": "0.1.9"
     },
-    "firmwareVersion": "0.1.8",
+    "firmwareVersion": "0.1.9",
     "lighting": "none",
     "matrix": {
         "rows": 8,
@@ -271,5 +273,83 @@
                 "7,3"
             ]
         ]
-    }
+    },
+    "settings": [
+        {
+            "name": "Left encoder (ID 0)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder interval",
+                    "qsid": 340,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder steps",
+                    "qsid": 341,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder (ID 1)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder interval",
+                    "qsid": 342,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder steps",
+                    "qsid": 343,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        }
+    ]
 }

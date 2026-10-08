@@ -4,14 +4,16 @@
     "vendorId": "0xE126",
     "productId": "0x0070",
     "entropy": {
-        "firmwareUpdate": { "asset": "k03" },
+        "firmwareUpdate": {
+            "asset": "k03"
+        },
         "batteryHalves": true
     },
     "firmware": {
         "name": "RMK",
-        "version": "0.1.8"
+        "version": "0.1.9"
     },
-    "firmwareVersion": "0.1.8",
+    "firmwareVersion": "0.1.9",
     "lighting": "none",
     "matrix": {
         "rows": 10,
@@ -390,5 +392,235 @@
                 "5,0\n\n\n\n\n\n\n\n\ne"
             ]
         ]
-    }
+    },
+    "settings": [
+        {
+            "name": "Left encoder 1 (ID 0)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 1 interval",
+                    "qsid": 340,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 1 steps",
+                    "qsid": 341,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Left encoder 2 (ID 1)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 2 interval",
+                    "qsid": 342,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 2 steps",
+                    "qsid": 343,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Left encoder 3 (ID 2)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 3 interval",
+                    "qsid": 344,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 3 steps",
+                    "qsid": 345,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder 1 (ID 3)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 1 interval",
+                    "qsid": 346,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 1 steps",
+                    "qsid": 347,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder 2 (ID 4)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 2 interval",
+                    "qsid": 348,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 2 steps",
+                    "qsid": 349,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder 3 (ID 5)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 3 interval",
+                    "qsid": 350,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 3 steps",
+                    "qsid": 351,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        }
+    ]
 }
