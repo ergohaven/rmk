@@ -44,6 +44,7 @@ layer_change.channel_size = 4
 layer_change.subs = 6
 modifier.channel_size = 8
 modifier.subs = 6
+peripheral_settings_refresh.subs = 1
 
 [split]
 connection = "ble"
@@ -73,21 +74,21 @@ col_pins = ["P0_10", "P1_10", "P0_02", "P1_13", "P0_28", "P0_03"]
 pin_a = "P1_02"
 pin_b = "P1_00"
 phase = "resolution"
-resolution = 4
+resolution = 2
 internal_pullup = true
 
 [[split.peripheral.input_device.encoder]]
 pin_a = "P0_22"
 pin_b = "P0_20"
 phase = "resolution"
-resolution = 4
+resolution = 2
 internal_pullup = true
 
 [[split.peripheral.input_device.encoder]]
 pin_a = "P1_06"
 pin_b = "P1_04"
 phase = "resolution"
-resolution = 4
+resolution = 2
 internal_pullup = true
 
 [[split.peripheral]]
@@ -105,21 +106,21 @@ col_pins = ["P0_09", "P0_10", "P0_28", "P0_03", "P1_10", "P1_11"]
 pin_a = "P1_02"
 pin_b = "P1_00"
 phase = "resolution"
-resolution = 4
+resolution = 2
 internal_pullup = true
 
 [[split.peripheral.input_device.encoder]]
 pin_a = "P0_22"
 pin_b = "P0_20"
 phase = "resolution"
-resolution = 4
+resolution = 2
 internal_pullup = true
 
 [[split.peripheral.input_device.encoder]]
 pin_a = "P1_06"
 pin_b = "P1_04"
 phase = "resolution"
-resolution = 4
+resolution = 2
 internal_pullup = true
 
 [layout]

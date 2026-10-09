@@ -539,6 +539,17 @@ for file in "${build_scripts[@]}"; do
             || fail "$file: firmware version must be 0.1.9"
         rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0109";' "$file" \
             || fail "$file: BCD firmware version must be 0x0109"
+    elif [[ "$file" == "keyboards/classic_qube/build.rs" ]]; then
+        rg -Fq 'let encoder_profile = matches!(product_id, 0x0044 | 0x0070);' "$file" \
+            || fail "$file: K03 and Imperial44 Qube must select the encoder profile"
+        rg -Fq '("0.1.9", "0x0109")' "$file" \
+            || fail "$file: K03 and Imperial44 Qube firmware version must be 0.1.9/0x0109"
+        rg -Fq '("0.1.8", "0x0108")' "$file" \
+            || fail "$file: OP36 and Velvet Qube firmware version must remain 0.1.8/0x0108"
+        rg -Fq 'cargo:rustc-env=RMK_FIRMWARE_VERSION={version}' "$file" \
+            || fail "$file: selected firmware version is not exported"
+        rg -Fq 'cargo:rustc-env=RMK_FIRMWARE_VERSION_BCD={version_bcd}' "$file" \
+            || fail "$file: selected BCD firmware version is not exported"
     else
         rg -q 'const FIRMWARE_VERSION: &str = "0\.1\.8";' "$file" \
             || fail "$file: firmware version must be 0.1.8"

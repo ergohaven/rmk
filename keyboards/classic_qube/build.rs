@@ -18,9 +18,6 @@ use std::{env, fs};
 use xz2::read::XzEncoder;
 
 fn main() {
-    const FIRMWARE_VERSION: &str = "0.1.8";
-    const FIRMWARE_VERSION_BCD: &str = "0x0108";
-
     let vial_path = configured_path("VIAL_JSON_PATH", "vial.json");
     let keyboard_path = configured_path("KEYBOARD_TOML_PATH", "keyboard.toml");
 
@@ -30,15 +27,25 @@ fn main() {
     println!("cargo:rerun-if-changed={}", keyboard_path.display());
     println!("cargo:rerun-if-changed=memory_halves.x");
     println!("cargo:rerun-if-changed=memory_qube.x");
-    println!("cargo:rustc-env=RMK_FIRMWARE_VERSION={FIRMWARE_VERSION}");
-    println!("cargo:rustc-env=RMK_FIRMWARE_VERSION_BCD={FIRMWARE_VERSION_BCD}");
     println!("cargo:rustc-check-cfg=cfg(velvet_pointing)");
+    println!("cargo:rustc-check-cfg=cfg(classic_encoder_settings)");
 
     // Put `memory.x` in our output directory and ensure it's
     // on the linker search path.
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let product_id = generate_vial_config(&vial_path);
-    let settings_fn = if product_id == 0x00BE {
+    let encoder_profile = matches!(product_id, 0x0044 | 0x0070);
+    let (version, version_bcd) = if encoder_profile {
+        println!("cargo:rustc-cfg=classic_encoder_settings");
+        ("0.1.9", "0x0109")
+    } else {
+        ("0.1.8", "0x0108")
+    };
+    println!("cargo:rustc-env=RMK_FIRMWARE_VERSION={version}");
+    println!("cargo:rustc-env=RMK_FIRMWARE_VERSION_BCD={version_bcd}");
+    let settings_fn = if encoder_profile {
+        "crate::encoder_device_settings::vial_device_settings"
+    } else if product_id == 0x00BE {
         "crate::velvet_device_settings::vial_device_settings"
     } else {
         "crate::layer_names::vial_device_settings"
@@ -153,7 +160,27 @@ fn generate_qube_profile(product_id: u16, out: &Path) {
     crate::default_layer_names::STANDARD_WITH_MOUSE;
 "#
         }
-        0x0036 | 0x0044 | 0x0070 => {
+        0x0044 => {
+            r#"pub const DEFAULT_LAYER_NAMES: [&str; 16] =
+    crate::default_layer_names::STANDARD_NO_MOUSE;
+pub const ENCODER_COUNT: usize = 2;
+pub const ENCODER_SETTING_KEYS: &[u16] = &[
+    200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215,
+    340, 341, 342, 343,
+];
+"#
+        }
+        0x0070 => {
+            r#"pub const DEFAULT_LAYER_NAMES: [&str; 16] =
+    crate::default_layer_names::STANDARD_NO_MOUSE;
+pub const ENCODER_COUNT: usize = 6;
+pub const ENCODER_SETTING_KEYS: &[u16] = &[
+    200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215,
+    340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351,
+];
+"#
+        }
+        0x0036 => {
             r#"pub const DEFAULT_LAYER_NAMES: [&str; 16] =
     crate::default_layer_names::STANDARD_NO_MOUSE;
 "#
