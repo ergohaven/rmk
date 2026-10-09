@@ -25,6 +25,7 @@ const PMW3610_REST1_DOWNSHIFT: u8 = 0x1d;
 const PMW3610_OBSERVATION1: u8 = 0x2d;
 const PMW3610_SMART_MODE: u8 = 0x32;
 const PMW3610_POWER_UP_RESET: u8 = 0x3a;
+const PMW3610_SHUTDOWN: u8 = 0x3b;
 const PMW3610_SPI_CLK_ON_REQ: u8 = 0x41;
 const PMW3610_SPI_PAGE0: u8 = 0x7f;
 
@@ -73,6 +74,7 @@ const PERFORMANCE_FMODE_MASK: u8 = 0x0f << 4;
 const PERFORMANCE_FMODE_NORMAL: u8 = 0x00 << 4;
 const PERFORMANCE_FMODE_FORCE_AWAKE: u8 = 0x0f << 4;
 const POWER_UP_RESET_VAL: u8 = 0x5a;
+const SHUTDOWN_ENABLE: u8 = 0xe7;
 const SPI_PAGE0_1: u8 = 0xff;
 const SPI_PAGE1_0: u8 = 0x00;
 const SHUTTER_SMART_THRESHOLD: u16 = 45;
@@ -294,6 +296,13 @@ impl<SPI: SpiBus, CS: OutputPin, MOTION: InputPin + Wait> Pmw3610<SPI, CS, MOTIO
             expected_res_step,
             expected_smart_mode,
         })
+    }
+
+    /// Put the sensor into shutdown. Only `init()` brings it back: its power-up
+    /// reset wakes the sensor and restores the configuration.
+    pub async fn shutdown(&mut self) -> Result<(), PointingDriverError> {
+        self.write_reg(PMW3610_SHUTDOWN, SHUTDOWN_ENABLE).await?;
+        Ok(())
     }
 
     /// Set force awake mode

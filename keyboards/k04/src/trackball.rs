@@ -74,6 +74,10 @@ const MAX_MOTION_READS_PER_WAKE: usize = 16;
 const SCHEDULER_PROBE_INTERVAL: Duration = Duration::from_millis(10);
 const SLEEP_MOTION_THRESHOLD: u32 = 2;
 const SLEEP_MOTION_WINDOW: Duration = Duration::from_millis(20);
+// Even in Rest3 the module drains the half about 1%/h. Short pauses keep the
+// ball able to wake the board; a long sleep shuts the sensor down until a key
+// wakes it.
+const SLEEP_SHUTDOWN_DELAY: Duration = Duration::from_secs(60 * 60);
 #[cfg(any(feature = "pmw_raw_600_diag", feature = "pmw_axes_600"))]
 const DEFAULT_CPI: u16 = 600;
 #[cfg(not(any(feature = "pmw_raw_600_diag", feature = "pmw_axes_600")))]
@@ -145,6 +149,7 @@ pub struct Trackball {
     last_report: Instant,
     last_motion_activity: Option<Instant>,
     sleep_motion_deadline: Option<Instant>,
+    sleep_started: Option<Instant>,
     next_probe: Instant,
     next_health_check: Instant,
     unavailable_since: Option<Instant>,
@@ -178,6 +183,7 @@ impl Trackball {
             last_report: Instant::MIN,
             last_motion_activity: None,
             sleep_motion_deadline: None,
+            sleep_started: None,
             next_probe: Instant::MIN,
             next_health_check: Instant::MIN,
             unavailable_since: None,
@@ -305,6 +311,16 @@ impl Trackball {
             }
 
             let sleeping = module_settings::module_sleeping();
+            let shutdown_deadline =
+                sleeping.then(|| *self.sleep_started.get_or_insert_with(Instant::now) + SLEEP_SHUTDOWN_DELAY);
+            if shutdown_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                // init() on wake brings the sensor back from shutdown.
+                let _ = self.trackball.shutdown().await;
+                self.park_for_sleep();
+                self.ready = false;
+                self.next_probe = Instant::MIN;
+                continue;
+            }
             if !sleeping {
                 self.apply_configured_cpi().await;
             }
@@ -313,11 +329,10 @@ impl Trackball {
                 .has_reportable_motion(sleeping)
                 .then_some(self.last_report + report_interval);
             let base_deadline = if sleeping {
-                match (report_deadline, self.sleep_motion_deadline) {
-                    (Some(report), Some(noise)) => Some(report.min(noise)),
-                    (Some(report), None) => Some(report),
-                    (None, noise) => noise,
-                }
+                [report_deadline, self.sleep_motion_deadline, shutdown_deadline]
+                    .into_iter()
+                    .flatten()
+                    .min()
             } else {
                 Some(
                     report_deadline
@@ -607,6 +622,7 @@ impl Trackball {
             self.acc_y = 0;
         }
         self.sleep_motion_deadline = None;
+        self.sleep_started = None;
         if self.ready {
             self.next_health_check = Instant::now() + HEALTH_CHECK_INTERVAL;
         }
@@ -661,6 +677,7 @@ impl Trackball {
         self.last_report = Instant::MIN;
         self.last_motion_activity = None;
         self.sleep_motion_deadline = None;
+        self.sleep_started = None;
         self.next_probe = Instant::MIN;
         self.next_health_check = Instant::MIN;
         self.unavailable_since = None;
