@@ -25,13 +25,13 @@ impl<F: AsyncNorFlash> Storage<F> {
             .flash
             .fetch_all_items(&mut self.buffer)
             .await
-            .map_err(|e| print_storage_error::<F>(e))?;
+            .map_err(print_storage_error)?;
 
         // Read all keymap keys and encoder configs
         while let Some((key, value)) = key_iterator
             .next::<StorageValue>(&mut self.buffer)
             .await
-            .map_err(|e| print_storage_error::<F>(e))?
+            .map_err(print_storage_error)?
         {
             // A layer at or above `no_action_layer_start` reads only the tail namespace, so the
             // records a firmware without that boundary left for it keep losing to the no-action default.

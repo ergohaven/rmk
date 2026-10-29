@@ -84,7 +84,7 @@ pub(crate) async fn set(
                 return false;
             };
             #[cfg(feature = "storage")]
-            crate::storage::store_unchecked(crate::storage::StorageItem::DeviceSettings((board.serialize)())).await;
+            crate::storage::queue_device_settings_flash_write((board.serialize)());
             #[cfg(not(feature = "storage"))]
             let _ = board;
             Ok(())
