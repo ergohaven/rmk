@@ -93,7 +93,7 @@
                     "title": "Trackball enabled",
                     "qsid": 334,
                     "bit": 0,
-                    "layoutOption": 0
+                    "layoutOption": 1
                 },
                 {
                     "type": "select",
@@ -270,6 +270,7 @@
     ],
     "layouts": {
         "labels": [
+      ["Universal Symbols geometry", "ANSI", "ISO"],
             "Right trackball instead of key"
         ],
         "keymap": [
@@ -466,7 +467,7 @@
                 {
                     "y": 0.2
                 },
-                "7,1\n\n\n0,0"
+                "7,1\n\n\n1,0"
             ]
         ]
     }

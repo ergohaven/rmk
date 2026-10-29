@@ -157,6 +157,7 @@
     ],
     "layouts": {
         "labels": [
+            ["Universal Symbols geometry", "ANSI", "ISO"],
             "Hide left encoder module",
             "Hide right encoder module"
         ],
@@ -253,7 +254,7 @@
                     "y": 0.15
                 },
                 "3,0",
-                "4,0\n\n\n0,0"
+                "4,0\n\n\n1,0"
             ],
             [
                 {
@@ -302,12 +303,12 @@
                     "rx": 8,
                     "ry": 2.6
                 },
-                "0,1\n\n\n0,0\n\n\n\n\n\ne",
+                "0,1\n\n\n1,0\n\n\n\n\n\ne",
                 {
                     "y": 1.0,
                     "x": -1
                 },
-                "0,0\n\n\n0,0\n\n\n\n\n\ne"
+                "0,0\n\n\n1,0\n\n\n\n\n\ne"
             ],
             [
                 {
@@ -385,7 +386,7 @@
                     "x": -1,
                     "y": -0.3
                 },
-                "9,0\n\n\n1,0",
+                "9,0\n\n\n2,0",
                 "8,0",
                 {
                     "y": -0.15
@@ -452,12 +453,12 @@
                     "rx": 10,
                     "ry": 2.6
                 },
-                "1,1\n\n\n1,0\n\n\n\n\n\ne",
+                "1,1\n\n\n2,0\n\n\n\n\n\ne",
                 {
                     "x": -1,
                     "y": 1
                 },
-                "1,0\n\n\n1,0\n\n\n\n\n\ne"
+                "1,0\n\n\n2,0\n\n\n\n\n\ne"
             ]
         ]
     }

@@ -74,11 +74,12 @@ jobs:
             output_name: k03
             keyboard_toml: keyboard.toml
             vial_json: vial.json
+            build_features: "--features universal_mac_iso"
           - keyboard: k04
             output_name: k04_series_k04
             keyboard_toml: keyboard.toml
             vial_json: vial.json
-            build_features: "--features production_v30g"
+            build_features: "--features production_v30g,universal_mac_iso"
           - keyboard: k04
             output_name: k04_series_mini
             keyboard_toml: keyboard_mini.toml
@@ -88,19 +89,22 @@ jobs:
             output_name: k04_series_micro
             keyboard_toml: keyboard_micro.toml
             vial_json: vial_micro.json
-            build_features: "--features production_v30g"
+            build_features: "--features production_v30g,universal_mac_iso"
           - keyboard: imperial44
             output_name: imperial44
             keyboard_toml: keyboard.toml
             vial_json: vial.json
+            build_features: "--features universal_mac_iso"
           - keyboard: op36
             output_name: op36
             keyboard_toml: keyboard.toml
             vial_json: vial.json
+            build_features: "--features universal_mac_iso"
           - keyboard: velvet
             output_name: velvet
             keyboard_toml: keyboard.toml
             vial_json: vial.json
+            build_features: "--features universal_mac_iso"
             central_output_name: velvet_standalone_right_main.uf2
             peripheral_output_name: velvet_standalone_left_peripheral.uf2
 
@@ -205,15 +209,15 @@ jobs:
           - keyboard: classic_qube
             output_name: k03_qube
             keyboard_toml: keyboard_k03.toml
-            vial_json: ../k03/vial.json
+            vial_json: vial_k03.json
           - keyboard: classic_qube
             output_name: velvet_qube
             keyboard_toml: keyboard_velvet.toml
-            vial_json: ../velvet/vial.json
+            vial_json: vial_velvet.json
           - keyboard: classic_qube
             output_name: imperial44_qube
             keyboard_toml: keyboard_imperial44.toml
-            vial_json: ../imperial44/vial.json
+            vial_json: vial_imperial44.json
           - keyboard: k04
             output_name: k04_qube_k04
             keyboard_toml: keyboard_qube.toml

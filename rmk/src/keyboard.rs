@@ -2035,10 +2035,21 @@ impl<'a> Keyboard<'a> {
         }
 
         let host_layout = crate::host_data::snapshot().layout;
+        let previous_platform = self.universal_symbols.platform();
         let Some(command) = self.universal_symbols.handle(user_id, host_layout) else {
             return false;
         };
         let platform = self.universal_symbols.platform();
+        #[cfg(feature = "storage")]
+        if platform != previous_platform {
+            crate::channel::FLASH_CHANNEL
+                .send(crate::storage::FlashOperationMessage::UniversalSymbolsPlatform(
+                    platform == crate::universal_symbols::Platform::Mac,
+                ))
+                .await;
+        }
+        #[cfg(not(feature = "storage"))]
+        let _ = previous_platform;
 
         match command {
             crate::universal_symbols::Command::None => false,
@@ -2047,12 +2058,12 @@ impl<'a> Keyboard<'a> {
                 true
             }
             crate::universal_symbols::Command::Type(resolved) => {
-                if resolved.temporary_english {
+                if resolved.temporary_layout_switch {
                     self.send_universal_symbols_layout_switch(platform).await;
                 }
                 self.send_universal_symbols_tap(resolved.stroke.keycode, resolved.stroke.modifiers)
                     .await;
-                if resolved.temporary_english {
+                if resolved.temporary_layout_switch {
                     self.send_universal_symbols_layout_switch(platform).await;
                 }
                 true
@@ -2081,12 +2092,37 @@ impl<'a> Keyboard<'a> {
             crate::universal_symbols::Platform::Mac => ModifierCombination::LCTRL,
         };
 
-        self.send_universal_symbols_report(modifier, pressed_keys).await;
-        Timer::after_millis(10).await;
-        self.send_universal_symbols_report(modifier, released_keys).await;
-        self.send_universal_symbols_report(ModifierCombination::new(), released_keys)
-            .await;
-        Timer::after_millis(50).await;
+        if platform == crate::universal_symbols::Platform::Mac {
+            // TEST5 diagnostic: reduce only Ctrl lead from 134 to 20 ms.
+            // Keep TEST4's report order, Space hold and release gap unchanged.
+            // Ctrl releases first while Space remains held.
+            self.send_universal_symbols_report(modifier, released_keys).await;
+            Timer::after_millis(20).await;
+            self.send_universal_symbols_report(modifier, pressed_keys).await;
+            // TEST6 diagnostic: joint Ctrl+Space hold 134 -> 20 ms only.
+            Timer::after_millis(20).await;
+            self.send_universal_symbols_report(ModifierCombination::new(), pressed_keys)
+                .await;
+            // TEST7 diagnostic: Ctrl-to-Space release gap 42 -> 10 ms only.
+            Timer::after_millis(10).await;
+            self.send_universal_symbols_report(ModifierCombination::new(), released_keys)
+                .await;
+        } else {
+            self.send_universal_symbols_report(modifier, pressed_keys).await;
+            Timer::after_millis(10).await;
+            self.send_universal_symbols_report(modifier, released_keys).await;
+            self.send_universal_symbols_report(ModifierCombination::new(), released_keys)
+                .await;
+        }
+        // TEST4 diagnostic: reduce only Mac settle wait, 500 -> 50 ms.
+        // This is a fixed wait, not confirmation that the host switched sources.
+        // Keep the legacy PC delay and all report/key/storage semantics intact.
+        Timer::after_millis(if platform == crate::universal_symbols::Platform::Mac {
+            50
+        } else {
+            50
+        })
+        .await;
         self.send_keyboard_report_with_resolved_modifiers(false).await;
     }
 
@@ -2367,6 +2403,244 @@ mod test {
             fork: cfg,
             ..BehaviorConfig::default()
         })
+    }
+
+    #[cfg(all(feature = "universal_symbols", feature = "storage"))]
+    #[test]
+    fn universal_platform_saves_only_on_pressed_toggle_and_ordinary_grave_stays_ordinary() {
+        block_on(async {
+            use crate::channel::FLASH_CHANNEL;
+            use crate::universal_symbols::{Platform, USER_TOGGLE_MACOS};
+            FLASH_CHANNEL.clear();
+            let mut keyboard = create_test_keyboard();
+            keyboard
+                .process_universal_symbols_user_action(USER_TOGGLE_MACOS, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keyboard.universal_symbols.platform(), Platform::Mac);
+            let saved = FLASH_CHANNEL
+                .try_receive()
+                .expect("platform change must be queued for flash");
+            assert_eq!(std::format!("{saved:?}"), "UniversalSymbolsPlatform(true)");
+            keyboard
+                .process_universal_symbols_user_action(USER_TOGGLE_MACOS, KeyboardEvent::key(0, 0, false))
+                .await;
+            assert!(FLASH_CHANNEL.try_receive().is_err(), "release must not write");
+            keyboard
+                .process_universal_symbols_user_action(0, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert!(
+                FLASH_CHANNEL.try_receive().is_err(),
+                "unrelated user key must not write"
+            );
+            keyboard
+                .process_universal_symbols_user_action(USER_TOGGLE_MACOS, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keyboard.universal_symbols.platform(), Platform::Pc);
+            assert_eq!(
+                std::format!("{:?}", FLASH_CHANNEL.try_receive().unwrap()),
+                "UniversalSymbolsPlatform(false)"
+            );
+            crate::universal_symbols::set_layout_options(crate::universal_symbols::tests::ISO_LAYOUT_OPTION_MASK);
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.held_keycodes[0], HidKeyCode::Grave);
+            assert!(FLASH_CHANNEL.try_receive().is_err());
+        });
+    }
+
+    #[cfg(all(feature = "universal_symbols_iso", feature = "storage"))]
+    #[test]
+    fn universal_mac_iso_reports_grave_tilde_and_ru_star_without_symbol_flash_writes() {
+        block_on(async {
+            use rmk_types::connection::UsbState;
+
+            use crate::channel::{FLASH_CHANNEL, USB_REPORT_CHANNEL};
+            use crate::universal_symbols::{USER_SET_RUSSIAN, USER_SYMBOL_START, USER_TOGGLE_MACOS};
+            FLASH_CHANNEL.clear();
+            USB_REPORT_CHANNEL.clear();
+            crate::state::set_usb_state(UsbState::Configured);
+            crate::universal_symbols::set_layout_options(crate::universal_symbols::tests::ISO_LAYOUT_OPTION_MASK);
+            let mut keyboard = create_test_keyboard();
+            keyboard
+                .process_universal_symbols_user_action(USER_TOGGLE_MACOS, KeyboardEvent::key(0, 0, true))
+                .await;
+            FLASH_CHANNEL.try_receive().expect("one platform write");
+            for (id, expected_key, shift) in [(USER_SYMBOL_START + 7, 0x64, 0), (USER_SYMBOL_START + 8, 0x64, 2)] {
+                keyboard
+                    .process_universal_symbols_user_action(id, KeyboardEvent::key(0, 0, true))
+                    .await;
+                let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.try_receive().unwrap().into_report() else {
+                    panic!()
+                };
+                assert_eq!((report.keycodes[0], report.modifier), (expected_key, shift));
+                while USB_REPORT_CHANNEL.try_receive().is_ok() {}
+                assert!(FLASH_CHANNEL.try_receive().is_err(), "symbols must not write flash");
+            }
+            // Use existing language state transition, discard its switch reports.
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let consume = async {
+                let mut sequence = std::vec::Vec::new();
+                for _ in 0..13 {
+                    let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                        panic!()
+                    };
+                    sequence.push((report.modifier, report.keycodes[0]));
+                }
+                sequence
+            };
+            let (handled, sequence) = embassy_futures::join::join(
+                keyboard.process_universal_symbols_user_action(USER_SYMBOL_START + 21, KeyboardEvent::key(0, 0, true)),
+                consume,
+            )
+            .await;
+            assert!(handled);
+            // Ctrl lead, chord, Ctrl-first release, Space release, restore;
+            // Shift+8 tap; then the same complete layout switch back.
+            assert_eq!(
+                sequence,
+                std::vec![
+                    (1, 0),
+                    (1, 44),
+                    (0, 44),
+                    (0, 0),
+                    (0, 0),
+                    (2, 37),
+                    (0, 0),
+                    (0, 0),
+                    (1, 0),
+                    (1, 44),
+                    (0, 44),
+                    (0, 0),
+                    (0, 0)
+                ]
+            );
+            assert!(FLASH_CHANNEL.try_receive().is_err());
+        });
+    }
+
+    #[cfg(all(feature = "universal_symbols_iso", feature = "storage"))]
+    #[test]
+    fn universal_layout_switch_report_order_and_mac_pc_50ms_settle() {
+        block_on(async {
+            use rmk_types::connection::UsbState;
+
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::Platform;
+            crate::state::set_usb_state(UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            for platform in [Platform::Mac, Platform::Pc] {
+                USB_REPORT_CHANNEL.clear();
+                let capture = async {
+                    let mut reports = std::vec::Vec::new();
+                    for _ in 0..if platform == Platform::Mac { 5 } else { 4 } {
+                        let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                            panic!()
+                        };
+                        reports.push((Instant::now(), report));
+                    }
+                    reports
+                };
+                let (_, reports) =
+                    embassy_futures::join::join(keyboard.send_universal_symbols_layout_switch(platform), capture).await;
+                let sequence: std::vec::Vec<_> = reports
+                    .iter()
+                    .map(|(_, report)| (report.modifier, report.keycodes))
+                    .collect();
+                let space = [HidKeyCode::Space as u8, 0, 0, 0, 0, 0];
+                let released = [0; 6];
+                let expected = if platform == Platform::Mac {
+                    std::vec![(1, released), (1, space), (0, space), (0, released), (0, released)]
+                } else {
+                    std::vec![(8, space), (8, released), (0, released), (0, released)]
+                };
+                assert_eq!(sequence, expected);
+                // Mac: modifier lead, chord hold, Ctrl-first release gap, settle.
+                // PC retains its chord hold, immediate modifier release, settle.
+                let intervals: &[u64] = if platform == Platform::Mac {
+                    &[20, 20, 10, 50]
+                } else {
+                    &[10, 0, 50]
+                };
+                for (pair, minimum_ms) in reports.windows(2).zip(intervals) {
+                    let elapsed = pair[1].0.duration_since(pair[0].0);
+                    assert!(
+                        elapsed >= Duration::from_millis(*minimum_ms),
+                        "{platform:?}: {elapsed:?}"
+                    );
+                    assert!(
+                        elapsed < Duration::from_millis(*minimum_ms + 5),
+                        "{platform:?}: {elapsed:?}"
+                    );
+                }
+            }
+        });
+    }
+
+    #[cfg(all(feature = "universal_symbols_iso", feature = "storage"))]
+    #[test]
+    fn universal_russian_fallback_waits_50ms_before_each_symbol_and_after_return() {
+        block_on(async {
+            use rmk_types::connection::UsbState;
+
+            use crate::channel::{FLASH_CHANNEL, USB_REPORT_CHANNEL};
+            use crate::universal_symbols::{USER_SYMBOL_START, USER_SYNC};
+            crate::state::set_usb_state(UsbState::Configured);
+            crate::universal_symbols::restore_platform(true);
+            crate::universal_symbols::set_layout_options(crate::universal_symbols::tests::ISO_LAYOUT_OPTION_MASK);
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols.handle(USER_SYNC, None);
+            FLASH_CHANNEL.clear();
+            for (id, usage, modifiers) in [
+                (USER_SYMBOL_START + 7, 0x64, 0),
+                (USER_SYMBOL_START + 8, 0x64, 2),
+                (USER_SYMBOL_START + 21, 37, 2),
+            ] {
+                USB_REPORT_CHANNEL.clear();
+                let capture = async {
+                    let mut reports = std::vec::Vec::new();
+                    for _ in 0..13 {
+                        let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                            panic!()
+                        };
+                        reports.push((Instant::now(), report));
+                    }
+                    reports
+                };
+                let (handled, reports) = embassy_futures::join::join(
+                    keyboard.process_universal_symbols_user_action(id, KeyboardEvent::key(0, 0, true)),
+                    capture,
+                )
+                .await;
+                assert!(handled);
+                let sequence: std::vec::Vec<_> = reports.iter().map(|(_, r)| (r.modifier, r.keycodes[0])).collect();
+                assert_eq!(
+                    sequence,
+                    std::vec![
+                        (1, 0),
+                        (1, 44),
+                        (0, 44),
+                        (0, 0),
+                        (0, 0),
+                        (modifiers, usage),
+                        (0, 0),
+                        (0, 0),
+                        (1, 0),
+                        (1, 44),
+                        (0, 44),
+                        (0, 0),
+                        (0, 0),
+                    ]
+                );
+                assert!(
+                    reports[5].0.duration_since(reports[3].0) >= Duration::from_millis(50),
+                    "symbol sent before layout-switch settle"
+                );
+                assert!(
+                    reports[12].0.duration_since(reports[11].0) >= Duration::from_millis(50),
+                    "return completed before layout-switch settle"
+                );
+                assert!(FLASH_CHANNEL.try_receive().is_err());
+            }
+        });
     }
 
     #[test]

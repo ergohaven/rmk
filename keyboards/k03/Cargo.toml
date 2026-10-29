@@ -12,6 +12,7 @@ autoexamples = false
 
 [features]
 default = []
+universal_mac_iso = ["rmk/universal_symbols_iso_bit0"]
 
 [dependencies]
 embedded-storage = "0.3"

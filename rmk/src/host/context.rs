@@ -318,6 +318,9 @@ impl<'a> KeyboardContext<'a> {
     }
 
     pub async fn set_layout_options(&self, opts: u32) {
+        // Make the change live immediately; do not wait for the flash worker.
+        #[cfg(feature = "universal_symbols")]
+        crate::universal_symbols::set_layout_options(opts);
         #[cfg(feature = "storage")]
         FLASH_CHANNEL.send(FlashOperationMessage::LayoutOptions(opts)).await;
         #[cfg(not(feature = "storage"))]

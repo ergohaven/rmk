@@ -1,0 +1,473 @@
+{
+    "name": "Ergohaven Velvet",
+    "manufacturer": "Ergohaven",
+    "vendorId": "0xE126",
+    "productId": "0x00BE",
+    "entropy": {
+        "firmwareUpdate": { "asset": "velvet" },
+        "batteryHalves": true
+    },
+    "firmware": {
+        "name": "RMK",
+        "version": "0.2.0"
+    },
+    "firmwareVersion": "0.2.0",
+    "lighting": "none",
+    "matrix": {
+        "rows": 8,
+        "cols": 6
+    },
+    "customKeycodes": [
+        {
+            "name": "BT0",
+            "title": "Bluetooth Channel 0",
+            "shortName": "BT0"
+        },
+        {
+            "name": "BT1",
+            "title": "Bluetooth Channel 1",
+            "shortName": "BT1"
+        },
+        {
+            "name": "BT2",
+            "title": "Bluetooth Channel 2",
+            "shortName": "BT2"
+        },
+        {
+            "name": "BT3",
+            "title": "Bluetooth Channel 3",
+            "shortName": "BT3"
+        },
+        {
+            "name": "BT4",
+            "title": "Bluetooth Channel 4",
+            "shortName": "BT4"
+        },
+        {
+            "name": "BT_NEXT",
+            "title": "Switch to next BT channel",
+            "shortName": "Next\nBT"
+        },
+        {
+            "name": "BT_PREV",
+            "title": "Switch to prev BT channel",
+            "shortName": "Prev\nBT"
+        },
+        {
+            "name": "BT_CLR",
+            "title": "Clear BT bond info",
+            "shortName": "Clear\nBT"
+        },
+        {
+            "name": "BT_TOG",
+            "title": "Switch USB/BLE output",
+            "shortName": "Switch\nOutput"
+        },
+        {
+            "name": "BT_PEER",
+            "title": "Clear split peer",
+            "shortName": "Clear\nPeer"
+        },
+        {
+            "name": "EH_SNP",
+            "title": "Set trackball to sniper mode",
+            "shortName": "Sniper\nmode"
+        },
+        {
+            "name": "EH_SCR",
+            "title": "Set trackball to scroll mode",
+            "shortName": "Scroll\nmode"
+        },
+        {
+            "name": "EH_TXT",
+            "title": "Set trackball to text mode",
+            "shortName": "Text\nmode"
+        }
+    ],
+    "settings": [
+        {
+            "name": "Trackball",
+            "fields": [
+                {
+                    "type": "boolean",
+                    "title": "Trackball enabled",
+                    "qsid": 334,
+                    "bit": 0,
+                    "layoutOption": 0
+                },
+                {
+                    "type": "select",
+                    "title": "Mode",
+                    "qsid": 135,
+                    "variants": [
+                        "Normal",
+                        "Sniper",
+                        "Scroll",
+                        "Text"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Ball axis",
+                    "qsid": 131,
+                    "variants": [
+                        "0°",
+                        "90°",
+                        "180°",
+                        "270°"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Ball DPI",
+                    "qsid": 121,
+                    "variants": [
+                        "200",
+                        "400",
+                        "600",
+                        "800",
+                        "1000",
+                        "1200",
+                        "1400",
+                        "1600",
+                        "1800",
+                        "2000",
+                        "2200",
+                        "2400",
+                        "2600",
+                        "2800",
+                        "3000",
+                        "3200"
+                    ]
+                },
+                {
+                    "type": "integer",
+                    "title": "Scroll sens",
+                    "qsid": 128,
+                    "min": 1,
+                    "max": 255,
+                    "width": 1
+                },
+                {
+                    "type": "integer",
+                    "title": "Sniper sens",
+                    "qsid": 127,
+                    "min": 1,
+                    "max": 255,
+                    "width": 1
+                },
+                {
+                    "type": "integer",
+                    "title": "Text sens",
+                    "qsid": 129,
+                    "min": 1,
+                    "max": 255,
+                    "width": 1
+                },
+                {
+                    "type": "boolean",
+                    "title": "Invert scroll vertical",
+                    "qsid": 138,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Invert scroll horizontal",
+                    "qsid": 328,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Invert text vertical",
+                    "qsid": 148,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Invert text horizontal",
+                    "qsid": 330,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Acceleration",
+                    "qsid": 139,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Sticky mode",
+                    "qsid": 141,
+                    "bit": 0
+                }
+            ]
+        },
+        {
+            "name": "Auto layer",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Auto layer",
+                    "qsid": 143,
+                    "variants": [
+                        "0",
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8",
+                        "9",
+                        "10",
+                        "11",
+                        "12",
+                        "13",
+                        "14",
+                        "15"
+                    ]
+                },
+                {
+                    "type": "boolean",
+                    "title": "Auto layer in Normal",
+                    "qsid": 142,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Auto layer in Sniper",
+                    "qsid": 144,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Auto layer in Scroll",
+                    "qsid": 145,
+                    "bit": 0
+                },
+                {
+                    "type": "boolean",
+                    "title": "Auto layer in Text",
+                    "qsid": 146,
+                    "bit": 0
+                },
+                {
+                    "type": "select",
+                    "title": "Auto layer timeout",
+                    "qsid": 324,
+                    "variants": [
+                        "250 ms",
+                        "500 ms",
+                        "750 ms",
+                        "1000 ms",
+                        "1250 ms",
+                        "1500 ms"
+                    ]
+                }
+            ]
+        }
+    ],
+    "layouts": {
+        "labels": [
+            "Right trackball instead of key"
+        ],
+        "keymap": [
+            [
+                {
+                    "rx": 1,
+                    "y": 0.4
+                },
+                "0,0",
+                "0,1",
+                {
+                    "y": -0.45
+                },
+                "0,2",
+                {
+                    "y": -0.1
+                },
+                "0,3",
+                {
+                    "y": 0.1
+                },
+                "0,4",
+                {
+                    "y": 0.15
+                },
+                "0,5"
+            ],
+            [
+                {
+                    "y": 0.3
+                },
+                "1,0",
+                "1,1",
+                {
+                    "y": -0.45
+                },
+                "1,2",
+                {
+                    "y": -0.1
+                },
+                "1,3",
+                {
+                    "y": 0.1
+                },
+                "1,4",
+                {
+                    "y": 0.15
+                },
+                "1,5"
+            ],
+            [
+                {
+                    "y": 0.3
+                },
+                "2,0",
+                "2,1",
+                {
+                    "y": -0.45
+                },
+                "2,2",
+                {
+                    "y": -0.1
+                },
+                "2,3",
+                {
+                    "y": 0.1
+                },
+                "2,4",
+                {
+                    "y": 0.15
+                },
+                "2,5"
+            ],
+            [
+                {
+                    "x": 2,
+                    "y": -0.15
+                },
+                "3,2",
+                {
+                    "y": -0.1
+                },
+                "3,3"
+            ],
+            [
+                {
+                    "r": 20,
+                    "rx": 5.3,
+                    "ry": 3.0
+                },
+                "3,4",
+                {
+                    "y": -0.2
+                },
+                "3,5",
+                {
+                    "y": -0.2
+                },
+                "3,1"
+            ],
+            [
+                {
+                    "r": 0,
+                    "rx": 12,
+                    "ry": 0.1
+                },
+                "4,0",
+                {
+                    "y": -0.15
+                },
+                "4,1",
+                {
+                    "y": -0.1
+                },
+                "4,2",
+                {
+                    "y": 0.1
+                },
+                "4,3",
+                {
+                    "y": 0.45
+                },
+                "4,4",
+                "4,5"
+            ],
+            [
+                {
+                    "y": -0.3
+                },
+                "5,0",
+                {
+                    "y": -0.15
+                },
+                "5,1",
+                {
+                    "y": -0.1
+                },
+                "5,2",
+                {
+                    "y": 0.1
+                },
+                "5,3",
+                {
+                    "y": 0.45
+                },
+                "5,4",
+                "5,5"
+            ],
+            [
+                {
+                    "y": -0.3
+                },
+                "6,0",
+                {
+                    "y": -0.15
+                },
+                "6,1",
+                {
+                    "y": -0.1
+                },
+                "6,2",
+                {
+                    "y": 0.1
+                },
+                "6,3",
+                {
+                    "y": 0.45
+                },
+                "6,4",
+                "6,5"
+            ],
+            [
+                {
+                    "x": 2.0,
+                    "y": -0.6
+                },
+                "7,2",
+                {
+                    "y": 0.15
+                },
+                "7,3"
+            ],
+            [
+                {
+                    "r": -20,
+                    "rx": 10.76,
+                    "ry": 3.65
+                },
+                "7,4",
+                {
+                    "y": 0.2
+                },
+                "7,0",
+                {
+                    "y": 0.2
+                },
+                "7,1\n\n\n0,0"
+            ]
+        ]
+    }
+}

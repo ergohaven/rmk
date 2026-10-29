@@ -450,16 +450,22 @@ python3 - <<'PY' || fail "K:04 standalone CI must build the production profile"
 from pathlib import Path
 
 workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
-for output_name in ("k04_series_k04", "k04_series_mini", "k04_series_micro"):
+expected_features = {
+    "k04_series_k04": "production_v30g,universal_mac_iso",
+    "k04_series_mini": "production_v30g",
+    "k04_series_micro": "production_v30g,universal_mac_iso",
+}
+for output_name, features in expected_features.items():
     marker = f"output_name: {output_name}"
     start = workflow.index(marker)
     end = workflow.find("          - keyboard:", start + len(marker))
     stanza = workflow[start:] if end == -1 else workflow[start:end]
-    assert 'build_features: "--features production_v30g"' in stanza, output_name
+    assert f'build_features: "--features {features}"' in stanza, output_name
 
 assert "cargo build --release --bin central ${{ matrix.build_features }}" in workflow
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
-assert workflow.count('build_features: "--features production_v30g"') == 3
+assert workflow.count('build_features: "--features production_v30g"') == 1
+assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 2
 PY
 
 python3 - <<'PY' || fail "K:04 local build instructions drifted from the production profile"
@@ -913,8 +919,9 @@ if [[ "$actual_velvet_modes" != "EH_SNP,EH_SCR,EH_TXT" ]]; then
 fi
 jq -e '
     .productId == "0x00BE"
-    and .layouts.labels == ["Right trackball instead of key"]
-    and ([.layouts.keymap[][] | select(type == "string")] | index("7,1\n\n\n0,0") != null)
+    and .layouts.labels == [["Universal Symbols geometry", "ANSI", "ISO"], "Right trackball instead of key"]
+    and ([.layouts.keymap[][] | select(type == "string")] | index("7,1\n\n\n1,0") != null)
+    and ([.settings[].fields[] | select(.qsid == 334) | .layoutOption] == [1])
     and ([.settings[].fields[].qsid] | sort == [
         121, 127, 128, 129, 131, 135, 138, 139, 141, 142, 143, 144, 145, 146, 148, 324, 328, 330, 334
     ])

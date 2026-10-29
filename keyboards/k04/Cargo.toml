@@ -24,6 +24,8 @@ host_fixed_15ms = ["rtt_diag", "rmk/host_fixed_15ms"]
 pmw_axes_600 = []
 production_v22 = ["mouse_vector_preserve", "pmw_axes_600", "right_uf2_cleanup"]
 production_v30g = ["production_v22", "fixed_mouse_pacing_15ms", "rmk/host_first_split_wake"]
+# Full-size TEST1 definition advertises ISO in bit 2. Keep other profiles opt-in.
+universal_mac_iso = ["rmk/universal_symbols_iso"]
 pmw_force_awake_diag = ["mouse_interval_control", "rtt_diag"]
 pmw_smart_off_diag = ["mouse_interval_control", "rtt_diag"]
 pmw_raw_600_diag = ["mouse_interval_control", "rtt_diag"]

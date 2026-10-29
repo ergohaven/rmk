@@ -143,6 +143,11 @@ host = ["dep:byteorder"]
 
 ## Enable firmware-native EN/RU Universal Symbols actions.
 universal_symbols = []
+# Opt-in layout-options bit 2 contract (ISO, left-hide, right-hide).
+universal_symbols_iso = ["universal_symbols"]
+# Scoped contracts for boards with zero or one existing one-bit option.
+universal_symbols_iso_bit0 = ["universal_symbols_iso"]
+universal_symbols_iso_bit1 = ["universal_symbols_iso"]
 
 ## Enable vial support
 vial = ["host"]

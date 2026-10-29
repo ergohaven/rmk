@@ -6,6 +6,35 @@
 
 mod layout;
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+// A boot hand-off, not a second persisted platform setting. Each Keyboard owns
+// its two-way platform state, restored before it starts processing events.
+static BOOT_MAC: AtomicBool = AtomicBool::new(false);
+// Geometry has one live snapshot, sourced exclusively from Vial LayoutConfig.
+static ISO_GEOMETRY: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn restore_platform(mac: bool) {
+    BOOT_MAC.store(mac, Ordering::Relaxed);
+}
+
+pub(crate) fn set_layout_options(options: u32) {
+    // Boards explicitly select the bit matching their Vial option packing.
+    // The original K:04 contract remains bit 2; new options are prepended so
+    // existing stored option bits retain their meanings.
+    let iso_mask = if cfg!(feature = "universal_symbols_iso_bit0") {
+        1
+    } else if cfg!(feature = "universal_symbols_iso_bit1") {
+        2
+    } else {
+        4
+    };
+    ISO_GEOMETRY.store(
+        cfg!(feature = "universal_symbols_iso") && options & iso_mask != 0,
+        Ordering::Relaxed,
+    );
+}
+
 pub const USER_TOGGLE: u8 = 0x80;
 pub const USER_SYNC: u8 = 0x81;
 pub const USER_SET_ENGLISH: u8 = 0x82;
@@ -15,6 +44,7 @@ pub const USER_SYMBOL_START: u8 = 0x90;
 pub const USER_SYMBOL_END: u8 = 0xB0;
 pub const USER_RUSSIAN_LETTER_START: u8 = 0xB0;
 pub const USER_RUSSIAN_LETTER_END: u8 = 0xB4;
+pub const USER_NUMERO: u8 = 0xB4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum HostLayout {
@@ -157,11 +187,25 @@ pub(crate) enum Command {
     TypeRussianLetter(rmk_types::keycode::HidKeyCode),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct State {
     layout: HostLayout,
     platform: Platform,
     last_host_layout: Option<HostLayout>,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            layout: HostLayout::English,
+            platform: if BOOT_MAC.load(Ordering::Relaxed) {
+                Platform::Mac
+            } else {
+                Platform::Pc
+            },
+            last_host_layout: None,
+        }
+    }
 }
 
 impl State {
@@ -186,6 +230,7 @@ impl State {
                 };
                 Command::None
             }
+            USER_NUMERO => Command::Type(layout::resolve_numero(self.layout)),
             id => {
                 if let Some(letter) = RussianLetter::from_user_id(id) {
                     match layout::resolve_russian_letter(self.layout, letter) {
@@ -225,7 +270,16 @@ impl State {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    // Mirror the production board feature selection without changing runtime code.
+    pub(crate) const ISO_LAYOUT_OPTION_MASK: u32 = if cfg!(feature = "universal_symbols_iso_bit0") {
+        1
+    } else if cfg!(feature = "universal_symbols_iso_bit1") {
+        2
+    } else {
+        4
+    };
+
     use rmk_types::keycode::HidKeyCode;
     use rmk_types::modifier::ModifierCombination;
 
@@ -271,14 +325,14 @@ mod tests {
         };
         assert_eq!(dot.stroke.keycode, HidKeyCode::Slash);
         assert_eq!(dot.stroke.modifiers, ModifierCombination::new());
-        assert!(!dot.temporary_english);
+        assert!(!dot.temporary_layout_switch);
 
         let Command::Type(brace) = state.handle(USER_SYMBOL_START + 15, None).unwrap() else {
             panic!("expected brace stroke");
         };
         assert_eq!(brace.stroke.keycode, HidKeyCode::LeftBracket);
         assert_eq!(brace.stroke.modifiers, ModifierCombination::LSHIFT);
-        assert!(brace.temporary_english);
+        assert!(brace.temporary_layout_switch);
     }
 
     #[test]
@@ -299,7 +353,90 @@ mod tests {
             panic!("expected dot stroke");
         };
         assert_eq!(dot.stroke.keycode, HidKeyCode::Slash);
-        assert!(!dot.temporary_english);
+        assert!(!dot.temporary_layout_switch);
+    }
+
+    #[test]
+    fn mac_russian_asterisk_uses_english_fallback_but_pc_stays_direct() {
+        for platform in [Platform::Pc, Platform::Mac] {
+            let result = layout::resolve(HostLayout::Russian, platform, Symbol::Asterisk);
+            assert_eq!(result.stroke.keycode, HidKeyCode::Kc8);
+            assert_eq!(result.stroke.modifiers, ModifierCombination::LSHIFT);
+            assert_eq!(result.temporary_layout_switch, platform == Platform::Mac);
+        }
+    }
+
+    #[cfg(feature = "universal_symbols_iso")]
+    #[test]
+    fn iso_geometry_only_remaps_mac_universal_grave_tilde_including_ru_fallback() {
+        set_layout_options(ISO_LAYOUT_OPTION_MASK);
+        for host in [HostLayout::English, HostLayout::Russian] {
+            for platform in [Platform::Pc, Platform::Mac] {
+                for symbol in [Symbol::Grave, Symbol::Tilde] {
+                    let result = layout::resolve(host, platform, symbol);
+                    assert_eq!(
+                        result.stroke.keycode,
+                        if platform == Platform::Mac {
+                            HidKeyCode::NonusBackslash
+                        } else {
+                            HidKeyCode::Grave
+                        }
+                    );
+                    assert_eq!(
+                        result.stroke.modifiers,
+                        if symbol == Symbol::Tilde {
+                            ModifierCombination::LSHIFT
+                        } else {
+                            ModifierCombination::new()
+                        }
+                    );
+                    assert_eq!(result.temporary_layout_switch, host == HostLayout::Russian);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "universal_symbols_iso")]
+    #[test]
+    fn geometry_write_preserves_legacy_bits_and_ansi_strokes() {
+        for legacy_bits in (0..8).filter(|options| options & ISO_LAYOUT_OPTION_MASK == 0) {
+            set_layout_options(legacy_bits);
+            for platform in [Platform::Pc, Platform::Mac] {
+                assert_eq!(
+                    layout::resolve(HostLayout::English, platform, Symbol::Grave)
+                        .stroke
+                        .keycode,
+                    HidKeyCode::Grave
+                );
+            }
+            set_layout_options(legacy_bits | ISO_LAYOUT_OPTION_MASK);
+            assert_eq!(
+                layout::resolve(HostLayout::English, Platform::Mac, Symbol::Grave)
+                    .stroke
+                    .keycode,
+                HidKeyCode::NonusBackslash
+            );
+            set_layout_options(legacy_bits);
+            assert_eq!(
+                layout::resolve(HostLayout::English, Platform::Mac, Symbol::Grave)
+                    .stroke
+                    .keycode,
+                HidKeyCode::Grave
+            );
+        }
+    }
+
+    #[test]
+    fn restored_platform_keeps_exact_two_way_toggle_semantics() {
+        restore_platform(true);
+        let mut s = State::default();
+        assert_eq!(s.platform(), Platform::Mac);
+        assert_eq!(s.handle(USER_TOGGLE_MACOS, None), Some(Command::None));
+        assert_eq!(s.platform(), Platform::Pc);
+        s.handle(USER_TOGGLE_MACOS, None);
+        assert_eq!(s.platform(), Platform::Mac);
+        restore_platform(false);
+        assert_eq!(State::default().platform(), Platform::Pc);
     }
 
     #[test]
