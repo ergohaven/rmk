@@ -1377,19 +1377,20 @@ impl<'a> QubePointingModeProcessor<'a> {
 
 /// Does this resolved action deactivate the auto layer when `deactivate_on_key` is set?
 ///
-/// Mirrors the classification in [`crate::keyboard::auto_mouse_layer`], minus
-/// `extra_mouse_keys`: the Qube auto layer is configured over Vial QMK settings,
-/// which cannot carry a keycode list.
+/// Unlike the generic auto mouse layer's configurable `extra_mouse_keys`,
+/// Qube's Vial settings do not carry an exception list. Modifier-only actions
+/// always preserve this layer so Ctrl/Shift/Alt/GUI mouse clicks remain usable.
 #[cfg(feature = "split")]
 fn qube_action_deactivates_auto_layer(action: Action) -> bool {
     match action {
         // The repeated keycode is unknown here; treat as unclassifiable so a
         // repeated mouse key is not misclassified as non-mouse.
         Action::Key(KeyCode::Hid(HidKeyCode::Again)) => false,
-        Action::Key(KeyCode::Hid(hid)) => !hid.is_mouse_key(),
+        Action::Modifier(_) | Action::KeyWithModifier(HidKeyCode::No, _) => false,
+        Action::Key(KeyCode::Hid(hid)) | Action::KeyWithModifier(hid, _) | Action::OneShotKey(hid) => {
+            !hid.is_mouse_key() && !hid.is_modifier()
+        }
         Action::Key(_) => true,
-        Action::KeyWithModifier(hid, _) | Action::OneShotKey(hid) => !hid.is_mouse_key(),
-        Action::Modifier(modifiers) => modifiers.into_bits() != 0,
         // Unclassifiable (layer switches, macros, pointer-mode user keys, ...):
         // leave the layer intact; the timeout path handles it.
         _ => false,
@@ -3162,13 +3163,42 @@ mod tests {
 
     #[cfg(feature = "split")]
     #[test]
-    fn qube_key_classification_spares_mouse_keys_and_unclassifiable_actions() {
+    fn qube_key_classification_spares_mouse_keys_modifiers_and_unclassifiable_actions() {
         use rmk_types::modifier::ModifierCombination;
 
         // Mouse keys on the auto layer must not tear it down.
         for hid in [HidKeyCode::MouseUp, HidKeyCode::MouseBtn1, HidKeyCode::MouseAccel2] {
             assert!(!qube_action_deactivates_auto_layer(Action::Key(KeyCode::Hid(hid))));
             assert!(!qube_action_deactivates_auto_layer(Action::OneShotKey(hid)));
+            assert!(!qube_action_deactivates_auto_layer(Action::KeyWithModifier(
+                hid,
+                ModifierCombination::LCTRL
+            )));
+        }
+
+        // Plain modifiers, modifier combinations (including resolved mod-tap
+        // holds), and one-shot modifiers must allow modified mouse clicks.
+        for hid in [
+            HidKeyCode::LCtrl,
+            HidKeyCode::LShift,
+            HidKeyCode::LAlt,
+            HidKeyCode::LGui,
+            HidKeyCode::RCtrl,
+            HidKeyCode::RShift,
+            HidKeyCode::RAlt,
+            HidKeyCode::RGui,
+        ] {
+            assert!(!qube_action_deactivates_auto_layer(Action::Key(KeyCode::Hid(hid))));
+            assert!(!qube_action_deactivates_auto_layer(Action::KeyWithModifier(
+                hid,
+                ModifierCombination::LCTRL
+            )));
+            assert!(!qube_action_deactivates_auto_layer(Action::OneShotKey(hid)));
+        }
+        for bits in 0..=u8::MAX {
+            let modifiers = ModifierCombination::from_bits(bits);
+            assert!(!qube_action_deactivates_auto_layer(Action::Modifier(modifiers)));
+            assert!(!qube_action_deactivates_auto_layer(Action::OneShotModifier(modifiers)));
         }
 
         // A repeated keycode is unknown here, so it must not be treated as non-mouse.
@@ -3182,10 +3212,7 @@ mod tests {
         ))));
         assert!(qube_action_deactivates_auto_layer(Action::KeyWithModifier(
             HidKeyCode::A,
-            ModifierCombination::new()
-        )));
-        assert!(qube_action_deactivates_auto_layer(Action::Modifier(
-            ModifierCombination::new().with_left_ctrl(true)
+            ModifierCombination::LCTRL
         )));
 
         // Unclassifiable actions leave the layer to the timeout path. The Qube
@@ -3193,6 +3220,17 @@ mod tests {
         assert!(!qube_action_deactivates_auto_layer(Action::User(QUBE_USER_SNIPER)));
         assert!(!qube_action_deactivates_auto_layer(Action::LayerOn(3)));
         assert!(!qube_action_deactivates_auto_layer(Action::No));
+    }
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn qube_modifier_wrapped_no_key_keeps_auto_layer() {
+        use rmk_types::modifier::ModifierCombination;
+
+        assert!(!qube_action_deactivates_auto_layer(Action::KeyWithModifier(
+            HidKeyCode::No,
+            ModifierCombination::LCTRL
+        )));
     }
 
     /// The Vial auto-layer target used by the ownership tests below.
@@ -3270,6 +3308,89 @@ mod tests {
             assert!(!keymap.is_layer_active(TEST_AUTO_LAYER));
             assert_eq!(processor.active_auto_layer, QUBE_AUTO_LAYER_NONE);
             assert!(!processor.auto_layer_self_activated);
+        });
+    }
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn qube_modifier_click_preserves_auto_layer_until_typing_or_idle_timeout() {
+        use rmk_types::modifier::ModifierCombination;
+
+        block_on(async {
+            let mut data = KeymapData::<1, 2, 4>::new([[[k!(A), k!(B)]]; 4]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 2>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut processor = QubePointingModeProcessor::new(&keymap);
+            processor.settings.auto_layer = TEST_AUTO_LAYER;
+            processor.settings.auto_flags = TEST_AUTO_FLAGS_NORMAL | (1 << QUBE_AUTO_FLAG_DEACTIVATE_ON_KEY_BIT);
+
+            // Exercise both Ctrl keycodes and the modifier-combination action.
+            for modifier in [
+                Action::Key(KeyCode::Hid(HidKeyCode::LCtrl)),
+                Action::Key(KeyCode::Hid(HidKeyCode::RCtrl)),
+                Action::Modifier(ModifierCombination::LCTRL),
+            ] {
+                processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+                let press = KeyboardEvent::key(0, 0, true);
+                processor.on_keyboard_event(press).await;
+                processor
+                    .on_action_event(ActionEvent {
+                        action: modifier,
+                        keyboard_event: press,
+                    })
+                    .await;
+                assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+
+                // Holding Ctrl keeps the existing held-key timeout protection.
+                Timer::after(Duration::from_millis(
+                    u64::from(processor.settings.auto_layer_timeout_ms()) + 1,
+                ))
+                .await;
+                processor.poll().await;
+                assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+
+                for pressed in [true, false] {
+                    let event = KeyboardEvent::key(0, 1, pressed);
+                    processor.on_keyboard_event(event).await;
+                    processor
+                        .on_action_event(ActionEvent {
+                            action: Action::Key(KeyCode::Hid(HidKeyCode::MouseBtn1)),
+                            keyboard_event: event,
+                        })
+                        .await;
+                    assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+                }
+
+                let release = KeyboardEvent::key(0, 0, false);
+                processor.on_keyboard_event(release).await;
+                processor
+                    .on_action_event(ActionEvent {
+                        action: modifier,
+                        keyboard_event: release,
+                    })
+                    .await;
+                processor.poll().await;
+                assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+                Timer::after(Duration::from_millis(
+                    u64::from(processor.settings.auto_layer_timeout_ms()) + 1,
+                ))
+                .await;
+                processor.poll().await;
+                assert!(!keymap.is_layer_active(TEST_AUTO_LAYER));
+
+                processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+                processor
+                    .on_action_event(ActionEvent {
+                        action: modifier,
+                        keyboard_event: press,
+                    })
+                    .await;
+                assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+                // A normal key still deactivates, even while Ctrl is held.
+                processor.on_action_event(press_ordinary_key()).await;
+                assert!(!keymap.is_layer_active(TEST_AUTO_LAYER));
+            }
         });
     }
 
