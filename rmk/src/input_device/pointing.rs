@@ -15,7 +15,7 @@ use usbd_hid::descriptor::MouseReport;
 use crate::channel::{send_hid_mouse_report, send_hid_report};
 use crate::core_traits::Runnable;
 #[cfg(feature = "split")]
-use crate::event::{ActionEvent, KeyboardEvent, LayerChangeEvent, PeripheralSettingsEvent};
+use crate::event::{ActionEvent, KeyboardEvent, KeyboardEventPos, LayerChangeEvent, PeripheralSettingsEvent};
 use crate::event::{
     Axis, AxisEvent, AxisValType, EventSubscriber, PointingEvent, PointingProcessorEvent, PointingSetCpiEvent,
     PointingTransformEvent, SubscribableEvent, publish_event,
@@ -675,6 +675,9 @@ const QUBE_ENCODER_PACKET_AUTO_LAYER_THRESHOLD: usize = 3;
 const QUBE_AUTO_LAYER_THRESHOLD_MAX: u8 = 100;
 const QUBE_AUTO_LAYER_THRESHOLD_COUNTS_AT_MAX: u32 = 255;
 const QUBE_AUTO_LAYER_NONE: u8 = 0xff;
+/// All 60 K:04 matrix positions plus both directions of its two encoders.
+#[cfg(feature = "split")]
+const QUBE_AUTO_LAYER_HELD_CAPACITY: usize = 64;
 const QUBE_TEXT_AXIS_IDLE_MS: u32 = 220;
 const QUBE_TEXT_THRESHOLD: i32 = 1;
 const QUBE_TOUCH_CLICK_MS: u64 = 40;
@@ -1003,7 +1006,8 @@ pub struct QubePointingModeProcessor<'a> {
     /// (`MO`/`TG`), and is cleared once a layer key names the layer or something
     /// else switches it off, so a keypress never tears down a manually held layer.
     auto_layer_self_activated: bool,
-    auto_layer_held_keys: u8,
+    /// Unique positions pressed during this auto-layer activation.
+    auto_layer_held_keys: heapless::Vec<KeyboardEventPos, QUBE_AUTO_LAYER_HELD_CAPACITY>,
     last_auto_motion_ms: u32,
     auto_layer_arming: AutoLayerArming,
 }
@@ -1017,7 +1021,7 @@ impl<'a> QubePointingModeProcessor<'a> {
             settings: QubePointingSettings::new(),
             active_auto_layer: QUBE_AUTO_LAYER_NONE,
             auto_layer_self_activated: false,
-            auto_layer_held_keys: 0,
+            auto_layer_held_keys: heapless::Vec::new(),
             last_auto_motion_ms: 0,
             auto_layer_arming: AutoLayerArming::new(),
         }
@@ -1055,9 +1059,17 @@ impl<'a> QubePointingModeProcessor<'a> {
             return;
         }
         if event.pressed {
-            self.auto_layer_held_keys = self.auto_layer_held_keys.saturating_add(1);
+            if !self.auto_layer_held_keys.contains(&event.pos) && self.auto_layer_held_keys.push(event.pos).is_err() {
+                // Excess input stays untracked: never evict a valid hold or latch
+                // the layer permanently. Normal K:04 input fits in the buffer.
+                warn!("Qube auto layer held-position capacity exceeded");
+            }
         } else {
-            self.auto_layer_held_keys = self.auto_layer_held_keys.saturating_sub(1);
+            // A release may belong to a key held before activation. It must not
+            // cancel another position's hold (for example an ongoing mouse drag).
+            if let Some(index) = self.auto_layer_held_keys.iter().position(|pos| *pos == event.pos) {
+                self.auto_layer_held_keys.swap_remove(index);
+            }
             self.last_auto_motion_ms = now_ms_u32();
         }
     }
@@ -1229,7 +1241,7 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     async fn poll(&mut self) {
-        if self.active_auto_layer == QUBE_AUTO_LAYER_NONE || self.auto_layer_held_keys != 0 {
+        if self.active_auto_layer == QUBE_AUTO_LAYER_NONE || !self.auto_layer_held_keys.is_empty() {
             return;
         }
         if now_ms_u32().wrapping_sub(self.last_auto_motion_ms) >= self.settings.auto_layer_timeout_ms() {
@@ -1358,7 +1370,7 @@ impl<'a> QubePointingModeProcessor<'a> {
 
         self.deactivate_auto_layer();
         self.active_auto_layer = layer;
-        self.auto_layer_held_keys = 0;
+        self.auto_layer_held_keys.clear();
         self.auto_layer_self_activated = self.keymap.activate_layer_if_inactive(layer);
     }
 
@@ -1367,7 +1379,7 @@ impl<'a> QubePointingModeProcessor<'a> {
         let owned = self.auto_layer_self_activated;
         self.active_auto_layer = QUBE_AUTO_LAYER_NONE;
         self.auto_layer_self_activated = false;
-        self.auto_layer_held_keys = 0;
+        self.auto_layer_held_keys.clear();
         self.auto_layer_arming.reset();
         if owned && previous != QUBE_AUTO_LAYER_NONE && previous != 0 {
             self.keymap.deactivate_layer_if_active(previous);
@@ -2869,7 +2881,7 @@ mod tests {
                 assert_eq!(processor.settings.auto_layer, 4);
                 assert_eq!(processor.settings.auto_flags, auto_flags);
                 assert_eq!(processor.active_auto_layer, QUBE_AUTO_LAYER_NONE);
-                assert_eq!(processor.auto_layer_held_keys, 0);
+                assert!(processor.auto_layer_held_keys.is_empty());
                 assert!(!processor.auto_layer_self_activated);
             });
         }
@@ -3216,6 +3228,162 @@ mod tests {
             action: Action::Key(KeyCode::Hid(HidKeyCode::A)),
             keyboard_event: KeyboardEvent::key(0, 0, true),
         }
+    }
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn qube_untracked_release_does_not_allow_timeout_during_drag() {
+        block_on(async {
+            let mut data = KeymapData::<1, 2, 4>::new([[[k!(LCtrl), k!(MouseBtn1)]]; 4]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 2>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut processor = QubePointingModeProcessor::new(&keymap);
+            processor.settings.auto_layer = TEST_AUTO_LAYER;
+            processor.settings.auto_flags = TEST_AUTO_FLAGS_NORMAL;
+            let timeout = u64::from(processor.settings.auto_layer_timeout_ms());
+
+            // Ctrl was already held when ball motion activated the layer.
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, true)).await;
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            processor.on_keyboard_event(KeyboardEvent::key(0, 1, true)).await;
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, false)).await;
+            Timer::after_millis(timeout + 1).await;
+            processor.poll().await;
+            assert!(
+                keymap.is_layer_active(TEST_AUTO_LAYER),
+                "untracked Ctrl release interrupted drag"
+            );
+
+            processor.on_keyboard_event(KeyboardEvent::key(0, 1, false)).await;
+            processor.poll().await;
+            assert!(
+                keymap.is_layer_active(TEST_AUTO_LAYER),
+                "release must restart idle timeout"
+            );
+            Timer::after_millis(timeout + 1).await;
+            processor.poll().await;
+            assert!(!keymap.is_layer_active(TEST_AUTO_LAYER));
+        });
+    }
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn qube_duplicate_press_does_not_keep_layer_active_after_release() {
+        block_on(async {
+            let mut data = KeymapData::<1, 1, 4>::new([[[k!(MouseBtn1)]]; 4]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut processor = QubePointingModeProcessor::new(&keymap);
+            processor.settings.auto_layer = TEST_AUTO_LAYER;
+            processor.settings.auto_flags = TEST_AUTO_FLAGS_NORMAL;
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, true)).await;
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, true)).await;
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, false)).await;
+            Timer::after_millis(u64::from(processor.settings.auto_layer_timeout_ms()) + 1).await;
+            processor.poll().await;
+            assert!(
+                !keymap.is_layer_active(TEST_AUTO_LAYER),
+                "duplicate press left a phantom held key"
+            );
+        });
+    }
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn qube_held_positions_cover_full_k04_and_reset_between_activations() {
+        use crate::input_device::rotary_encoder::Direction;
+
+        block_on(async {
+            let mut data = KeymapData::<10, 6, 4, 2>::new_with_encoder(
+                [[[k!(MouseBtn1); 6]; 10]; 4],
+                [[Default::default(); 2]; 4],
+            );
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<10, 6>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut processor = QubePointingModeProcessor::new(&keymap);
+            processor.settings.auto_layer = TEST_AUTO_LAYER;
+            processor.settings.auto_flags = TEST_AUTO_FLAGS_NORMAL;
+            let timeout = u64::from(processor.settings.auto_layer_timeout_ms());
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            for row in 0..10 {
+                for col in 0..6 {
+                    processor.on_keyboard_event(KeyboardEvent::key(row, col, true)).await;
+                }
+            }
+            for id in 0..2 {
+                for direction in [Direction::Clockwise, Direction::CounterClockwise] {
+                    processor
+                        .on_keyboard_event(KeyboardEvent::rotary_encoder(id, direction, true))
+                        .await;
+                }
+            }
+            assert_eq!(processor.auto_layer_held_keys.len(), 64);
+            // Excess synthetic input cannot evict valid holds or panic.
+            processor.on_keyboard_event(KeyboardEvent::key(255, 255, true)).await;
+            assert_eq!(processor.auto_layer_held_keys.len(), 64);
+            assert!(
+                !processor
+                    .auto_layer_held_keys
+                    .contains(&KeyboardEvent::key(255, 255, true).pos)
+            );
+            processor.on_keyboard_event(KeyboardEvent::key(255, 255, false)).await;
+            assert_eq!(processor.auto_layer_held_keys.len(), 64);
+            assert!(
+                !processor
+                    .auto_layer_held_keys
+                    .contains(&KeyboardEvent::key(255, 255, false).pos)
+            );
+            for row in 0..10 {
+                for col in 0..6 {
+                    processor.on_keyboard_event(KeyboardEvent::key(row, col, false)).await;
+                }
+            }
+            for id in 0..2 {
+                processor
+                    .on_keyboard_event(KeyboardEvent::rotary_encoder(id, Direction::Clockwise, false))
+                    .await;
+            }
+            processor
+                .on_keyboard_event(KeyboardEvent::rotary_encoder(0, Direction::CounterClockwise, false))
+                .await;
+            // Same id, wrong direction: this duplicate release must not remove the last hold.
+            processor
+                .on_keyboard_event(KeyboardEvent::rotary_encoder(1, Direction::Clockwise, false))
+                .await;
+            Timer::after_millis(timeout + 1).await;
+            processor.poll().await;
+            assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+            processor
+                .on_keyboard_event(KeyboardEvent::rotary_encoder(1, Direction::CounterClockwise, false))
+                .await;
+            Timer::after_millis(timeout + 1).await;
+            processor.poll().await;
+            assert!(
+                !keymap.is_layer_active(TEST_AUTO_LAYER),
+                "excess input must not latch the layer"
+            );
+
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, true)).await;
+            processor.deactivate_auto_layer();
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            processor.on_keyboard_event(KeyboardEvent::key(0, 1, true)).await;
+            processor.on_keyboard_event(KeyboardEvent::key(0, 0, false)).await;
+            Timer::after_millis(timeout + 1).await;
+            processor.poll().await;
+            assert!(
+                keymap.is_layer_active(TEST_AUTO_LAYER),
+                "old activation's release cancelled a new hold"
+            );
+            processor.on_keyboard_event(KeyboardEvent::key(0, 1, false)).await;
+            Timer::after_millis(timeout + 1).await;
+            processor.poll().await;
+            assert!(!keymap.is_layer_active(TEST_AUTO_LAYER));
+        });
     }
 
     #[cfg(feature = "split")]
