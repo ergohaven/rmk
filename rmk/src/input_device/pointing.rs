@@ -1563,6 +1563,9 @@ impl<'a> PointingProcessor<'a> {
             return;
         }
 
+        #[cfg(feature = "_ble")]
+        crate::ble::sleep::report_pointing_activity(&event);
+
         let mut x = 0i16;
         let mut y = 0i16;
 
@@ -4259,6 +4262,83 @@ mod tests {
     }
 
     // === Integration tests for PointingProcessor ===
+
+    #[cfg(feature = "_ble")]
+    #[test]
+    fn local_pointing_motion_reports_host_activity() {
+        block_on(async {
+            let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            for configured_device in [0, ALL_POINTING_DEVICES] {
+                // Physical activity must count even when a mode suppresses or
+                // accumulates the motion instead of emitting a mouse report.
+                for mode in [
+                    PointingMode::Cursor(CursorConfig::default()),
+                    PointingMode::Scroll(ScrollConfig::default()),
+                    PointingMode::Sniper(SniperConfig::default()),
+                    PointingMode::Disabled,
+                ] {
+                    let mut processor = PointingProcessor::new(
+                        &keymap,
+                        PointingProcessorConfig {
+                            device_id: configured_device,
+                            ..Default::default()
+                        },
+                    );
+                    processor.set_pointing_mode(mode);
+                    for (device_id, axis, value, expected) in [
+                        (0, Axis::X, 0, None),
+                        (0, Axis::X, 1, None),
+                        (0, Axis::X, -1, None),
+                        (0, Axis::X, 2, Some(false)),
+                        (0, Axis::X, -2, Some(false)),
+                        (0, Axis::Y, 1, None),
+                        (0, Axis::Y, -1, None),
+                        (0, Axis::Y, 2, Some(false)),
+                        (0, Axis::Y, -2, Some(false)),
+                        (
+                            1,
+                            Axis::X,
+                            5,
+                            (configured_device == ALL_POINTING_DEVICES).then_some(false),
+                        ),
+                    ] {
+                        crate::ble::sleep::reset_host_power_input();
+                        processor.accumulator.reset();
+                        processor
+                            .on_pointing_event(PointingEvent {
+                                device_id,
+                                axes: [
+                                    AxisEvent {
+                                        typ: AxisValType::Rel,
+                                        axis,
+                                        value,
+                                    },
+                                    AxisEvent {
+                                        typ: AxisValType::Rel,
+                                        axis: Axis::Z,
+                                        value: 0,
+                                    },
+                                    AxisEvent {
+                                        typ: AxisValType::Rel,
+                                        axis: Axis::Z,
+                                        value: 0,
+                                    },
+                                ],
+                            })
+                            .await;
+                        assert_eq!(
+                            crate::ble::sleep::take_host_power_input(),
+                            expected,
+                            "configured={configured_device}, source={device_id}, mode={mode:?}, axis={axis:?}, value={value}"
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     #[test]
     fn test_pointing_processor_mode_selection() {
