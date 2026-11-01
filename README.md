@@ -1,20 +1,3 @@
-# Ergohaven RMK Firmware
-
-Firmware for Ergohaven nRF52840 keyboards and Qube configurations. Built on
-[RMK](https://github.com/HaoboGu/rmk).
-
-Ready-to-flash UF2 files are available on the
-[Releases](https://github.com/ergohaven/rmk/releases) page.
-
-## Supported Hardware
-
-- Keyboards: K:03, K:04, K:04 Mini, K:04 Micro, Imperial44, OP36, and Velvet
-- Qube: K:03, K:04 Series, Imperial44, OP36, and Velvet
-
-## Build
-
-Each firmware package is in `keyboards/`. For example:
-
 ```sh
 cd keyboards/k03
 cargo build --release --bin central --bin peripheral
@@ -56,3 +39,33 @@ the [firmware profile](docs/ergohaven-firmware-profile.md#storage-and-reset).
 
 GitHub Actions validates production profiles and builds all supported devices
 on every push and pull request.
+
+
+## [User Documentation](https://rmk.rs/docs/user_guide/guide_overview) | [API Reference](https://docs.rs/rmk/latest/rmk/) | [FAQs](https://rmk.rs/docs/getting_started/faq) | [Changelog](https://github.com/rmk-rs/rmk/blob/main/rmk/CHANGELOG.md)
+
+## Real-World Implementations
+
+| [rmk-ble-keyboard](https://github.com/rmk-rs/rmk-ble-keyboard) | [dactyl-lynx-rmk](https://github.com/whitelynx/dactyl-lynx-rmk) | [sessile](https://github.com/willpuckett/sessile) |
+| --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/rmk_ble_keyboard.jpg" width="300"> | <img src="https://raw.githubusercontent.com/whitelynx/dactyl-lynx-keyboard/refs/heads/main/resources/skeleton-prototype.jpg" width="300"> | <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/sessile.png" width="300"> |
+
+| [moonlander-rmk-1](https://github.com/MrFixThis/moonlander-rmk-1) | [rmk-zsa-planck-ez](https://github.com/atvari-eu/rmk-zsa-planck-ez) | [rmk-zsa-voyager](https://github.com/jpds/rmk-zsa-voyager) |
+| --- | --- | --- |
+| <img src="docs/docs/main/images/zsa-moonlander.jpg" width="300"> | <img src="docs/docs/main/images/zsa-planck-ez.webp" width="300"> | <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/zsa-voyager.webp" width="300"> |
+
+| [Urchin](https://github.com/TimoBbz/urchin-rmk-firmware) |[zx66](https://github.com/zongxin1993/zx66-keybord) | [Lunakbd](https://github.com/gbPagano/lunakbd) |
+| --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/urchin.png" width="300"> | <img src="https://raw.githubusercontent.com/zongxin1993/zx66-keybord/refs/heads/master/Images/zx66-keybord_03.jpg" width="300"> | <img src="https://raw.githubusercontent.com/gbPagano/lunakbd/main/photos/up-down-4-web.jpg" width="300"> |
+
+## Getting Started
+
+### Option 1: Start with a Template
+
+Quickly bootstrap your project using [rmkit](https://github.com/rmk-rs/rmkit) and the official RMK [project template](https://github.com/rmk-rs/rmk-template).
+
+```shell
+cargo install rmkit flip-link
+# If you encounter installation issues on Windows, try this alternative command:
+# powershell -ExecutionPolicy ByPass -c "irm https://github.com/rmk-rs/rmkit/releases/latest/download/rmkit-installer.ps1 | iex"
+rmkit init
+```

@@ -18,6 +18,22 @@ _Sessile_ is an exploration of "minimal" finger travel. You can also read its ci
 
 ![sessile](../../images/sessile.png)
 
+## [moonlander-rmk-1](https://github.com/MrFixThis/moonlander-rmk-1)
+
+RMK firmware for the ZSA Moonlander MK I.
+
+![zsa-moonlander](../../images/zsa-moonlander.jpg)
+
+## [rmk-zsa-planck-ez](https://github.com/atvari-eu/rmk-zsa-planck-ez)
+
+RMK firmware for the ZSA Planck EZ 40% ortholinear keyboard, with Vial keymap editing and support for the Glow underglow variant.
+
+![zsa-planck-ez](../../images/zsa-planck-ez.webp)
+
+## [rmk-zsa-voyager](https://github.com/jpds/rmk-zsa-voyager)
+
+![zsa-voyager](../../images/zsa-voyager.webp)
+
 ## [Urchin](https://github.com/TimoBbz/urchin-rmk-firmware)
 
 A firmware for the [Urchin Keyboard](https://github.com/duckyb/urchin), to use with the layout [Ergo-L](https://ergol.org/).
@@ -29,10 +45,6 @@ A firmware for the [Urchin Keyboard](https://github.com/duckyb/urchin), to use w
 A modular split 66-key keyboard
 
 <img src="https://raw.githubusercontent.com/zongxin1993/zx66-keybord/refs/heads/master/Images/zx66-keybord_03.jpg">
-
-## [rmk-zsa-voyager](https://github.com/jpds/rmk-zsa-voyager)
-
-![zsa-voyager](../../images/zsa-voyager.webp)
 
 ## [Lunakbd](https://github.com/gbPagano/lunakbd)
 

@@ -19,7 +19,7 @@ name = "peripheral"
 path = "src/peripheral.rs"
 
 [dependencies]
-rmk = { path = "../../../rmk", default-features = false, features = ["defmt", "storage", "vial", "watchdog", "nrf52840_ble", "split", "async_matrix", "adafruit_bl", "subrating"] }
+rmk = { path = "../../../rmk", features = ["nrf52840_ble", "ext_adv", "split", "async_matrix", "adafruit_bl", "subrating"] }
 
 embassy-executor = { version = "0.10", features = [
     "defmt",
@@ -36,19 +36,19 @@ embassy-nrf = { version = "0.11", features = [
     "time",
 ] }
 embassy-time = { version = "0.5", features = ["tick-hz-32_768", "defmt", "defmt-timestamp-uptime"] }
-nrf-mpsl = { version = "0.4.0", features = [
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "9cf87fa7883b89b2d4dc7cd94864da7927bd858c", features = [
     "defmt",
     "critical-section-impl",
     "nrf52840",
 ] }
-nrf-sdc = { version = "0.4.0", features = [
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "9cf87fa7883b89b2d4dc7cd94864da7927bd858c", features = [
     "defmt",
     "peripheral",
     "central",
     "nrf52840",
 ] }
 
-bt-hci = { version = "0.10", features = ["defmt"] }
+bt-hci = { version = "0.11", features = ["defmt"] }
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
 defmt = "1"

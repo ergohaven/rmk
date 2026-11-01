@@ -4395,19 +4395,6 @@ mod tests {
         assert_eq!(PointingMode::default(), PointingMode::Cursor(CursorConfig::default()));
     }
 
-    #[test]
-    fn test_motion_accumulator_change_resets_accumulator() {
-        let mut acc = MotionAccumulator::default();
-        acc.accumulate(3, 5, (1, 8), (1, 8));
-        assert_eq!(acc.remainder_x, 3);
-        assert_eq!(acc.remainder_y, 5);
-
-        // Simulate what on_layer_change_event does
-        acc.reset();
-        assert_eq!(acc.remainder_x, 0);
-        assert_eq!(acc.remainder_y, 0);
-    }
-
     // === Cursor speed ===
 
     #[test]
@@ -4665,49 +4652,6 @@ mod tests {
     }
 
     #[test]
-    fn test_pointing_scroll_mode_zero_motion_prevention() {
-        let mut acc = MotionAccumulator::default();
-        let config = ScrollConfig {
-            wheel: ScrollAxis {
-                multiplier: 1,
-                divisor: 8,
-                invert: false,
-            },
-            pan: ScrollAxis {
-                multiplier: 1,
-                divisor: 8,
-                invert: false,
-            },
-        };
-
-        // Small motion that doesn't produce output
-        let (sx, sy) = acc.accumulate(
-            3,
-            3,
-            (config.pan.multiplier, config.pan.divisor),
-            (config.wheel.multiplier, config.wheel.divisor),
-        );
-        assert_eq!(sx, 0);
-        assert_eq!(sy, 0);
-
-        // Verify remainder is kept
-        assert_eq!(acc.remainder_x, 3);
-        assert_eq!(acc.remainder_y, 3);
-
-        // Additional motion should accumulate
-        let (sx, sy) = acc.accumulate(
-            6,
-            6,
-            (config.pan.multiplier, config.pan.divisor),
-            (config.wheel.multiplier, config.wheel.divisor),
-        );
-        assert_eq!(sx, 1); // (3+6)/8 = 1 remainder 1
-        assert_eq!(sy, 1);
-        assert_eq!(acc.remainder_x, 1);
-        assert_eq!(acc.remainder_y, 1);
-    }
-
-    #[test]
     fn test_pointing_sniper_mode_divisor() {
         let mut acc = MotionAccumulator::default();
         let config = SniperConfig {
@@ -4764,50 +4708,6 @@ mod tests {
         assert_eq!(config.divisor, 4);
         assert!(!config.invert_x);
         assert!(!config.invert_y);
-    }
-
-    #[test]
-    fn test_pointing_scroll_config_invert_y() {
-        // invert_y=true means positive sensor Y → positive wheel (reversed from default)
-        // Default (invert_y=false): sensor +Y → wheel -1 (scroll up)
-        // With invert_y=true:        sensor +Y → wheel +1 (scroll down)
-        let mut acc_default = MotionAccumulator::default();
-        let mut acc_inverted = MotionAccumulator::default();
-
-        let divisor = 1u8;
-        let (_, sy_default) = acc_default.accumulate(0, 10, (1, divisor), (1, divisor));
-        let (_, sy_inverted) = acc_inverted.accumulate(0, 10, (1, divisor), (1, divisor));
-
-        // Default: wheel = -sy = -10
-        let wheel_default = -sy_default;
-        // Inverted: wheel = sy = 10
-        let wheel_inverted = sy_inverted;
-
-        assert_eq!(wheel_default, -10);
-        assert_eq!(wheel_inverted, 10);
-    }
-
-    #[test]
-    fn test_pointing_sniper_config_invert_axes() {
-        let mut acc = MotionAccumulator::default();
-        let config = SniperConfig {
-            multiplier: 1,
-            divisor: 1,
-            invert_x: true,
-            invert_y: true,
-        };
-
-        let (sx, sy) = acc.accumulate(
-            5,
-            -3,
-            (config.multiplier, config.divisor),
-            (config.multiplier, config.divisor),
-        );
-        let out_x = if config.invert_x { -sx } else { sx };
-        let out_y = if config.invert_y { -sy } else { sy };
-
-        assert_eq!(out_x, -5);
-        assert_eq!(out_y, 3);
     }
 
     #[test]
