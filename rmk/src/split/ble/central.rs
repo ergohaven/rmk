@@ -2249,7 +2249,7 @@ mod tests {
 
         let pid = crate::SPLIT_PRODUCT_ID;
         for (data, expected_id) in [
-            (&[0x07, 0xFF, 0x53, 0x52, 0x00, pid as u8, (pid >> 8) as u8][..], Some(2)),
+            (&[0x07, 0xFF, 0x53, 0x52, 0x00, 2, pid as u8, (pid >> 8) as u8][..], Some(2)),
             (&[0x04, 0xFF, 0x53, 0x52, 0x01][..], None),
             (&[0x05, 0xFF, 0x4C, 0x00, 0x00, 0x02][..], None),
         ] {
