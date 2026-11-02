@@ -17,14 +17,14 @@ use nrf_mpsl::Flash;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use panic_probe as _;
-use rmk::ble::BleTransport;
+use rmk::ble::{BleTransport, SDC_PACKET_SIZE};
 use rmk::config::{BehaviorConfig, DeviceConfig, PositionalConfig, RmkConfig, StorageConfig, VialConfig};
 use rmk::debounce::default_debouncer::DefaultDebouncer;
 use rmk::host::HostService;
 use rmk::keyboard::Keyboard;
 use rmk::matrix::direct_pin::DirectPinMatrix;
 use rmk::processor::builtin::wpm::WpmProcessor;
-use rmk::{DefaultPacketPool, KeymapData, PacketPool, initialize_keymap_and_storage, run_all};
+use rmk::{KeymapData, initialize_keymap_and_storage, run_all};
 use static_cell::StaticCell;
 use vial::{VIAL_KEYBOARD_DEF, VIAL_KEYBOARD_ID};
 
@@ -43,12 +43,11 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
     mpsl.run().await
 }
 
-const SDC_MEM_SIZE: usize = 5688;
 const FLASH_START_ADDR: usize = 0x100000;
 const FLASH_SECTORS: u8 = 6;
 
-const L2CAP_TXQ: u8 = 4;
-const L2CAP_RXQ: u8 = 4;
+const SDC_TX_BUFFERS: u8 = 4;
+const SDC_RX_BUFFERS: u8 = 4;
 
 const UNLOCK_KEYS: &[(u8, u8)] = &[(0, 0), (0, 1)];
 
@@ -64,12 +63,12 @@ fn build_sdc<'d, const N: usize>(
         // .support_dle_peripheral()
         // .support_phy_update_peripheral()
         // .support_le_2m_phy()
-        .peripheral_count(1)?
+        .peripheral_count(rmk::ble::NUM_HOST_LINKS as u8)?
         .buffer_cfg(
-            DefaultPacketPool::MTU as u16,
-            DefaultPacketPool::MTU as u16,
-            L2CAP_TXQ,
-            L2CAP_RXQ,
+            SDC_PACKET_SIZE as u16,
+            SDC_PACKET_SIZE as u16,
+            SDC_TX_BUFFERS,
+            SDC_RX_BUFFERS,
         )?
         .build(p, rng, mpsl, mem)
 }
@@ -148,7 +147,17 @@ async fn main(spawner: Spawner) {
     );
 
     let mut rng = cracen::Cracen::new_blocking(p.CRACEN);
-    let mut sdc_mem = sdc::Mem::<SDC_MEM_SIZE>::new();
+    let mut sdc_mem = sdc::Mem::<
+        {
+            rmk::ble::calculate_sdc_memory_size(
+                0,
+                rmk::ble::NUM_HOST_LINKS,
+                SDC_PACKET_SIZE,
+                SDC_TX_BUFFERS,
+                SDC_RX_BUFFERS,
+            )
+        },
+    >::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
     info!("SDC built");
     info!("BLE stack ready");

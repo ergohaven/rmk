@@ -198,8 +198,9 @@ jobs:
       - name: Install ARM build dependencies
         if: contains(matrix.dir, 'nrf')
         run: |
+          sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
           sudo apt-get update
-          sudo apt-get install -y gcc-arm-none-eabi clang libclang-dev llvm-dev
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-dev clang libclang-dev llvm-dev
           libclang_dir="$(/usr/bin/llvm-config --libdir)"
           test -e "$libclang_dir/libclang.so"
           printf 'CLANG_PATH=/usr/bin/clang\nLIBCLANG_PATH=%s\n' "$libclang_dir" >> "$GITHUB_ENV"

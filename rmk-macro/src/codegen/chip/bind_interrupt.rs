@@ -10,7 +10,7 @@ use rmk_config::resolved::hardware::{BoardConfig, DfuConfig, InputDeviceConfig, 
 use syn::{ItemFn, ItemMod};
 
 use crate::codegen::display::expand_display_interrupt;
-use crate::codegen::feature::{get_rmk_features, is_feature_enabled};
+use crate::codegen::feature::{get_dependency, get_rmk_features, is_feature_enabled};
 use crate::codegen::input_device::iqs5xx::expand_iqs5xx_interrupts;
 use crate::codegen::override_helper::{Overwritten, find_overwritten};
 
@@ -208,10 +208,31 @@ pub(crate) fn bind_interrupt_default(
                 quote! {}
             };
 
+            let central_count = if get_dependency("nrf-sdc").is_some_and(|dep| {
+                dep.req_features()
+                    .iter()
+                    .any(|feature| matches!(feature.as_str(), "central" | "multirole"))
+            }) {
+                quote! { .central_count(0)? }
+            } else {
+                quote! {}
+            };
+
+            let support_adv = if cfg!(feature = "ext_adv") {
+                quote! { .support_ext_adv() }
+            } else {
+                quote! { .support_adv() }
+            };
+
             // nrf-sdc interrupt config
             let nrf_sdc_config = match &board {
                 BoardConfig::Split(_) => {
                     let num_peri = board.get_num_peripheral() as u8;
+                    let support_central = if cfg!(feature = "ext_adv") {
+                        quote! { .support_ext_central() }
+                    } else {
+                        quote! { .support_central() }
+                    };
                     let support_subrating = if is_feature_enabled(&get_rmk_features(), "subrating")
                     {
                         quote! { .support_connection_subrating_central() }
@@ -220,9 +241,8 @@ pub(crate) fn bind_interrupt_default(
                     };
                     quote! {
                         ::nrf_sdc::Builder::new()?
-                        .support_scan()
-                        .support_central()
-                        .support_adv()
+                        #support_central
+                        #support_adv
                         .support_peripheral()
                         .support_dle_peripheral()
                         .support_dle_central()
@@ -232,21 +252,22 @@ pub(crate) fn bind_interrupt_default(
                         .support_le_2m_phy()
                         #tx_power
                         .central_count(#num_peri)?
-                        .peripheral_count(1)?
-                        .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
+                        .peripheral_count(::rmk::ble::NUM_HOST_LINKS as u8)?
+                        .buffer_cfg(SDC_PACKET_SIZE as u16, SDC_PACKET_SIZE as u16, SDC_TX_BUFFERS, SDC_RX_BUFFERS)?
                         .build(p, rng, mpsl, mem)
                     }
                 }
                 BoardConfig::UniBody(_) => quote! {
                     ::nrf_sdc::Builder::new()?
-                    .support_adv()
+                    #support_adv
                     .support_peripheral()
                     .support_dle_peripheral()
                     .support_phy_update_peripheral()
                     .support_le_2m_phy()
                     #tx_power
-                    .peripheral_count(1)?
-                    .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
+                    #central_count
+                    .peripheral_count(::rmk::ble::NUM_HOST_LINKS as u8)?
+                    .buffer_cfg(SDC_PACKET_SIZE as u16, SDC_PACKET_SIZE as u16, SDC_TX_BUFFERS, SDC_RX_BUFFERS)?
                     .build(p, rng, mpsl, mem)
                 },
             };
@@ -304,14 +325,7 @@ pub(crate) fn bind_interrupt_default(
                 async fn mpsl_task(mpsl: &'static ::nrf_sdc::mpsl::MultiprotocolServiceLayer<'static>) -> ! {
                     mpsl.run().await
                 }
-                /// How many outgoing L2CAP buffers per link
-                const L2CAP_TXQ: u8 = 3;
-
-                /// How many incoming L2CAP buffers per link
-                const L2CAP_RXQ: u8 = 3;
-
-                /// Size of L2CAP packets
-                const L2CAP_MTU: usize = 251;
+                use ::rmk::ble::{SDC_PACKET_SIZE, SDC_RX_BUFFERS, SDC_TX_BUFFERS};
                 fn build_sdc<'d, const N: usize>(
                     p: ::nrf_sdc::Peripherals<'d>,
                     rng: &'d mut ::embassy_nrf::rng::Rng<::embassy_nrf::mode::Async>,

@@ -19,7 +19,7 @@ cargo +stable "${nx[@]}" --manifest-path rmk-types/Cargo.toml
 # Exercise the rynk protocol module (gated behind `rynk`) and the Ergohaven commands.
 cargo +stable "${nx[@]}" --manifest-path rmk-types/Cargo.toml --features host,ergohaven
 cargo +stable "${nx[@]}" --manifest-path rmk-types/Cargo.toml --features steno
-cargo +stable "${nx[@]}" --manifest-path rmk-macro/Cargo.toml --features _simulator
+cargo +stable "${nx[@]}" --manifest-path rmk-macro/Cargo.toml --features _simulator,steno
 for feats in "${RMK_TEST_FEATURESETS[@]}"; do
     if [[ -z "$feats" ]]; then
         cargo +stable "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features

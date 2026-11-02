@@ -37,7 +37,7 @@ class WorkflowGraphTests(unittest.TestCase):
         # coverage edits must review/update these baselines, not drop this test.
         expected = {
             'build.yml': '2c2399cc754e81e15be948175d744963aede98e73359f341f9d56ee3b51313ad',
-            'ci.yml': 'ad95fff3035d3f5a6bfbd3f1943ec081755e636ac7fb549cf13f1e4e1329592e',
+            'ci.yml': '7f8d81e05dceb2951e5db1d3f812a8296bfaa4172cd0523921e8f22dc11aac6e',
         }
         for name, (_, owners) in OWNERS.items():
             jobs = load(name)['jobs']

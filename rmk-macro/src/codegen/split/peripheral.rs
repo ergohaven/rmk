@@ -233,6 +233,12 @@ fn expand_bind_interrupt_for_split_peripheral(
                 quote! {}
             };
 
+            let support_adv = if cfg!(feature = "ext_adv") {
+                quote! { .support_ext_adv() }
+            } else {
+                quote! { .support_adv() }
+            };
+
             let clock_power_handler = if usb_enabled {
                 quote! {
                     CLOCK_POWER => ::nrf_sdc::mpsl::ClockInterruptHandler, ::embassy_nrf::usb::vbus_detect::InterruptHandler;
@@ -265,14 +271,7 @@ fn expand_bind_interrupt_for_split_peripheral(
                 async fn mpsl_task(mpsl: &'static ::nrf_sdc::mpsl::MultiprotocolServiceLayer<'static>) -> ! {
                     mpsl.run().await
                 }
-                /// How many outgoing L2CAP buffers per link
-                const L2CAP_TXQ: u8 = 3;
-
-                /// How many incoming L2CAP buffers per link
-                const L2CAP_RXQ: u8 = 3;
-
-                /// Size of L2CAP packets
-                const L2CAP_MTU: usize = 251;
+                use ::rmk::ble::{SDC_PACKET_SIZE, SDC_RX_BUFFERS, SDC_TX_BUFFERS};
                 fn build_sdc<'d, const N: usize>(
                     p: ::nrf_sdc::Peripherals<'d>,
                     rng: &'d mut ::embassy_nrf::rng::Rng<::embassy_nrf::mode::Async>,
@@ -280,17 +279,16 @@ fn expand_bind_interrupt_for_split_peripheral(
                     mem: &'d mut ::nrf_sdc::Mem<N>,
                 ) -> Result<::nrf_sdc::SoftdeviceController<'d>, ::nrf_sdc::Error> {
                     ::nrf_sdc::Builder::new()?
-                        .support_adv()
+                        #support_adv
                         .support_peripheral()
                         .support_dle_peripheral()
-                        .support_dle_central()
-                        .support_phy_update_central()
                         .support_phy_update_peripheral()
                         #support_subrating
                         .support_le_2m_phy()
                         #tx_power
+                        .central_count(0)?
                         .peripheral_count(1)?
-                        .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
+                        .buffer_cfg(SDC_PACKET_SIZE as u16, SDC_PACKET_SIZE as u16, SDC_TX_BUFFERS, SDC_RX_BUFFERS)?
                         .build(p, rng, mpsl, mem)
                 }
             }
@@ -658,6 +656,9 @@ fn expand_split_peripheral_entry(
                 ::rmk::split::peripheral::run_rmk_split_peripheral(#uart_instance)
             };
             let mut tasks = vec![device_task, peripheral_run];
+            if !processors.is_empty() {
+                tasks.push(processor_task);
+            }
             tasks.extend(registered_processors);
             if let Some(t) = &watchdog_task {
                 tasks.push(t.clone());
@@ -801,4 +802,50 @@ pub(crate) fn expand_peripheral_input_device_config(
     }
 
     (initializations, devices, processors)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serial_peripheral_runs_battery_processors() {
+        let example = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../examples/use_config/rp2040_split/keyboard.toml");
+        let source = std::fs::read_to_string(example).unwrap();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rmk-serial-battery-{unique}.toml"));
+        std::fs::write(
+            &path,
+            format!(
+                r#"{source}
+[split.peripheral.battery]
+charge_state = {{ pin = "PIN_20", low_active = true }}
+charge_led = {{ pin = "PIN_21", low_active = false }}
+"#
+            ),
+        )
+        .unwrap();
+        let config = rmk_config::KeyboardTomlConfig::new_from_toml_path(&path);
+        std::fs::remove_file(path).unwrap();
+        let generated = expand_split_peripheral(
+            0,
+            &config.identity().unwrap(),
+            &config.hardware().unwrap(),
+            syn::parse_quote!(
+                mod keyboard {}
+            ),
+            &Some(vec!["split".into()]),
+            None,
+        )
+        .to_string();
+        assert!(generated.contains("BatteryProcessor :: charging_only"));
+        assert!(
+            generated.contains("run_all ! (battery_processor , charge_led_processor)"),
+            "battery processors were created but never run"
+        );
+    }
 }

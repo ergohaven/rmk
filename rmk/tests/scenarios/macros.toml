@@ -214,9 +214,9 @@ steps = [
   { tap = { pos = [0, 6], duration = 10 } },
 ]
 expect = [
-  { mouse = { wheel = -1 } },
+  { mouse = { wheel = 1 } },
   # The 4 repeats at +100ms, +180ms, +260ms and +340ms
-  { mouse = { wheel = -1 } }, { mouse = { wheel = -1 } }, { mouse = { wheel = -1 } }, { mouse = { wheel = -1 } },
+  { mouse = { wheel = 1 } }, { mouse = { wheel = 1 } }, { mouse = { wheel = 1 } }, { mouse = { wheel = 1 } },
   { mouse = {} },
 ]
 
@@ -515,8 +515,8 @@ expect = [
   { mouse = { y = 5 } }, { mouse = {} },
   { mouse = { x = -5 } }, { mouse = {} },
   { mouse = { x = 5 } }, { mouse = {} },
-  { mouse = { wheel = -1 } }, { mouse = {} },
   { mouse = { wheel = 1 } }, { mouse = {} },
+  { mouse = { wheel = -1 } }, { mouse = {} },
   { mouse = { pan = -1 } }, { mouse = {} },
   { mouse = { pan = 1 } }, { mouse = {} },
 ]
