@@ -30,12 +30,12 @@ cargo +stable check -p rynk-wasm --target wasm32-unknown-unknown
 log_section "Wasm tests"
 # The JS byte link's cancel-safety needs a real JS event loop; node has one and
 # needs no browser driver.
-(cd rynk-wasm && wasm-pack test --node)
+(cd rynk-wasm && CARGO_BUILD_TARGET=wasm32-unknown-unknown wasm-pack test --node)
 
 log_section "Wasm package build"
 # wasm-pack emits the JS package + generated .d.ts under rynk-wasm/pkg/ (ignored, not checked in).
 # --dev keeps wasm-bindgen's type descriptors un-optimized, so a malformed one surfaces as invalid TS below.
-(cd rynk-wasm && wasm-pack build --dev --target web >/dev/null)
+(cd rynk-wasm && CARGO_BUILD_TARGET=wasm32-unknown-unknown wasm-pack build --dev --target web >/dev/null)
 # Typecheck the whole generated .d.ts: a broken descriptor for any exported type fails CI.
 npx --yes --package typescript@5.9.3 tsc \
     --noEmit --strict --target ES2022 --lib ES2022,DOM,ESNext.Disposable \
