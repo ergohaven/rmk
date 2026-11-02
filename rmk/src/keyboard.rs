@@ -1502,11 +1502,7 @@ impl<'a> Keyboard<'a> {
                 self.keymap.update_fn_layer_state();
             }
             #[cfg(feature = "steno")]
-            Action::Steno(key) => {
-                if let Some(report) = self.steno.on_event(key, event.pressed) {
-                    crate::channel::try_send_hid_report(report);
-                }
-            }
+            Action::Steno(key) => crate::channel::try_send_hid_report(self.steno.on_event(key, event.pressed)),
             _ => warn!("Action variant not supported: {:?}", action),
         }
     }

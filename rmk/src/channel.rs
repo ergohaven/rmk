@@ -235,9 +235,9 @@ mod tests {
     }
 }
 
-/// Drops the report when the active transport's queue is full or no
-/// transport is selected. Use for producers where back-pressure would block
-/// the matrix scan (e.g. steno chord output).
+/// Never waits for queue space, so a steno send cannot stall the keyboard
+/// task. A dropped report can lose or merge a stroke on the host; the next
+/// report still restates every held key because steno reports are absolute.
 pub(crate) fn try_send_hid_report(report: Report) {
     if let Some((_, ch)) = active_report_channel() {
         let _ = ch.try_send(QueuedReport::new(report));

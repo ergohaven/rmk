@@ -1,6 +1,13 @@
+#[cfg(not(feature = "ext_adv"))]
+use bt_hci::cmd::le::LeSetScanParams;
 #[cfg(feature = "subrating")]
 use bt_hci::cmd::le::LeSubrateRequest;
-use bt_hci::cmd::le::{LeReadLocalSupportedFeatures, LeReadPhy, LeSetPhy};
+#[cfg(feature = "ext_adv")]
+use bt_hci::cmd::le::{
+    LeClearAdvSets, LeExtCreateConn, LeReadNumberOfSupportedAdvSets, LeSetAdvSetRandomAddr, LeSetExtAdvData,
+    LeSetExtAdvParams, LeSetExtScanParams, LeSetExtScanResponseData,
+};
+use bt_hci::cmd::le::{LeRand, LeReadLocalSupportedFeatures, LeReadPhy, LeSetPhy};
 use bt_hci::controller::{ControllerCmdAsync, ControllerCmdSync};
 use bt_hci::param::Error as HciError;
 #[cfg(feature = "split")]
@@ -58,8 +65,11 @@ pub(crate) mod device_info;
 #[cfg(feature = "host")]
 pub(crate) mod host;
 pub(crate) mod led;
+#[cfg(all(feature = "_nrf_ble", target_arch = "arm", target_os = "none"))]
+mod p256;
 pub mod passkey;
 pub(crate) mod profile;
+pub(crate) mod rng;
 #[cfg(any(feature = "split", feature = "dongle"))]
 pub(crate) mod scan;
 pub(crate) mod sleep;
@@ -67,12 +77,100 @@ pub(crate) mod sleep;
 #[cfg(all(feature = "subrating", feature = "_no_subrating"))]
 compile_error!("You may not enable feature `subrating` on unsupported platforms!");
 
+#[cfg(all(feature = "pico_w_ble", feature = "ext_adv"))]
+compile_error!("Pico W does not support extended HCI advertising commands");
+
+/// Additional HCI commands required for extended advertising.
+#[doc(hidden)]
+#[cfg(feature = "ext_adv")]
+pub trait ExtAdvCmds:
+    for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
+    + ControllerCmdSync<LeClearAdvSets>
+    + ControllerCmdSync<LeSetExtAdvParams>
+    + ControllerCmdSync<LeSetAdvSetRandomAddr>
+    + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
+    + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>
+{
+}
+
+#[cfg(feature = "ext_adv")]
+impl<T> ExtAdvCmds for T where
+    T: for<'t> ControllerCmdSync<LeSetExtAdvData<'t>>
+        + ControllerCmdSync<LeClearAdvSets>
+        + ControllerCmdSync<LeSetExtAdvParams>
+        + ControllerCmdSync<LeSetAdvSetRandomAddr>
+        + ControllerCmdSync<LeReadNumberOfSupportedAdvSets>
+        + for<'t> ControllerCmdSync<LeSetExtScanResponseData<'t>>
+{
+}
+
+#[cfg(not(feature = "ext_adv"))]
+#[doc(hidden)]
+pub trait ExtAdvCmds {}
+
+#[cfg(not(feature = "ext_adv"))]
+impl<T> ExtAdvCmds for T {}
+
+/// Additional HCI commands required for central scanning and connecting.
+#[doc(hidden)]
+#[cfg(feature = "ext_adv")]
+pub trait CentralCmds: ControllerCmdSync<LeSetExtScanParams> + ControllerCmdAsync<LeExtCreateConn> {}
+
+#[cfg(feature = "ext_adv")]
+impl<T> CentralCmds for T where T: ControllerCmdSync<LeSetExtScanParams> + ControllerCmdAsync<LeExtCreateConn> {}
+
+#[cfg(not(feature = "ext_adv"))]
+#[doc(hidden)]
+pub trait CentralCmds: ControllerCmdSync<LeSetScanParams> {}
+
+#[cfg(not(feature = "ext_adv"))]
+impl<T: ControllerCmdSync<LeSetScanParams>> CentralCmds for T {}
+
 /// Max number of connections of a keyboard's BLE stack; a dongle sizes its
 /// own — see [`crate::dongle::Dongle`].
-pub(crate) const CONNECTIONS_MAX: usize = crate::SPLIT_PERIPHERALS_NUM + 1;
+const CONNECTIONS_MAX: usize = crate::SPLIT_PERIPHERALS_NUM + NUM_HOST_LINKS;
 
-/// Max number of L2CAP channels
-pub(crate) const L2CAP_CHANNELS_MAX: usize = CONNECTIONS_MAX * 4; // Signal + att + smp + hid
+/// Host connections supported by the keyboard runtime.
+#[doc(hidden)]
+pub const NUM_HOST_LINKS: usize = 1;
+
+/// Default SDC Link Layer TX/RX packet size, in bytes.
+pub const SDC_PACKET_SIZE: usize = 251;
+/// Default number of SDC TX packet buffers per connection.
+pub const SDC_TX_BUFFERS: u8 = 3;
+/// Default number of SDC RX packet buffers per connection.
+pub const SDC_RX_BUFFERS: u8 = 3;
+
+/// Calculate SDC memory using the same packet size and buffer counts as the controller.
+#[doc(hidden)]
+pub const fn calculate_sdc_memory_size(
+    central_links: usize,
+    peripheral_links: usize,
+    packet_size: usize,
+    tx_buffers: u8,
+    rx_buffers: u8,
+) -> usize {
+    // SDC_MEM_PER_{CENTRAL,PERIPHERAL}_LINK plus their shared-memory bounds.
+    let buffers = (tx_buffers as usize + rx_buffers as usize) * (packet_size + 15) - 84;
+    let links = central_links * (803 + buffers + 21) + peripheral_links * (923 + buffers + 17);
+    let advertising = (5184 + 31 * 18) / 10; // SDC_MEM_PER_ADV_SET(31).
+    // SDC_MEM_SCAN[_EXT](3); scanning and initiating run sequentially.
+    let scanning = if central_links > 0 {
+        408 + 3 * if cfg!(feature = "ext_adv") { 320 } else { 104 }
+    } else {
+        0
+    };
+    let subrating = if cfg!(feature = "subrating") {
+        12 + (central_links + peripheral_links) * 60
+    } else {
+        0
+    };
+    let filter_accept_list = 4 + 8 * 8; // SDC_MEM_FAL(8).
+    (links + advertising + scanning + subrating + filter_accept_list + 7) & !7
+}
+
+// Fixed ATT/SMP/signalling channels do not consume dynamic L2CAP slots.
+const L2CAP_CHANNELS_MAX: usize = 0;
 
 // Custom messages share the GATT write dispatcher with the host protocol.
 const GATT_WRITE_BUFFER_SIZE: usize = {
@@ -374,9 +472,11 @@ where
 impl<'a, C> Runnable for BleTransport<'a, C>
 where
     C: Controller
+        + ExtAdvCmds
         + ControllerCmdAsync<LeSetPhy>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>
-        + ControllerCmdSync<LeReadPhy>,
+        + ControllerCmdSync<LeReadPhy>
+        + ControllerCmdSync<LeRand>,
 {
     async fn run(&mut self) -> ! {
         // Load the preferred connection from storage
@@ -384,8 +484,10 @@ where
         crate::state::set_preferred_connection(preferred);
 
         let controller = self.controller.take().expect("BleTransport::run called twice");
+        rng::init(&controller).await;
         // Exactly one link — the host.
-        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 1, BOND_SLOTS> =
+            HostResources::new();
         let stack = trouble_host::new(controller, &mut resources)
             .set_random_address(Address::random(self.address))
             .build();
@@ -405,15 +507,19 @@ where
 impl<
     'a,
     #[cfg(not(feature = "subrating"))] C: Controller
+        + CentralCmds
+        + ExtAdvCmds
         + ControllerCmdAsync<LeSetPhy>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>
         + ControllerCmdSync<LeReadPhy>
-        + ControllerCmdSync<bt_hci::cmd::le::LeSetScanParams>,
+        + ControllerCmdSync<LeRand>,
     #[cfg(feature = "subrating")] C: Controller
+        + CentralCmds
+        + ExtAdvCmds
         + ControllerCmdAsync<LeSetPhy>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>
         + ControllerCmdSync<LeReadPhy>
-        + ControllerCmdSync<bt_hci::cmd::le::LeSetScanParams>
+        + ControllerCmdSync<LeRand>
         + ControllerCmdAsync<LeSubrateRequest>,
 > Runnable for BleTransport<'a, C>
 {
@@ -423,8 +529,10 @@ impl<
         crate::state::set_preferred_connection(preferred);
 
         let controller = self.controller.take().expect("BleTransport::run called twice");
+        rng::init(&controller).await;
 
-        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> = HostResources::new();
+        let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX, 1, BOND_SLOTS> =
+            HostResources::new();
         let stack = trouble_host::new(controller, &mut resources)
             .set_random_address(Address::random(self.address))
             .build();
@@ -461,6 +569,7 @@ impl<
 async fn run_ble_keyboard<
     #[cfg(feature = "host")] 'r,
     C: Controller
+        + ExtAdvCmds
         + ControllerCmdAsync<LeSetPhy>
         + ControllerCmdSync<LeReadLocalSupportedFeatures>
         + ControllerCmdSync<LeReadPhy>,
@@ -583,6 +692,7 @@ async fn run_ble_keyboard<
                         &mut peripheral,
                         &server.server,
                         adv,
+                        None,
                         deadline.saturating_duration_since(now),
                     )
                     .await?;
@@ -866,15 +976,15 @@ async fn gatt_events_task<C: Controller + ControllerCmdAsync<LeSetPhy>>(
     session_ready: &Signal<crate::RawMutex, ()>,
     local_hid_suspend: bool,
 ) -> Result<(), Error> {
-    let level = server.battery_service.level;
+    let level = &server.battery_service.level;
     #[cfg(feature = "split")]
-    let peripheral_levels = server.peripheral_battery_services.levels;
-    let output_keyboard = server.hid_service.output_keyboard;
-    let hid_control_point = server.hid_service.hid_control_point;
-    let input_keyboard = server.hid_service.input_keyboard;
-    let mouse = server.hid_service.mouse_report;
-    let media = server.hid_service.media_report;
-    let system_control = server.hid_service.system_report;
+    let peripheral_levels = &server.peripheral_battery_services.levels;
+    let output_keyboard = &server.hid_service.output_keyboard;
+    let hid_control_point = &server.hid_service.hid_control_point;
+    let input_keyboard = &server.hid_service.input_keyboard;
+    let mouse = &server.hid_service.mouse_report;
+    let media = &server.hid_service.media_report;
+    let system_control = &server.hid_service.system_report;
 
     #[cfg(feature = "passkey_entry")]
     let mut passkey_state = PasskeyInputState::new();
@@ -922,6 +1032,9 @@ async fn gatt_events_task<C: Controller + ControllerCmdAsync<LeSetPhy>>(
             GattConnectionEvent::Encrypted { security_level, .. } => {
                 info!("[gatt] encrypted: {:?}", security_level);
                 mark_ble_session_ready(session_ready);
+            }
+            GattConnectionEvent::PhyUpdateFailed { .. } | GattConnectionEvent::ConnectionParamsUpdateFailed { .. } => {
+                warn!("[gatt] link parameter update failed");
             }
             GattConnectionEvent::Gatt { event: gatt_event } => {
                 let mut cccd_updated = false;

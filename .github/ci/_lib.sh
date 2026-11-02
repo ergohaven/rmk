@@ -42,6 +42,7 @@ RMK_FEATURESETS=(
     "vial,_ble,_no_usb,steno,passkey_entry"
     "split,async_matrix"
     "split,async_matrix,_ble"
+    "split,async_matrix,ext_adv"
     "split,vial,async_matrix"
     "split,vial,async_matrix,_ble"
     "split,vial,storage"
@@ -73,6 +74,8 @@ RMK_TEST_FEATURESETS=(
     "split,dfu_nrf,dfu_split,storage,async_matrix,embassy-nrf/nrf52840"
     "vial,host_lock,_no_usb,steno,passkey_entry"
     "rynk,_ble,split,async_matrix,storage"
+    "_ble,ext_adv,split,storage,async_matrix"
+    "dongle,vial,_ble,ext_adv,storage,custom_message"
     "dongle,_ble,storage,custom_message"
     "dongle,vial,_ble,storage,custom_message"
     # Ergohaven's BLE split boards
@@ -95,7 +98,7 @@ RMK_K04_STANDALONE_FEATURES="split,ergohaven_rynk,storage,universal_symbols,asyn
 #   - esp32_ble_split: dual-target split example; only builds through the
 #     `build-central` / `build-peripheral` cargo aliases.
 #   - py32f07x, sf32lb52x_usb: not currently buildable in CI.
-#   - sf32lb52x_ble: sifli-radio pins bt-hci 0.8 while rmk needs bt-hci 0.10, so its
+#   - sf32lb52x_ble: sifli-radio pins bt-hci 0.8 while rmk needs bt-hci 0.11, so its
 #     BleController doesn't satisfy rmk's Controller traits. Document-and-wait (no
 #     sifli-rs fork) until sifli-radio ships a bt-hci version rmk can use.
 EXAMPLE_SKIPLIST=(

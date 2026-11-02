@@ -42,18 +42,18 @@ lcd-async = { version = "0.1", optional = true }
 rmk-types = { path = "../../rmk-types", optional = true }
 heapless = "0.9"
 embassy-futures = "0.1"
-nrf-sdc = { version = "0.4.0", features = [
+nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "a0eafe07808e496fe9937add099bb4eec1a8ee17", features = [
     "defmt",
     "peripheral",
     "central",
     "nrf52840",
 ] }
-nrf-mpsl = { version = "0.4.0", features = [
+nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "a0eafe07808e496fe9937add099bb4eec1a8ee17", features = [
     "defmt",
     "critical-section-impl",
     "nrf52840",
 ] }
-bt-hci = { version = "0.10", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.11", default-features = false, features = ["defmt"] }
 
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
@@ -125,6 +125,3 @@ lto = "fat"
 [workspace]
 members = ["."]
 
-# nrf-mpsl 0.4.0 with the flash timeslot lock fix sent upstream. Drop once a release has it.
-[patch.crates-io]
-nrf-mpsl = { path = "../../vendor/nrf-mpsl" }

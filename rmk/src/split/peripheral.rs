@@ -1,7 +1,7 @@
 #[cfg(all(feature = "_ble", feature = "subrating"))]
 use bt_hci::cmd::le::LeSetHostFeature;
 #[cfg(feature = "_ble")]
-use bt_hci::{cmd::status::ReadRssi, controller::ControllerCmdSync};
+use bt_hci::{cmd::le::LeRand, cmd::status::ReadRssi, controller::ControllerCmdSync};
 use embassy_futures::select::{Either, select};
 #[cfg(not(feature = "_ble"))]
 use embedded_io_async::{Read, Write};
@@ -19,6 +19,8 @@ use {
 
 use super::SplitMessage;
 use super::driver::{SplitReader, SplitWriter};
+#[cfg(feature = "_ble")]
+use crate::ble::ExtAdvCmds;
 #[cfg(feature = "dfu_split")]
 use crate::dfu::{DfuCmd, DfuTarget, SPLIT_RESPONSE_CHANNEL, SplitResponse};
 #[cfg(feature = "dfu_split")]
@@ -48,8 +50,12 @@ use crate::state::update_status;
 /// * `address` - (optional) The BLE address of this peripheral
 /// * `serial` - (optional) serial port used to send peripheral split message. This argument is enabled only for serial split now
 pub async fn run_rmk_split_peripheral<
-    #[cfg(all(feature = "_ble", feature = "subrating"))] C: Controller + ControllerCmdSync<LeSetHostFeature> + ControllerCmdSync<ReadRssi>,
-    #[cfg(all(feature = "_ble", not(feature = "subrating")))] C: Controller + ControllerCmdSync<ReadRssi>,
+    #[cfg(all(feature = "_ble", feature = "subrating"))] C: Controller
+        + ExtAdvCmds
+        + ControllerCmdSync<LeRand>
+        + ControllerCmdSync<LeSetHostFeature>
+        + ControllerCmdSync<ReadRssi>,
+    #[cfg(all(feature = "_ble", not(feature = "subrating")))] C: Controller + ExtAdvCmds + ControllerCmdSync<LeRand> + ControllerCmdSync<ReadRssi>,
     #[cfg(not(feature = "_ble"))] S: Write + Read,
 >(
     #[cfg(feature = "_ble")] id: usize,
@@ -75,8 +81,9 @@ pub async fn run_rmk_split_peripheral<
 
     #[cfg(feature = "_ble")]
     {
-        // Exactly one link — the central.
-        let mut resources: HostResources<DefaultPacketPool, 1, 4> = HostResources::new();
+        crate::ble::rng::init(&controller).await;
+        // One central connection; ATT/SMP/signalling do not need dynamic L2CAP slots.
+        let mut resources: HostResources<DefaultPacketPool, 1, 0> = HostResources::new();
         let stack = trouble_host::new(controller, &mut resources)
             .set_random_address(Address::random(address))
             .build();
