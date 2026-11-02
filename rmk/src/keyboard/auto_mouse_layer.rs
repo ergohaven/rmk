@@ -379,6 +379,9 @@ fn keypress_step(entries: &mut [EntryState], action: Action, now: Instant) -> Ve
                         });
                     (modifiers & !covered).into_bits() != 0
                 }
+                // An unbound key is a real press that does nothing, so it tears
+                // the layer down like any other non-mouse key.
+                Action::No => true,
                 // Unclassifiable (layer switches, macros, Again/Repeat, GraveEscape, ...):
                 // leave the layer intact; the timeout path handles it.
                 _ => false,
@@ -854,6 +857,19 @@ mod tests {
             assert!(!entries[0].self_activated, "key {:?} should clear self_activated", hid);
             assert!(entries[0].deadline.is_none(), "key {:?} should clear deadline", hid);
         }
+    }
+
+    #[test]
+    fn keypress_step_releases_layer_when_unbound_key_pressed() {
+        // An unbound key resolves to `Action::No`; it is a real press that does
+        // nothing, so it must tear the layer down like any other non-mouse key.
+        let mut entries = [holding_entry_with_deactivate(3, &[])];
+
+        let released = keypress_step(&mut entries, Action::No, at(2000));
+
+        assert_eq!(released.as_slice(), &[3], "unbound key should release layer");
+        assert!(!entries[0].self_activated, "unbound key should clear self_activated");
+        assert!(entries[0].deadline.is_none(), "unbound key should clear deadline");
     }
 
     #[test]
