@@ -837,7 +837,10 @@ impl<'a> Keyboard<'a> {
 
         if !key_action.is_morse() {
             match key_action {
-                KeyAction::No | KeyAction::Transparent => (),
+                // An unbound key still emits an `ActionEvent` (`Action::No`) so
+                // subscribers like the Qube auto layer can react to the press.
+                KeyAction::No => self.process_key_action_normal(Action::No, event).await,
+                KeyAction::Transparent => (),
                 KeyAction::Single(action) => {
                     debug!("Process Single key action: {:?}, {:?}", action, event);
                     self.process_key_action_normal(action, event).await;

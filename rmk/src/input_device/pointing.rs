@@ -1507,6 +1507,9 @@ fn qube_action_deactivates_auto_layer(action: Action) -> bool {
         Action::Key(_) => true,
         Action::KeyWithModifier(hid, _) | Action::OneShotKey(hid) => !hid.is_mouse_key(),
         Action::Modifier(modifiers) => modifiers.into_bits() != 0,
+        // An unbound key is a real press that does nothing, so it tears the
+        // layer down like any other non-mouse key.
+        Action::No => true,
         // Unclassifiable (layer switches, macros, pointer-mode user keys, ...):
         // leave the layer intact; the timeout path handles it.
         _ => false,
@@ -3370,11 +3373,14 @@ mod tests {
             ModifierCombination::new().with_left_ctrl(true)
         )));
 
+        // An unbound key is a real press that does nothing, so it tears the
+        // layer down like any other non-mouse key.
+        assert!(qube_action_deactivates_auto_layer(Action::No));
+
         // Unclassifiable actions leave the layer to the timeout path. The Qube
         // pointer-mode keys are `Action::User`, so sniper/scroll/text keep it.
         assert!(!qube_action_deactivates_auto_layer(Action::User(QUBE_USER_SNIPER)));
         assert!(!qube_action_deactivates_auto_layer(Action::LayerOn(3)));
-        assert!(!qube_action_deactivates_auto_layer(Action::No));
     }
 
     /// The Vial auto-layer target used by the ownership tests below.
