@@ -10,9 +10,27 @@ jobs:
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       pull-requests: write
     steps:
+      - name: Check for comment data
+        id: report
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.payload.workflow_run.id,
+            });
+            const available = artifacts.some(a => a.name === 'bloat-comment' && !a.expired);
+            core.setOutput('available', String(available));
+            if (!available) {
+              core.info('No size report was produced, or it has expired; skipping comment.');
+            }
+
       - name: Download comment data
+        if: steps.report.outputs.available == 'true'
         uses: actions/download-artifact@v7
         with:
           name: bloat-comment
@@ -20,6 +38,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Post PR comment
+        if: steps.report.outputs.available == 'true'
         uses: actions/github-script@v7
         with:
           script: |
