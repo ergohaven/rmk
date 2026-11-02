@@ -378,6 +378,8 @@ jobs:
             examples/use_config/esp32s3_ble -> ../../../target-esp
             examples/use_rust/esp32s3_ble -> ../../../target-esp
       - name: Install espup and esp toolchain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cargo binstall --force espup -y
           espup install

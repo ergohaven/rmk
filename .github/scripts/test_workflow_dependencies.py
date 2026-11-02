@@ -19,6 +19,21 @@ class RunnerDependencyTests(unittest.TestCase):
         self.assertNotIn('install -y qemu-system-riscv ', install)
         self.assertIn('qemu-system-riscv32 --version', install)
 
+    def test_espup_uses_only_builtin_token_at_install_step(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
+        job = workflow['jobs']['build-esp']
+        install = next(step for step in job['steps']
+                       if step.get('name') == 'Install espup and esp toolchain')
+        self.assertEqual(install.get('env'), {'GITHUB_TOKEN': '${{ secrets.GITHUB_TOKEN }}'})
+        self.assertEqual(install['run'], 'cargo binstall --force espup -y\nespup install\n')
+        # Do not expose the token to example builds or broaden permissions.
+        self.assertNotIn('GITHUB_TOKEN', workflow.get('env', {}))
+        self.assertNotIn('GITHUB_TOKEN', job.get('env', {}))
+        for step in job['steps']:
+            if step is not install:
+                self.assertNotIn('GITHUB_TOKEN', step.get('env', {}))
+        self.assertNotIn('permissions', job)
+
     def test_nordic_bindgen_uses_installed_distro_llvm(self):
         job = self.jobs()['build']
         self.assertNotIn('LIBCLANG_PATH', job.get('env', {}))

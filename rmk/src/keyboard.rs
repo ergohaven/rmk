@@ -2394,7 +2394,7 @@ mod test {
         });
     }
 
-    #[cfg(all(feature = "universal_symbols", feature = "storage"))]
+    #[cfg(all(feature = "universal_symbols", feature = "storage", not(feature = "_no_usb")))]
     #[test]
     fn universal_layout_switch_report_order_and_mac_pc_50ms_settle() {
         block_on(async {
