@@ -164,7 +164,7 @@ dependencies = [
  "embedded-io 0.7.1",
  "embedded-io-async 0.7.0",
  "futures-intrusive",
- "heapless 0.9.3",
+ "heapless 0.8.0",
  "serde",
 ]
 
@@ -1508,7 +1508,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc?rev=9cf87fa7883b89b2d4dc7cd94864da7927bd858c#9cf87fa7883b89b2d4dc7cd94864da7927bd858c"
+source = "git+https://github.com/alexmoon/nrf-sdc?rev=a0eafe07808e496fe9937add099bb4eec1a8ee17#a0eafe07808e496fe9937add099bb4eec1a8ee17"
 dependencies = [
  "cfg-if",
  "cortex-m",
@@ -1524,7 +1524,7 @@ dependencies = [
 [[package]]
 name = "nrf-mpsl-sys"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc?rev=9cf87fa7883b89b2d4dc7cd94864da7927bd858c#9cf87fa7883b89b2d4dc7cd94864da7927bd858c"
+source = "git+https://github.com/alexmoon/nrf-sdc?rev=a0eafe07808e496fe9937add099bb4eec1a8ee17#a0eafe07808e496fe9937add099bb4eec1a8ee17"
 dependencies = [
  "bindgen",
  "doxygen-rs",
@@ -1543,7 +1543,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc"
 version = "0.4.0"
-source = "git+https://github.com/alexmoon/nrf-sdc?rev=9cf87fa7883b89b2d4dc7cd94864da7927bd858c#9cf87fa7883b89b2d4dc7cd94864da7927bd858c"
+source = "git+https://github.com/alexmoon/nrf-sdc?rev=a0eafe07808e496fe9937add099bb4eec1a8ee17#a0eafe07808e496fe9937add099bb4eec1a8ee17"
 dependencies = [
  "bt-hci",
  "bt-hci-transport",
@@ -1561,7 +1561,7 @@ dependencies = [
 [[package]]
 name = "nrf-sdc-sys"
 version = "0.3.0"
-source = "git+https://github.com/alexmoon/nrf-sdc?rev=9cf87fa7883b89b2d4dc7cd94864da7927bd858c#9cf87fa7883b89b2d4dc7cd94864da7927bd858c"
+source = "git+https://github.com/alexmoon/nrf-sdc?rev=a0eafe07808e496fe9937add099bb4eec1a8ee17#a0eafe07808e496fe9937add099bb4eec1a8ee17"
 dependencies = [
  "bindgen",
  "doxygen-rs",
