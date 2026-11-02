@@ -1,10 +1,10 @@
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_nrf::twim::Twim;
 use embassy_time::{Duration, Instant, Timer};
+use embedded_hal_async::i2c::I2c;
 use rmk::core_traits::Runnable;
-use rmk::event::{publish_event, Axis, AxisEvent, AxisValType, EventSubscriber, PointingEvent};
-use rmk::processor::Processor;
+use rmk::event::{publish_event, Axis, AxisEvent, AxisValType, PointingEvent};
 
+use crate::board::TouchpadI2c;
 use crate::module_settings;
 
 const IQS5XX_ADDR: u8 = 0x74;
@@ -84,7 +84,7 @@ const SYSTEM_CONTROL_1_SUSPEND: u8 = 1 << 0;
 const TOUCH_WAKE_SETTLE: Duration = Duration::from_millis(100);
 
 pub struct Touchpad {
-    i2c: Twim<'static>,
+    i2c: TouchpadI2c,
     device_id: u8,
     side: u8,
     ready: bool,
@@ -102,7 +102,7 @@ pub struct Touchpad {
 }
 
 impl Touchpad {
-    pub fn new(device_id: u8, i2c: Twim<'static>) -> Self {
+    pub fn new(device_id: u8, i2c: TouchpadI2c) -> Self {
         Self {
             i2c,
             device_id,
@@ -556,30 +556,32 @@ impl Touchpad {
 
     async fn read(&mut self, reg: u16, out: &mut [u8]) -> bool {
         let address = reg.to_be_bytes();
-        if self.i2c.write_read(IQS5XX_ADDR, &address, out).await.is_ok() {
+        if I2c::write_read(&mut self.i2c, IQS5XX_ADDR, &address, out).await.is_ok() {
             return true;
         }
 
         // IQS5xx deliberately NACKs the first address while waking from LP or
         // suspend. The datasheet requires a retry after at least 150 us.
         Timer::after(Duration::from_micros(200)).await;
-        self.i2c.write_read(IQS5XX_ADDR, &address, out).await.is_ok()
+        I2c::write_read(&mut self.i2c, IQS5XX_ADDR, &address, out).await.is_ok()
     }
 
     async fn write_u8(&mut self, reg: u16, val: u8) -> bool {
         let r = reg.to_be_bytes();
-        self.i2c.write(IQS5XX_ADDR, &[r[0], r[1], val]).await.is_ok()
+        I2c::write(&mut self.i2c, IQS5XX_ADDR, &[r[0], r[1], val]).await.is_ok()
     }
 
     async fn write_u16(&mut self, reg: u16, val: u16) -> bool {
         let r = reg.to_be_bytes();
         let v = val.to_be_bytes();
-        self.i2c.write(IQS5XX_ADDR, &[r[0], r[1], v[0], v[1]]).await.is_ok()
+        I2c::write(&mut self.i2c, IQS5XX_ADDR, &[r[0], r[1], v[0], v[1]])
+            .await
+            .is_ok()
     }
 
     async fn end_session(&mut self) -> bool {
         let r = REG_END_COMMS.to_be_bytes();
-        self.i2c.write(IQS5XX_ADDR, &[r[0], r[1], 0]).await.is_ok()
+        I2c::write(&mut self.i2c, IQS5XX_ADDR, &[r[0], r[1], 0]).await.is_ok()
     }
 }
 
@@ -635,34 +637,9 @@ fn touch_poll_interval(idle_for: Duration) -> Duration {
     Duration::from_millis(interval_ms as u64)
 }
 
-struct NeverSub;
-pub struct NeverEvent;
-
-impl EventSubscriber for NeverSub {
-    type Event = NeverEvent;
-
-    async fn next_event(&mut self) -> NeverEvent {
-        core::future::pending().await
-    }
-}
-
 impl Runnable for Touchpad {
     async fn run(&mut self) -> ! {
         self.run_loop().await
-    }
-}
-
-impl Processor for Touchpad {
-    type Event = NeverEvent;
-
-    fn subscriber() -> impl EventSubscriber<Event = NeverEvent> {
-        NeverSub
-    }
-
-    async fn process(&mut self, _: NeverEvent) {}
-
-    async fn process_loop(&mut self) -> ! {
-        self.run().await
     }
 }
 

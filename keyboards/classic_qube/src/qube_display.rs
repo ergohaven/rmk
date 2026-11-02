@@ -9,14 +9,18 @@
 //! - Each redraw: for each stripe → clip-draw full UI → SPI that stripe
 //!
 //! Pinout (`qube.overlay`):
-//! SPI3 SCK=P1.11 MOSI=P1.10 · CS=P1.13 · DC=P0.28 · RST=P0.03 · BL=P0.02
+//! SPI2 SCK=P1.11 MOSI=P1.10 · CS=P1.13 · DC=P0.28 · RST=P0.03 · BL=P0.02
+//!
+//! The overlay uses SPI3, but with the nrf-sdc/mpsl 0.4 core SPIM3's ENABLE reads back 0
+//! about 145 ms after boot and the panel stays dark. SPIM2 tops out at 8 MHz, the rate the
+//! panel runs at anyway.
 
 use core::fmt::Write as _;
 
 use defmt::{info, warn};
 use embassy_futures::select::{select, Either};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::peripherals::{P0_02, P0_03, P0_28, P1_10, P1_11, P1_13, SPI3};
+use embassy_nrf::peripherals::{P0_02, P0_03, P0_28, P1_10, P1_11, P1_13, SPI2};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::{interrupt, Peri};
 use embassy_time::{Delay, Duration, Instant, Timer};
@@ -40,7 +44,6 @@ use rmk::event::{
     KeyboardEvent, LayerChangeEvent, LedIndicatorEvent, ModifierEvent, PeripheralBatteryEvent,
     PeripheralConnectedEvent, SleepStateEvent, SubscribableEvent, WpmUpdateEvent,
 };
-use rmk::processor::Processor;
 use rmk_types::battery::BatteryStatus;
 use static_cell::StaticCell;
 
@@ -63,6 +66,8 @@ const SAFE_X: i32 = 18;
 const SAFE_W: u32 = SCREEN_W as u32 - (SAFE_X as u32 * 2);
 const MEDIA_VISIBLE_CHARS: usize = 26;
 const MEDIA_GAP_CHARS: usize = 3;
+// The longest artist and title with the separator between them.
+const MEDIA_LABEL_LEN: usize = 2 * rmk::host_data::HOST_TEXT_LEN + 3;
 const PANEL_RADIUS: u32 = 14;
 const CHIP_RADIUS: u32 = 7;
 const BAR_RADIUS: u32 = 5;
@@ -246,7 +251,7 @@ impl DrawTarget for StripeLcd {
 // --- Lazy init --------------------------------------------------------------
 
 struct PendingPins {
-    spi: Peri<'static, SPI3>,
+    spi: Peri<'static, SPI2>,
     sck: Peri<'static, P1_11>,
     mosi: Peri<'static, P1_10>,
     cs: Peri<'static, P1_13>,
@@ -268,8 +273,8 @@ pub struct LazyQubeLcd<I> {
 impl<I> LazyQubeLcd<I>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -348,8 +353,8 @@ impl<I> OriginDimensions for LazyQubeLcd<I> {
 async fn try_init_lcd<I>(pins: PendingPins, irq: I) -> Option<StripeLcd>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -390,8 +395,8 @@ where
 pub struct DongleScreen<I>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -409,7 +414,7 @@ where
 }
 
 pub fn create_processor<I>(
-    spi: Peri<'static, SPI3>,
+    spi: Peri<'static, SPI2>,
     sck: Peri<'static, P1_11>,
     mosi: Peri<'static, P1_10>,
     cs: Peri<'static, P1_13>,
@@ -420,8 +425,8 @@ pub fn create_processor<I>(
 ) -> DongleScreen<I>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -464,8 +469,8 @@ where
 impl<I> DongleScreen<I>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -556,21 +561,12 @@ where
     }
 }
 
-pub struct NeverEvent;
-struct NeverSub;
-
-impl EventSubscriber for NeverSub {
-    type Event = NeverEvent;
-    async fn next_event(&mut self) -> NeverEvent {
-        core::future::pending().await
-    }
-}
 
 impl<I> Runnable for DongleScreen<I>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -690,8 +686,8 @@ enum UiEv {
 impl<I> DongleScreen<I>
 where
     I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
+            <SPI2 as spim::Instance>::Interrupt,
+            spim::InterruptHandler<SPI2>,
         > + Copy
         + 'static,
 {
@@ -830,24 +826,6 @@ where
     }
 }
 
-impl<I> Processor for DongleScreen<I>
-where
-    I: interrupt::typelevel::Binding<
-            <SPI3 as spim::Instance>::Interrupt,
-            spim::InterruptHandler<SPI3>,
-        > + Copy
-        + 'static,
-{
-    type Event = NeverEvent;
-    fn subscriber() -> impl EventSubscriber<Event = NeverEvent> {
-        NeverSub
-    }
-    async fn process(&mut self, _: NeverEvent) {}
-    async fn process_loop(&mut self) -> ! {
-        self.run().await
-    }
-}
-
 // Silence unused DisplayDriver import path if needed — keep for future.
 
 // --- Full-screen UI ---------------------------------------------------------
@@ -864,7 +842,7 @@ pub struct QubeStatusRenderer {
 
 impl QubeStatusRenderer {
     fn media_needs_marquee(&self) -> bool {
-        let mut media: heapless::String<72> = heapless::String::new();
+        let mut media: heapless::String<MEDIA_LABEL_LEN> = heapless::String::new();
         push_media_label(&mut media, &self.host_data);
         media.len() > MEDIA_VISIBLE_CHARS
     }
@@ -1169,7 +1147,7 @@ fn draw_media_or_fallback<D: DrawTarget<Color = Rgb565>>(
     fallback_style: MonoTextStyle<'_, Rgb565>,
 ) {
     let top = TextStyleBuilder::new().baseline(Baseline::Top).build();
-    let mut media: heapless::String<72> = heapless::String::new();
+    let mut media: heapless::String<MEDIA_LABEL_LEN> = heapless::String::new();
     push_media_label(&mut media, host_data);
 
     if media.is_empty() {
@@ -1195,7 +1173,7 @@ fn draw_media_or_fallback<D: DrawTarget<Color = Rgb565>>(
         .draw(display);
 }
 
-fn push_media_label(buffer: &mut heapless::String<72>, host_data: &rmk::host_data::HostData) {
+fn push_media_label(buffer: &mut heapless::String<MEDIA_LABEL_LEN>, host_data: &rmk::host_data::HostData) {
     if !host_data.media_artist.is_empty() {
         push_ascii_text(buffer, &host_data.media_artist);
     }

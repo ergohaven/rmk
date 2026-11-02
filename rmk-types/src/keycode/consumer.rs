@@ -1,8 +1,6 @@
 //! Consumer page keycodes.
 
 use postcard::experimental::max_size::MaxSize;
-#[cfg(feature = "rmk_protocol")]
-use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 
 use super::hid::HidKeyCode;
@@ -12,8 +10,10 @@ use super::hid::HidKeyCode;
 #[non_exhaustive]
 #[repr(u16)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, MaxSize)]
+#[cfg_attr(feature = "_codegen", derive(strum::EnumIter))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum ConsumerKey {
     No = 0x00,
     // 15.5 Display Controls
@@ -75,7 +75,19 @@ pub enum ConsumerKey {
     AcSoftKeyLeft = 0x2A0,
 }
 
+impl From<ConsumerKey> for u16 {
+    fn from(key: ConsumerKey) -> u16 {
+        key as u16
+    }
+}
+
 impl ConsumerKey {
+    /// Host-only: list all consumer-page keys, in declaration order.
+    #[cfg(feature = "_codegen")]
+    pub fn all() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+
     /// Convert ConsumerKey to the corresponding HidKeyCode
     pub fn to_hid_keycode(&self) -> Option<HidKeyCode> {
         match self {

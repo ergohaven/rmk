@@ -9,7 +9,7 @@ use rmk::macros::processor;
 use rmk::processor::DeadlineProcessor;
 use rmk::types::battery::BatteryStatus;
 use rmk::types::ble::BleState;
-use rmk::types::connection::{ConnectionStatus, ConnectionType};
+use rmk::types::connection::{ConnectionStatus, ConnectionType, UsbState};
 
 use crate::module_settings::{self, Rgb};
 
@@ -53,7 +53,8 @@ struct TimedOverlay {
         PeripheralSettingsEvent,
         BatteryStatusEvent,
         PeripheralBatteryRefreshEvent
-    ]
+    ],
+    deadline
 )]
 pub struct LayerLed {
     led: SequencePwm<'static>,
@@ -360,11 +361,13 @@ impl LayerLed {
 
         // USB_OUT is an explicit host-transport choice. BLE may keep
         // advertising in the background, but its pairing/reconnect state is
-        // irrelevant while USB output is selected and must not replace the
-        // active-layer indicator.
-        let show_host_ble_status = self
-            .connection_status
-            .is_none_or(|status| status.preferred == ConnectionType::Ble);
+        // irrelevant while USB output is in use and must not replace the
+        // active-layer indicator. Without a USB host, BLE is the output
+        // whatever is preferred, and USB is also the default preference.
+        let show_host_ble_status = self.connection_status.is_none_or(|status| {
+            status.preferred == ConnectionType::Ble
+                || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)
+        });
         if show_host_ble_status {
             if matches!(self.ble_state, BleState::Inactive | BleState::Sleeping) {
                 return (color_off(), 4);

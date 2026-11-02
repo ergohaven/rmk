@@ -1,0 +1,91 @@
+[package]
+name = "phenom"
+version = "0.1.0"
+description = "RMK wired split firmware for Ergohaven Phenom Series (RP2040)"
+homepage = "https://github.com/ergohaven/rmk"
+repository = "https://github.com/ergohaven/rmk"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+autotests = false
+autobenches = false
+autoexamples = false
+
+# Prevent cargo from looking for a workspace above this directory
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "central"
+path = "src/central.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "peripheral"
+path = "src/peripheral.rs"
+test = false
+bench = false
+
+[features]
+default = ["standalone", "production_v22"]
+# Names shared with keyboards/k04, whose module sources test them: the K:04
+# Standalone settings layout and the production PMW3610 configuration.
+standalone = ["rmk/k04_standalone_timeout_14"]
+production_v22 = ["pmw_axes_600"]
+pmw_axes_600 = []
+
+[dependencies]
+rmk = { path = "../../rmk", default-features = false, features = [
+    "defmt",
+    "ergohaven_rynk",
+    "rp2040",
+    "split",
+    "storage",
+    "universal_symbols",
+    "watchdog",
+] }
+
+embassy-executor = { version = "0.10", features = [
+    "defmt",
+    "executor-thread",
+    "platform-cortex-m",
+] }
+embassy-futures = { version = "0.1", features = ["defmt"] }
+embassy-rp = { version = "0.10", features = [
+    "critical-section-impl",
+    "defmt",
+    "rp2040",
+    "time-driver",
+] }
+embassy-sync = "0.8"
+embassy-time = { version = "0.5", features = ["defmt"] }
+embedded-hal-async = "1.0"
+heapless = "0.9"
+
+cortex-m-rt = "0.7.5"
+defmt = "1"
+defmt-rtt = "1"
+panic-probe = { version = "1", features = ["print-defmt"] }
+portable-atomic = { version = "1", features = ["critical-section"] }
+smart-leds = "0.4"
+static_cell = "2"
+
+[build-dependencies]
+const-gen = "1.6"
+json = "0.12"
+xz2 = "0.1.7"
+
+[profile.dev]
+codegen-units = 1
+debug = true
+opt-level = 1
+overflow-checks = true
+lto = false
+panic = "unwind"
+
+[profile.release]
+codegen-units = 1
+debug = true
+opt-level = "z"
+overflow-checks = false
+lto = "fat"

@@ -21,27 +21,27 @@ use rmk::macros::rmk_central;
 
 #[rmk_central]
 mod keyboard_central {
-    #[register_processor(event)]
+    #[register_processor]
     fn battery() -> crate::battery_nrf::SplitBattery {
         crate::battery_nrf::SplitBattery::new(p.SAADC, p.P0_31)
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn pointing_mode() -> crate::velvet_pointing::VelvetPointingMode {
         crate::velvet_pointing::VelvetPointingMode::new()
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn pointing_settings() -> crate::velvet_pointing::VelvetPointingSettingsSync {
         crate::velvet_pointing::VelvetPointingSettingsSync::new()
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn settings_broadcast() -> crate::velvet_device_settings::VelvetSettingsBroadcast {
         crate::velvet_device_settings::VelvetSettingsBroadcast::new()
     }
 
-    #[register_processor(poll)]
+    #[register_processor]
     fn ergohaven_user_keys() -> ::rmk::processor::builtin::ergohaven::ErgohavenUserKeys {
         ::rmk::processor::builtin::ergohaven::ErgohavenUserKeys::new()
     }

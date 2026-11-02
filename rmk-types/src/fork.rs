@@ -4,11 +4,6 @@ use core::ops::{BitAnd, BitOr, Not};
 
 use bitfield_struct::bitfield;
 use postcard::experimental::max_size::MaxSize;
-#[cfg(feature = "rmk_protocol")]
-use postcard_schema::{
-    Schema,
-    schema::{DataModelType, NamedType},
-};
 use serde::{Deserialize, Serialize};
 
 use crate::action::KeyAction;
@@ -20,8 +15,9 @@ use crate::mouse_button::MouseButtons;
 ///
 /// A zero (default) value means "match nothing" — no modifiers, LEDs, or mouse buttons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, MaxSize)]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct StateBits {
     /// Active modifier combination to match.
     pub modifiers: ModifierCombination,
@@ -79,7 +75,7 @@ impl StateBits {
 /// `match_any` bit and latch the decision at trigger press until release.
 /// Vial-created entries carry whatever the GUI configured.
 #[bitfield(u8, order = Lsb, defmt = cfg(feature = "defmt"))]
-#[derive(Eq, PartialEq, Serialize, Deserialize, MaxSize)]
+#[derive(Eq, PartialEq, MaxSize)]
 pub struct ForkOptions {
     /// The fork may take the positive branch when the trigger key is pressed.
     #[bits(1, default = true)]
@@ -118,13 +114,16 @@ pub struct ForkOptions {
     pub enabled: bool,
 }
 
-#[cfg(feature = "rmk_protocol")]
-impl Schema for ForkOptions {
-    const SCHEMA: &'static NamedType = &NamedType {
-        name: "ForkOptions",
-        ty: &DataModelType::U8,
-    };
-}
+// u8 on the wire (postcard); named bools on serde-wasm-bindgen / serde_json (TS).
+crate::bitfield_named_serde!(ForkOptions, "ForkOptions", {
+    activate_on_trigger_down = with_activate_on_trigger_down,
+    activate_on_required_mod_down = with_activate_on_required_mod_down,
+    activate_on_negative_mod_up = with_activate_on_negative_mod_up,
+    one_mod = with_one_mod,
+    no_reregister_trigger = with_no_reregister_trigger,
+    no_unregister_on_other_key_down = with_no_unregister_on_other_key_down,
+    enabled = with_enabled,
+});
 
 impl ForkOptions {
     /// QMK key-override defaults: all activation events allowed, all trigger
@@ -149,12 +148,13 @@ impl ForkOptions {
 /// When the trigger key is pressed, the fork checks current state against `match_any`
 /// and `match_none` to decide between `positive_output` and `negative_output`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Fork {
     /// The key action that activates this fork. Should not be `KeyAction::Transparent`.
     pub trigger: KeyAction,
-    /// Output when the state condition is NOT met.
+    /// Output when the state condition is NOT met. `Transparent` leaves the key alone.
     pub negative_output: KeyAction,
     /// Output when the state condition IS met.
     pub positive_output: KeyAction,
@@ -166,18 +166,14 @@ pub struct Fork {
     /// Modifiers removed from the HID report while the fork's decision is
     /// active (explicit modifiers pressed afterwards are still reported).
     pub suppressed_modifiers: ModifierCombination,
-    /// Bitmask of layers (bit N = layer N) on which this fork applies, tested
-    /// against the layer that sourced the trigger key's action. `None`
-    /// applies on every layer.
-    pub layers: Option<u16>,
     /// Vial/QMK key-override compatibility bits (matching, activation,
     /// per-entry enable). RMK-native forks use the defaults.
     pub options: ForkOptions,
-    /// Whether this fork can be rebound via protocol.
-    /// This is a firmware-enforced policy — the protocol itself does not
-    /// reject writes to non-bindable forks; enforcement happens in the
-    /// firmware's SetFork handler.
+    /// Whether this fork's output is checked against other forks that have not
+    /// yet triggered, allowing chained replacements.
     pub bindable: bool,
+    /// Bitmask of layers the trigger must come from. `u32::MAX` means all layers.
+    pub layers: u32,
 }
 
 impl Default for Fork {
@@ -203,9 +199,9 @@ impl Fork {
             match_any,
             match_none,
             suppressed_modifiers,
-            layers: None,
             options: ForkOptions::default(),
             bindable,
+            layers: u32::MAX,
         }
     }
 

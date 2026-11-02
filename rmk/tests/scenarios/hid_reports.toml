@@ -1,0 +1,162 @@
+# Consumer, system-control and mouse keys each report on their own HID page
+# rather than in the keyboard report, and each sends an all-released report on
+# key up. Three keys, three pages — this file carries its own keyboard instead
+# of the shared board because none of these keys is a fixture anyone else needs.
+#
+# `MO(1)` at (0,3) adds a second layer for the rollover cases below: layer 1
+# row 1 pairs a plain keycode with its `SHIFTED()` twin, row 2 is four
+# distinct keycodes as a control. Layer 0 row 1 holds two `LShift` keys for
+# the shared-modifier case and a `WM()` mouse button.
+
+[layout]
+rows = 3
+cols = 4
+map = """
+(0,0)  (0,1)  (0,2)  (0,3)
+(1,0)  (1,1)  (1,2)  (1,3)
+(2,0)  (2,1)  (2,2)  (2,3)
+"""
+
+[[keymap.layer]]
+keys = """
+AudioVolUp  SystemSleep  MouseRight  MO(1)
+LShift      LShift       WM(MouseBtn1, LCtrl)  No
+No          No           No                    No
+"""
+
+[[keymap.layer]]
+keys = """
+No            No            No                      No
+SHIFTED(Dot)  RightBracket  SHIFTED(RightBracket)  SHIFTED(Kc0)
+Minus         Kc7           Kc8                     Kc9
+"""
+
+[[test]]
+name = "consumer_key_reports_on_the_consumer_page"
+steps = [
+  { press = [0, 0] },
+  { release = [0, 0] },
+]
+expect = [{ consumer = ["AudioVolUp"] }, { consumer = [] }]
+
+[[test]]
+name = "system_key_reports_on_the_system_control_page"
+steps = [
+  { press = [0, 1] },
+  { release = [0, 1] },
+]
+expect = [{ system = ["SystemSleep"] }, { system = [] }]
+
+[[test]]
+name = "mouse_key_reports_a_movement_delta"
+steps = [
+  { press = [0, 2] },
+  { release = [0, 2] },
+]
+expect = [{ mouse = { x = 5 } }, { mouse = { } }]
+
+# `WM` on a mouse key holds the modifier in the keyboard report around the
+# click: down before the button, up after it.
+[[test]]
+name = "modifier_on_mouse_key_wraps_the_click"
+steps = [
+  { press = [1, 2] },
+  { release = [1, 2] },
+]
+expect = [["LCtrl"], { mouse = { buttons = 1 } }, { mouse = {} }, []]
+
+# `]` and its `SHIFTED()` twin `}` share one HID usage. The report
+# deduplicates held keycodes so the shared usage stays down until the
+# last holder releases it; the second key no longer vanishes on a roll.
+[[test]]
+name = "shared_keycode_roll_keeps_second_key"
+steps = [
+  { press = [0, 3] },   # MO(1)
+  { press = [1, 0] },   # >
+  { press = [1, 1] },   # ]
+  { release = [1, 0] },
+  { press = [1, 2] },   # }
+  { release = [1, 1] },
+  { press = [1, 3] },   # )
+  { release = [1, 2] },
+  { release = [1, 3] },
+  { release = [0, 3] },
+]
+expect = [
+  ["LShift", "Dot"],
+  ["Dot", "RightBracket"],
+  ["RightBracket"],
+  ["LShift", "RightBracket"],
+  ["LShift", "RightBracket"],
+  ["LShift", "RightBracket", "Kc0"],
+  ["LShift", "Kc0"],
+  [],
+]
+
+# `WM` modifiers belong to their key, so two `SHIFTED()` keys each keep theirs.
+[[test]]
+name = "shifted_keys_each_keep_their_own_shift"
+steps = [
+  { press = [0, 3] },   # MO(1)
+  { press = [1, 0] },   # >
+  { press = [1, 2] },   # }
+  { release = [1, 0] },
+  { release = [1, 2] },
+  { release = [0, 3] },
+]
+expect = [["LShift", "Dot"], ["LShift", "Dot", "RightBracket"], ["LShift", "RightBracket"], []]
+
+# `WM` modifiers last until the next press and never come back: `]` pressed
+# after `>` types plain, and releasing `]` leaves `>` plain, since no modifier
+# should appear on a release.
+[[test]]
+name = "later_press_consumes_the_held_keys_shift"
+steps = [
+  { press = [0, 3] },   # MO(1)
+  { press = [1, 0] },   # >
+  { press = [1, 1] },   # ]
+  { release = [1, 1] },
+  { release = [1, 0] },
+  { release = [0, 3] },
+]
+expect = [["LShift", "Dot"], ["Dot", "RightBracket"], ["Dot"], []]
+
+# Two keys sharing a modifier are two holders of it, like two keys sharing a
+# keycode above.
+[[test]]
+name = "shared_modifier_stays_down_until_last_holder_releases"
+steps = [
+  { press = [1, 0] },
+  { press = [1, 1] },
+  { release = [1, 0] },
+  { release = [1, 1] },
+]
+expect = [["LShift"], ["LShift"], ["LShift"], []]
+
+# Control: same roll shape over `-`, `7`, `8`, `9`, four distinct keycodes
+# with no collision. Plays clean, which rules out a general rollover or
+# report-timing bug.
+[[test]]
+name = "distinct_keycode_roll_types_clean"
+steps = [
+  { press = [0, 3] },   # MO(1)
+  { press = [2, 0] },   # -
+  { press = [2, 1] },   # 7
+  { release = [2, 0] },
+  { press = [2, 2] },   # 8
+  { release = [2, 1] },
+  { press = [2, 3] },   # 9
+  { release = [2, 2] },
+  { release = [2, 3] },
+  { release = [0, 3] },
+]
+expect = [
+  ["Minus"],
+  ["Kc7", "Minus"],
+  ["Kc7"],
+  ["Kc7", "Kc8"],
+  ["Kc8"],
+  ["Kc8", "Kc9"],
+  ["Kc9"],
+  [],
+]

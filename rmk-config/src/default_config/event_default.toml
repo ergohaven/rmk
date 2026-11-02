@@ -20,8 +20,20 @@ subs = 2
 
 [event.keyboard]
 channel_size = 16
-pubs = 2
+pubs = 4
 subs = 3
+
+# Application-defined messages
+[event.custom_message]
+channel_size = 4
+pubs = 3
+subs = 2
+
+# Outgoing custom messages.
+[event.custom_message_out]
+channel_size = 4
+pubs = 2
+subs = 1
 
 # Keyboard state events
 [event.layer_change]
@@ -42,6 +54,7 @@ subs = 3
 [event.sleep_state]
 channel_size = 1
 pubs = 1
+# Each PointingDevice configured in keyboard.toml adds one (build_constants.rs).
 subs = 1
 
 # Power events
@@ -63,8 +76,15 @@ subs = 1
 # Pointing device events
 [event.pointing]
 channel_size = 8
-pubs = 2
+pubs = 4
 subs = 2
+
+# Raw multi-touch scans from touchpads, which stay on their board. No subscribers
+# by default; a touch processor would subscribe.
+[event.touch]
+channel_size = 4
+pubs = 2
+subs = 0
 
 # Split events
 [event.peripheral_connected]
@@ -118,3 +138,14 @@ subs = 0
 channel_size = 2
 pubs = 1
 subs = 1
+
+[event.dfu_cmd]
+channel_size = 4
+pubs = 1
+subs = 1
+
+# Dongle events
+[event.dongle_state]
+channel_size = 1
+pubs = 1
+subs = 0

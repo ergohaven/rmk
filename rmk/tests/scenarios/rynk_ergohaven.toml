@@ -1,0 +1,39 @@
+# Ergohaven's commands, `ergohaven::Name`. The ones that only read the board's
+# build constants are unit tests in `rmk/src/host/rynk/ergohaven.rs`.
+features = ["rynk", "ergohaven_rynk"]
+
+[layout]
+rows = 1
+cols = 2
+map = """
+(0,0)  (0,1)
+"""
+
+[[keymap.layer]]
+keys = "A  B"
+
+# The layout option a host sets is the one it reads back, as over Vial.
+[[test]]
+name = "layout_option_reads_back_what_was_set"
+steps = [
+  { rynk = { cmd = "ergohaven::GetLayoutOption", reply = 0 } },
+  { rynk = { cmd = "ergohaven::SetLayoutOption", payload = 3 } },
+  { rynk = { cmd = "ergohaven::GetLayoutOption", reply = 3 } },
+]
+
+# RMK's own settings take the QSID bytes Vial sends: the combo timeout as a
+# little-endian u16, read back the same way.
+[[test]]
+name = "behavior_setting_reads_back_what_was_set"
+steps = [
+  { rynk = { cmd = "ergohaven::SetSetting", payload = { id = 2, value = [80, 0] } } },
+  { rynk = { cmd = "ergohaven::GetSetting", payload = 2, reply = [80, 0] } },
+]
+
+# An id nobody serves is turned down rather than ignored.
+[[test]]
+name = "unknown_setting_is_invalid"
+steps = [
+  { rynk = { cmd = "ergohaven::GetSetting", payload = 999, error = "Invalid" } },
+  { rynk = { cmd = "ergohaven::SetSetting", payload = { id = 999, value = [1] }, error = "Invalid" } },
+]

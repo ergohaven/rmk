@@ -1,14 +1,13 @@
 //! Initialize communication boilerplate of RMK, including USB or BLE
 //!
 
-use darling::FromMeta;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, format_ident, quote};
 use rmk_config::resolved::Hardware;
 use rmk_config::resolved::hardware::ChipSeries;
 use syn::{ItemFn, ItemMod};
 
-use crate::codegen::override_helper::Overwritten;
+use crate::codegen::override_helper::{Overwritten, find_overwritten};
 
 pub(crate) fn expand_usb_init(hardware: &Hardware, item_mod: &ItemMod) -> TokenStream2 {
     // If there is a function with `#[Overwritten(usb)]`, override the chip initialization
@@ -17,8 +16,7 @@ pub(crate) fn expand_usb_init(hardware: &Hardware, item_mod: &ItemMod) -> TokenS
             .iter()
             .find_map(|item| {
                 if let syn::Item::Fn(item_fn) = &item
-                    && item_fn.attrs.len() == 1
-                    && let Ok(Overwritten::Usb) = Overwritten::from_meta(&item_fn.attrs[0].meta)
+                    && let Some(Ok(Overwritten::Usb)) = find_overwritten(item_fn)
                 {
                     return Some(override_usb_init(item_fn));
                 }
@@ -75,9 +73,9 @@ pub(crate) fn usb_config_default(hardware: &Hardware) -> TokenStream2 {
                 let dm = format_ident!("{}", usb_info.dm);
                 quote! {
                     static mut EP_MEMORY: [u8; 1024] = [0; 1024];
-                    let usb = ::esp_hal::otg_fs::Usb::new(p.#peripheral_name, p.#dp, p.#dm);
-                    let usb_config = ::esp_hal::otg_fs::embassy_usb_device::Config::default();
-                    let driver = ::esp_hal::otg_fs::embassy_usb_device::Driver::new(usb, unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) }, usb_config);
+                    let usb = ::esp_hal::usb::otg::Usb::new_fs(p.#peripheral_name, p.#dp, p.#dm);
+                    let usb_config = ::esp_hal::usb::otg::embassy_usb_device::Config::default();
+                    let driver = ::esp_hal::usb::otg::embassy_usb_device::Driver::new(usb, unsafe { &mut *core::ptr::addr_of_mut!(EP_MEMORY) }, usb_config);
                 }
             }
         }

@@ -11,26 +11,13 @@ use rmk_config::resolved::KEYCODE_ALIAS;
 use rmk_config::resolved::behavior::MorseProfile;
 use strum::VariantNames;
 
+#[derive(Default)]
 struct ModifierCombinationMacro {
     right: bool,
     gui: bool,
     alt: bool,
     shift: bool,
     ctrl: bool,
-}
-impl ModifierCombinationMacro {
-    fn new() -> Self {
-        Self {
-            right: false,
-            gui: false,
-            alt: false,
-            shift: false,
-            ctrl: false,
-        }
-    }
-    fn is_empty(&self) -> bool {
-        !(self.gui || self.alt || self.shift || self.ctrl)
-    }
 }
 // Allows to use `#modifiers` in the quote
 impl quote::ToTokens for ModifierCombinationMacro {
@@ -49,39 +36,115 @@ impl quote::ToTokens for ModifierCombinationMacro {
 
 /// Get modifier combination, in types of mod1 | mod2 | ...
 fn parse_modifiers(modifiers_str: &str) -> ModifierCombinationMacro {
-    let mut combination = ModifierCombinationMacro::new();
-    let tokens = modifiers_str.split_terminator("|");
-    tokens.for_each(|w| {
+    const MODIFIERS: &SetterTable<ModifierCombinationMacro> = &[
+        ("LShift", |c| c.shift = true),
+        ("LCtrl", |c| c.ctrl = true),
+        ("LAlt", |c| c.alt = true),
+        ("LGui", |c| c.gui = true),
+        ("RShift", |c| {
+            c.right = true;
+            c.shift = true;
+        }),
+        ("RCtrl", |c| {
+            c.right = true;
+            c.ctrl = true;
+        }),
+        ("RAlt", |c| {
+            c.right = true;
+            c.alt = true;
+        }),
+        ("RGui", |c| {
+            c.right = true;
+            c.gui = true;
+        }),
+    ];
+
+    parse_name_list(
+        modifiers_str,
+        "modifier",
+        "modifier combination",
+        MODIFIERS,
+        |w| {
+            KEYCODE_ALIAS
+                .get(w.to_lowercase().as_str())
+                .copied()
+                .unwrap_or(w)
+        },
+    )
+}
+
+/// A name -> setter lookup table for [`parse_name_list`]: each entry maps a
+/// `|`-separated token to a setter applied to the accumulated value.
+pub(crate) type SetterTable<T> = [(&'static str, fn(&mut T))];
+
+/// Resolve each `|`-separated token of `input` against a name->setter table,
+/// applying every match to the returned value. Panics on unknown tokens
+/// (with closest-name hints) and on empty segments between separators.
+pub(crate) fn parse_name_list<T>(
+    input: &str,
+    item: &str,
+    kind: &str,
+    table: &SetterTable<T>,
+    resolve_alias: impl Fn(&str) -> &str,
+) -> T
+where
+    T: Default,
+{
+    let mut value = T::default();
+    let mut unknown_tokens = Vec::new();
+    let mut has_empty_segment = false;
+    input.split("|").for_each(|w| {
         let w = w.trim();
-        let key = match KEYCODE_ALIAS.get(w.to_lowercase().as_str()) {
-            Some(k) => *k,
-            None => w,
-        };
-        match key {
-            "LShift" => combination.shift = true,
-            "LCtrl" => combination.ctrl = true,
-            "LAlt" => combination.alt = true,
-            "LGui" => combination.gui = true,
-            "RShift" => {
-                combination.right = true;
-                combination.shift = true;
-            }
-            "RCtrl" => {
-                combination.right = true;
-                combination.ctrl = true;
-            }
-            "RAlt" => {
-                combination.right = true;
-                combination.alt = true;
-            }
-            "RGui" => {
-                combination.right = true;
-                combination.gui = true;
-            }
-            _ => (),
+        if w.is_empty() {
+            has_empty_segment = true;
+            return;
+        }
+        match table.iter().find(|(name, _)| *name == resolve_alias(w)) {
+            Some((_, set)) => set(&mut value),
+            None => unknown_tokens.push(w.to_string()),
         }
     });
-    combination
+
+    if !unknown_tokens.is_empty() {
+        let unknown = unknown_tokens
+            .iter()
+            .map(
+                |u| match closest_name(u, table.iter().map(|(name, _)| *name)) {
+                    Some(s) => format!("{u} (did you mean {s}?)"),
+                    None => u.clone(),
+                },
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        panic!(
+            "\n❌ keyboard.toml: unknown {item}(s) [{}] in {kind} '{}'",
+            unknown,
+            input.trim()
+        );
+    }
+
+    if has_empty_segment {
+        panic!(
+            "\n❌ keyboard.toml: {kind} '{}' contains empty segments between '|' separators",
+            input.trim()
+        );
+    }
+
+    value
+}
+
+/// Suggest the most similar valid name for an unrecognized token, or `None`
+/// when nothing is close enough to be a plausible typo of it.
+pub(crate) fn closest_name<'a>(
+    input: &str,
+    names: impl Iterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let lowercased = input.to_lowercase();
+    let (distance, name) = names
+        .map(|name| (strsim::levenshtein(&lowercased, &name.to_lowercase()), name))
+        .min_by_key(|&(distance, _)| distance)?;
+    // rustc-style cutoff: allow roughly one edit per three characters
+    (distance <= 1 + input.len() / 3).then_some(name)
 }
 
 pub(crate) fn expand_profile(profile: &MorseProfile) -> proc_macro2::TokenStream {
@@ -113,25 +176,34 @@ pub(crate) fn expand_profile(profile: &MorseProfile) -> proc_macro2::TokenStream
         quote! { ::core::option::Option::None }
     };
 
-    let hold_timeout_ms = match &profile.hold_timeout_ms {
-        Some(t) => {
-            let timeout = *t as u16;
-            quote! { ::core::option::Option::Some(#timeout) }
-        }
-        None => quote! { ::core::option::Option::None },
-    };
-
-    let gap_timeout_ms = match &profile.gap_timeout_ms {
-        Some(t) => {
-            let timeout = *t as u16;
-            quote! { ::core::option::Option::Some(#timeout) }
-        }
-        None => quote! { ::core::option::Option::None },
-    };
+    let hold_timeout_ms = expand_timeout("hold_timeout", &profile.hold_timeout_ms, 13);
+    let gap_timeout_ms = expand_timeout("gap_timeout", &profile.gap_timeout_ms, 13);
+    let quick_tap_timeout_ms =
+        expand_timeout("quick_tap_timeout", &profile.quick_tap_timeout_ms, 13);
 
     quote! {
         rmk::types::morse::MorseProfile::new(#unilateral_tap, #mode, #hold_timeout_ms, #gap_timeout_ms)
             .with_enable_flow_tap(#enable_flow_tap)
+            .with_quick_tap_timeout_ms(#quick_tap_timeout_ms)
+    }
+}
+
+/// Expands an optional timeout in ms to `Option<u16>` tokens, failing the build
+/// when the value exceeds the packed bit-field capacity.
+fn expand_timeout(field: &str, value: &Option<u64>, bits: u8) -> proc_macro2::TokenStream {
+    let max_ms = (1u64 << bits) - 1;
+    match value {
+        Some(t) => {
+            if *t > max_ms {
+                panic!(
+                    "\n\u{274c} keyboard.toml: behavior.morse.{} = {}ms exceeds the maximum of {}ms ({}-bit field).",
+                    field, t, max_ms, bits
+                );
+            }
+            let timeout = *t as u16;
+            quote! { ::core::option::Option::Some(#timeout) }
+        }
+        None => quote! { ::core::option::Option::None },
     }
 }
 
@@ -144,10 +216,7 @@ pub(crate) fn expand_profile_name(
             let morse_profile = expand_profile(profile);
             quote! { #morse_profile }
         } else {
-            panic!(
-                "\n\u{274c} `{:?}` profile name is not found in behavior.morse.profiles",
-                profile_name
-            );
+            panic_unknown_profile(profile_name, profiles.keys().map(String::as_str));
         }
     } else {
         panic!(
@@ -203,25 +272,21 @@ fn strip_call(s: &str) -> &str {
 /// tap/hold slots of `MT`/`TH`/`LT`. Composite forms (`MT`/`TH`/`LT`/`TT`/`TD`)
 /// and `Transparent` are *not* handled here — they only exist at the top level
 /// and are dispatched by [`parse_key`].
-fn parse_action(key: &str) -> TokenStream2 {
+pub(crate) fn parse_action(key: &str) -> TokenStream2 {
     let lower = key.to_lowercase();
 
     if lower == "no" {
         return quote! { ::rmk::types::action::Action::No };
+    } else if lower.starts_with("mod(") {
+        let modifiers = parse_modifiers(strip_call(key));
+        return quote! { ::rmk::types::action::Action::Modifier(#modifiers) };
     } else if lower.starts_with("wm(") {
         let keys = split_top_level(strip_call(key));
         if keys.len() != 2 {
-            panic!(
-                "\n\u{274c} keyboard.toml: WM(key, modifier) invalid, please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
+            panic!("\n\u{274c} keyboard.toml: WM(key, modifier) invalid");
         }
         let ident = get_key_with_alias(keys[0].clone());
         let modifiers = parse_modifiers(&keys[1]);
-        if modifiers.is_empty() {
-            panic!(
-                "\n\u{274c} keyboard.toml: modifier in WM(key, modifier) is not valid! Please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
-        }
         return quote! {
             ::rmk::types::action::Action::KeyWithModifier(
                 ::rmk::types::keycode::HidKeyCode::#ident,
@@ -230,26 +295,14 @@ fn parse_action(key: &str) -> TokenStream2 {
         };
     } else if lower.starts_with("osm(") {
         let modifiers = parse_modifiers(strip_call(key));
-        if modifiers.is_empty() {
-            panic!(
-                "\n\u{274c} keyboard.toml: modifier in OSM(modifier) is not valid! Please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
-        }
         return quote! { ::rmk::types::action::Action::OneShotModifier(#modifiers) };
     } else if lower.starts_with("lm(") {
         let keys = split_top_level(strip_call(key));
         if keys.len() != 2 {
-            panic!(
-                "\n\u{274c} keyboard.toml: LM(layer, modifier) invalid, please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
+            panic!("\n\u{274c} keyboard.toml: LM(layer, modifier) invalid");
         }
-        let layer = keys[0].parse::<u8>().unwrap();
+        let layer = parse_numeric_arg(&keys[0], "layer");
         let modifiers = parse_modifiers(&keys[1]);
-        if modifiers.is_empty() {
-            panic!(
-                "\n\u{274c} keyboard.toml: modifier in LM(layer, modifier) is not valid! Please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
-        }
         return quote! { ::rmk::types::action::Action::LayerOnWithModifier(#layer, #modifiers) };
     } else if lower.starts_with("mo(") {
         let layer = parse_layer(key);
@@ -270,14 +323,12 @@ fn parse_action(key: &str) -> TokenStream2 {
         let layer = parse_layer(key);
         return quote! { ::rmk::types::action::Action::DefaultLayer(#layer) };
     } else if lower.starts_with("macro(") {
-        let index = strip_call(key).trim().parse::<u8>().unwrap();
+        let index = parse_numeric_arg(strip_call(key), "macro");
         return quote! { ::rmk::types::action::Action::TriggerMacro(#index) };
     } else if lower.starts_with("shifted(") {
         let internal = strip_call(key);
         if internal.is_empty() {
-            panic!(
-                "\n\u{274c} keyboard.toml: SHIFTED(key) invalid, please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
+            panic!("\n\u{274c} keyboard.toml: SHIFTED(key) invalid");
         }
         let ident = get_key_with_alias(internal.to_string());
         return quote! {
@@ -307,7 +358,7 @@ fn parse_action(key: &str) -> TokenStream2 {
         let number = number_str.parse::<u8>().unwrap_or(255);
         if number > 63 {
             panic!(
-                "\n\u{274c} keyboard.toml: {} is not a valid user key! User keys are numbered 0-63. Please check the documentation: https://rmk.rs/docs/features/configuration/layout.html",
+                "\n\u{274c} keyboard.toml: {} is not a valid user key! User keys are numbered 0-63.",
                 key
             );
         }
@@ -320,35 +371,23 @@ fn parse_action(key: &str) -> TokenStream2 {
             .unwrap_or(false)
     {
         // Support Macro0, Macro1, Macro2, etc.
-        let index = key[5..].parse::<u8>().unwrap();
+        let index = parse_numeric_arg(&key[5..], "macro");
         return quote! { ::rmk::types::action::Action::TriggerMacro(#index) };
     }
 
-    // Check if it's a keyboard control, light control, or special key action (case-insensitive).
-    // Use strum::VariantNames to automatically get all enum variants.
-    if let Some(action) = rmk_types::action::KeyboardAction::VARIANTS
-        .iter()
-        .find(|&&a| a.to_lowercase() == lower)
-    {
-        let action_ident = format_ident!("{}", action);
+    // Check if it's a keyboard control, light control, or special key action
+    // (case-insensitive), matching against each enum's variant names.
+    if let Some(action_ident) = match_variant(rmk_types::action::KeyboardAction::VARIANTS, &lower) {
         return quote! {
             ::rmk::types::action::Action::KeyboardControl(::rmk::types::action::KeyboardAction::#action_ident)
         };
     }
-    if let Some(action) = rmk_types::action::LightAction::VARIANTS
-        .iter()
-        .find(|&&a| a.to_lowercase() == lower)
-    {
-        let action_ident = format_ident!("{}", action);
+    if let Some(action_ident) = match_variant(rmk_types::action::LightAction::VARIANTS, &lower) {
         return quote! {
             ::rmk::types::action::Action::Light(::rmk::types::action::LightAction::#action_ident)
         };
     }
-    if let Some(special_key) = rmk_types::keycode::SpecialKey::VARIANTS
-        .iter()
-        .find(|&&k| k.to_lowercase() == lower)
-    {
-        let key_ident = format_ident!("{}", special_key);
+    if let Some(key_ident) = match_variant(rmk_types::keycode::SpecialKey::VARIANTS, &lower) {
         return quote! {
             ::rmk::types::action::Action::Special(::rmk::types::keycode::SpecialKey::#key_ident)
         };
@@ -383,17 +422,10 @@ pub(crate) fn parse_key(
     if lower.starts_with("mt(") {
         let keys = split_top_level(strip_call(&key));
         if keys.len() < 2 || keys.len() > 3 {
-            panic!(
-                "\n\u{274c} keyboard.toml: MT(key, modifier) invalid, please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
+            panic!("\n\u{274c} keyboard.toml: MT(key, modifier) invalid");
         }
         let tap = parse_action(&keys[0]);
         let modifiers = parse_modifiers(&keys[1]);
-        if modifiers.is_empty() {
-            panic!(
-                "\n\u{274c} keyboard.toml: modifier in MT(key, modifier) is not valid! Please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
-        }
         let profile = morse_profile(keys.get(2), profiles);
         quote! {
             ::rmk::types::action::KeyAction::TapHold(#tap, ::rmk::types::action::Action::Modifier(#modifiers), #profile)
@@ -401,9 +433,7 @@ pub(crate) fn parse_key(
     } else if lower.starts_with("th(") {
         let keys = split_top_level(strip_call(&key));
         if keys.len() < 2 || keys.len() > 3 {
-            panic!(
-                "\n\u{274c} keyboard.toml: TH(key_tap, key_hold) invalid, please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
+            panic!("\n\u{274c} keyboard.toml: TH(key_tap, key_hold) invalid");
         }
         let tap = parse_action(&keys[0]);
         let hold = parse_action(&keys[1]);
@@ -412,11 +442,9 @@ pub(crate) fn parse_key(
     } else if lower.starts_with("lt(") {
         let keys = split_top_level(strip_call(&key));
         if keys.len() < 2 || keys.len() > 3 {
-            panic!(
-                "\n\u{274c} keyboard.toml: LT(layer, key) invalid, please check the documentation: https://rmk.rs/docs/features/configuration/layout.html"
-            );
+            panic!("\n\u{274c} keyboard.toml: LT(layer, key) invalid");
         }
-        let layer = keys[0].parse::<u8>().unwrap();
+        let layer = parse_numeric_arg(&keys[0], "layer");
         let tap = parse_action(&keys[1]);
         let profile = morse_profile(keys.get(2), profiles);
         quote! {
@@ -426,7 +454,7 @@ pub(crate) fn parse_key(
         let layer = parse_layer(&key);
         quote! { ::rmk::tt!(#layer) }
     } else if lower.starts_with("td(") || lower.starts_with("morse(") {
-        let index = strip_call(&key).trim().parse::<u8>().unwrap();
+        let index = parse_numeric_arg(strip_call(&key), "morse");
         quote! { ::rmk::types::action::KeyAction::Morse(#index) }
     } else {
         let action = parse_action(&key);
@@ -434,29 +462,122 @@ pub(crate) fn parse_key(
     }
 }
 
-/// Expand the optional trailing morse profile argument of a tap-hold action,
-/// falling back to the const default when omitted.
+/// Named profiles sorted by name, giving each a stable index into the runtime
+/// morse profile table: a name at sorted position `i` is table index `i`.
+pub(crate) fn sorted_profile_names(
+    profiles: &Option<HashMap<String, MorseProfile>>,
+) -> Vec<String> {
+    match profiles {
+        Some(p) => {
+            let mut names: Vec<String> = p.keys().cloned().collect();
+            names.sort();
+            names
+        }
+        None => Vec::new(),
+    }
+}
+
+/// Expand the optional trailing profile argument of a tap-hold action into its
+/// morse profile table index. When omitted, emit `u8::MAX`: an index with no
+/// table entry falls back to the default profile at runtime (the table
+/// capacity is validated to be ≤ 255, so `u8::MAX` is always vacant).
 fn morse_profile(
     profile_name: Option<&String>,
     profiles: &Option<HashMap<String, MorseProfile>>,
 ) -> TokenStream2 {
-    match profile_name {
-        Some(name) => expand_profile_name(name, profiles),
-        None => quote! { ::rmk::types::morse::MorseProfile::const_default() },
-    }
+    let Some(name) = profile_name else {
+        return quote! { ::core::primitive::u8::MAX };
+    };
+    let idx = match sorted_profile_names(profiles)
+        .iter()
+        .position(|n| n == name)
+    {
+        Some(pos) => pos as u8,
+        None => panic_unknown_profile(
+            name,
+            sorted_profile_names(profiles).iter().map(String::as_str),
+        ),
+    };
+    quote! { #idx }
+}
+
+/// Panic for a failed morse-profile lookup, suggesting the nearest defined
+/// name when one plausibly matches.
+fn panic_unknown_profile<'a>(name: &str, known: impl Iterator<Item = &'a str>) -> ! {
+    let hint = match closest_name(name, known) {
+        Some(s) => format!(" (did you mean {s}?)"),
+        None => String::new(),
+    };
+    panic!(
+        "\n\u{274c} keyboard.toml: `{:?}` profile name is not found in behavior.morse.profiles{hint}",
+        name
+    )
 }
 
 /// Parse the single layer-index argument of a call-form layer action, e.g. `MO(1)`.
 fn parse_layer(key: &str) -> u8 {
-    strip_call(key).trim().parse::<u8>().unwrap()
+    parse_numeric_arg(strip_call(key), "layer")
+}
+
+/// Parse a numeric action argument (layer or macro/morse index), rejecting
+/// malformed values with context instead of an opaque ParseIntError.
+fn parse_numeric_arg(raw: &str, kind: &str) -> u8 {
+    raw.trim().parse::<u8>().unwrap_or_else(|_| {
+        panic!("\n\u{274c} keyboard.toml: {kind} index must be a number, got '{raw}'")
+    })
+}
+
+/// Case-insensitively match a token against an enum's variant names,
+/// expanding the match to that variant's identifier.
+fn match_variant(names: &[&str], lower: &str) -> Option<Ident> {
+    names
+        .iter()
+        .find(|&&v| v.to_lowercase() == lower)
+        .map(|v| format_ident!("{v}"))
 }
 
 pub(crate) fn get_key_with_alias(key: String) -> Ident {
-    let key = match KEYCODE_ALIAS.get(key.to_lowercase().as_str()) {
-        Some(k) => *k,
-        None => key.as_str(),
+    match as_hid_keycode(&key) {
+        Some(ident) => ident,
+        None => unknown_key_panic(&key),
+    }
+}
+
+/// Panic for a key token matching no known form, suggesting the nearest valid
+/// name from any vocabulary. Everything reaching this used to emit an
+/// identifier that only failed deep inside the generated code.
+fn unknown_key_panic(key: &str) -> ! {
+    let names = rmk_types::action::KeyboardAction::VARIANTS
+        .iter()
+        .chain(rmk_types::action::LightAction::VARIANTS.iter())
+        .chain(rmk_types::keycode::SpecialKey::VARIANTS.iter())
+        .chain(rmk_types::keycode::HidKeyCode::VARIANTS.iter())
+        .copied();
+    let hint = match closest_name(key, names) {
+        Some(s) => format!(" (did you mean {s}?)"),
+        None => String::new(),
     };
-    format_ident!("{}", key)
+    panic!("\n\u{274c} keyboard.toml: unknown key '{key}'{hint}")
+}
+
+/// The `HidKeyCode` variant a key string names, or `None` when it names a richer
+/// action such as `WM(A, LCtrl)` or `PDF(1)`.
+///
+/// Callers that can only carry an 8-bit keycode — a macro's compact
+/// `Tap`/`Press`/`Release` operations — use this to tell the two apart;
+/// [`parse_action`] handles both but yields the wider `Action`.
+pub(crate) fn as_hid_keycode(key: &str) -> Option<Ident> {
+    let key = resolve_alias(key);
+    rmk_types::keycode::HidKeyCode::VARIANTS
+        .contains(&key)
+        .then(|| format_ident!("{key}"))
+}
+
+fn resolve_alias(key: &str) -> &str {
+    match KEYCODE_ALIAS.get(key.to_lowercase().as_str()) {
+        Some(resolved) => resolved,
+        None => key,
+    }
 }
 
 #[cfg(test)]
@@ -477,6 +598,7 @@ mod tests {
             normal_mode: Some(true),
             hold_timeout_ms: Some(250),
             gap_timeout_ms: Some(250),
+            quick_tap_timeout_ms: None,
         }
     }
 
@@ -502,6 +624,62 @@ mod tests {
     }
 
     #[test]
+    fn expand_profile_emits_quick_tap_timeout() {
+        let explicit = expand_profile(&MorseProfile {
+            quick_tap_timeout_ms: Some(200),
+            ..profile(None)
+        })
+        .to_string();
+        assert!(explicit.contains("with_quick_tap_timeout_ms"));
+        assert!(explicit.contains("Option :: Some (200u16)"));
+
+        let inherit = expand_profile(&profile(None)).to_string();
+        assert!(inherit.contains("with_quick_tap_timeout_ms"));
+        assert!(inherit.contains("Option :: None"));
+    }
+
+    #[test]
+    fn expand_profile_accepts_max_timeouts() {
+        let out = expand_profile(&MorseProfile {
+            hold_timeout_ms: Some(8191),
+            gap_timeout_ms: Some(8191),
+            quick_tap_timeout_ms: Some(8191),
+            ..profile(None)
+        })
+        .to_string();
+        assert!(out.contains("8191u16"));
+    }
+
+    #[test]
+    #[should_panic(expected = "behavior.morse.hold_timeout = 8192ms exceeds the maximum of 8191ms")]
+    fn expand_profile_rejects_hold_timeout_over_max() {
+        let _ = expand_profile(&MorseProfile {
+            hold_timeout_ms: Some(8192),
+            ..profile(None)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "behavior.morse.gap_timeout = 8192ms exceeds the maximum of 8191ms")]
+    fn expand_profile_rejects_gap_timeout_over_max() {
+        let _ = expand_profile(&MorseProfile {
+            gap_timeout_ms: Some(8192),
+            ..profile(None)
+        });
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "behavior.morse.quick_tap_timeout = 8192ms exceeds the maximum of 8191ms"
+    )]
+    fn expand_profile_rejects_quick_tap_timeout_over_max() {
+        let _ = expand_profile(&MorseProfile {
+            quick_tap_timeout_ms: Some(8192),
+            ..profile(None)
+        });
+    }
+
+    #[test]
     fn plain_and_call_forms_wrap_in_single() {
         // Plain keycode.
         assert!(
@@ -513,6 +691,7 @@ mod tests {
                 .contains("KeyAction::Single(::rmk::types::action::Action::LayerOn(1u8))")
         );
         assert!(squash(&expand("WM(C,LCtrl)")).contains("Action::KeyWithModifier"));
+        assert!(squash(&expand("MOD(LCtrl | LAlt | LGui)")).contains("Action::Modifier"));
         assert!(squash(&expand("OSM(LShift)")).contains("Action::OneShotModifier"));
     }
 
@@ -550,5 +729,94 @@ mod tests {
                 .contains("TapHold(::rmk::types::action::Action::Key")
         );
         assert!(squash(&expand("LT(2, Enter)")).contains("Action::LayerOn(2u8)"));
+    }
+
+    #[test]
+    fn parse_modifiers_resolves_canonical_and_alias_names() {
+        let m = parse_modifiers("LCtrl | lcmd | algr");
+        assert!(m.ctrl);
+        assert!(m.gui);
+        assert!(m.alt);
+        assert!(m.right);
+        assert!(!m.shift);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "`\"home_roww\"` profile name is not found in behavior.morse.profiles (did you mean home_row?)"
+    )]
+    fn morse_profile_suggests_closest_defined_profile() {
+        let profiles = Some(HashMap::from([("home_row".to_string(), profile(None))]));
+        let _ = parse_key("TH(Space, Enter, home_roww)".to_string(), &profiles);
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown key 'Spacee' (did you mean Space?)")]
+    fn unknown_keycode_suggests_closest_key() {
+        let _ = expand("Spacee");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown key 'Bootloade' (did you mean Bootloader?)")]
+    fn unknown_action_suggests_closest_action() {
+        let _ = expand("Bootloade");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown key 'Spacee'")]
+    fn composite_action_tap_slot_validates_its_key() {
+        let _ = expand("WM(Spacee, RAlt)");
+    }
+
+    #[test]
+    fn far_off_key_gets_no_hint() {
+        let msg = std::panic::catch_unwind(|| expand("ZqZqZq99"))
+            .unwrap_err()
+            .downcast::<String>()
+            .unwrap();
+        assert!(msg.contains("unknown key 'ZqZqZq99'"), "{msg}");
+        // Nothing within the cutoff, so no fabricated suggestion.
+        assert!(!msg.contains("did you mean"), "{msg}");
+    }
+
+    #[test]
+    fn alias_resolution_survives_validated_lookup() {
+        assert!(squash(&expand("lcmd")).contains("HidKeyCode::LGui"));
+    }
+
+    #[test]
+    #[should_panic(expected = "layer index must be a number, got 'two'")]
+    fn invalid_layer_index_is_reported_in_context() {
+        let _ = expand("MO(two)");
+    }
+
+    #[test]
+    #[should_panic(expected = "morse index must be a number, got 'x'")]
+    fn invalid_morse_index_is_reported_in_context() {
+        let _ = expand("TD(x)");
+    }
+
+    #[test]
+    #[should_panic(expected = "macro index must be a number, got '9x'")]
+    fn invalid_macro_number_form_is_reported_in_context() {
+        let _ = expand("Macro9x");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown modifier(s) [LCtrol (did you mean LCtrl?)]")]
+    fn parse_modifiers_rejects_unknown_name_in_list() {
+        let _ = parse_modifiers("LShift | LCtrol");
+    }
+
+    #[test]
+    #[should_panic(expected = "empty segment")]
+    fn parse_modifiers_rejects_trailing_separator() {
+        let _ = parse_modifiers("LShift |");
+    }
+
+    #[test]
+    #[should_panic(expected = "empty segment")]
+    fn parse_modifiers_rejects_doubled_separator() {
+        let _ = parse_modifiers("LShift || LCtrl");
     }
 }

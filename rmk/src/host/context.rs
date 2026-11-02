@@ -1,57 +1,42 @@
-//! Shared façade for host-facing services (Vial today, rmk_protocol next).
-//!
-//! Bundles every keymap mutation with its flash persistence so callers don't
-//! repeat storage plumbing by hand. Key positions use a last-write-wins
-//! staging area so the serial host service never waits for flash capacity.
-//! The façade also exposes synchronous reads of live keyboard state (LED,
-//! battery, connection, active layer) that are otherwise scattered across
-//! module-private statics.
-//!
-//! The context does not subscribe to events — the underlying statics it
-//! reads from are kept in sync by the relevant event handlers
-//! (`BatteryProcessor::commit`, `state.rs::update_status`,
-//! `keyboard::run_led_reader`).
+//! Shared context for the Vial and Rynk host services.
 
 use embassy_time::Duration;
 use rmk_types::action::{EncoderAction, KeyAction};
 #[cfg(feature = "_ble")]
 use rmk_types::battery::BatteryStatus;
 use rmk_types::combo::Combo as ComboConfig;
-use rmk_types::connection::ConnectionStatus;
+use rmk_types::connection::{ConnectionStatus, ConnectionType};
 use rmk_types::fork::Fork;
 use rmk_types::led_indicator::LedIndicator;
 use rmk_types::morse::{Morse, MorseProfile};
+#[cfg(feature = "rynk")]
+use rmk_types::protocol::rynk::BehaviorConfig;
 
-#[cfg(feature = "storage")]
-use crate::channel::MACRO_FLASH_SIGNAL;
-use crate::event::KeyboardEventPos;
+use crate::event::KeyboardEventSource;
 use crate::keyboard::combo::Combo;
 use crate::keymap::KeyMap;
+#[cfg(all(feature = "storage", any(feature = "vial", feature = "ergohaven_rynk")))]
+use crate::storage::queue_keymap_flash_write;
 #[cfg(feature = "storage")]
-use crate::{
-    channel::FLASH_CHANNEL,
-    storage::{FlashOperationMessage, queue_keymap_flash_write},
-};
+use crate::storage::{StorageItem, store};
 
-/// Façade shared between Vial and rmk_protocol host services.
-///
-/// `keymap` is intentionally `pub`: callers like `VialLock` that only need a
-/// raw `&KeyMap` keep their existing parameter and read it through
-/// `ctx.keymap` at the construction site.
-pub struct KeyboardContext<'a> {
+/// Context shared between Vial and Rynk host services.
+pub(crate) struct KeyboardContext<'a> {
     pub keymap: &'a KeyMap<'a>,
+    pub(crate) layout_blob: &'static [u8],
 }
 
 impl<'a> KeyboardContext<'a> {
     pub fn new(keymap: &'a KeyMap<'a>) -> Self {
-        Self { keymap }
+        Self {
+            keymap,
+            layout_blob: &[],
+        }
     }
-
-    // ── Keymap operations ────────────────────────────────────────────────
 
     pub fn get_action(&self, layer: u8, row: u8, col: u8) -> KeyAction {
         self.keymap
-            .get_action_at(KeyboardEventPos::key_pos(col, row), layer as usize)
+            .get_action_at(KeyboardEventSource::key_pos(col, row), layer as usize)
     }
 
     pub fn get_action_flat(&self, index: usize) -> KeyAction {
@@ -63,101 +48,103 @@ impl<'a> KeyboardContext<'a> {
         self.keymap.get_keymap_config()
     }
 
-    pub async fn set_action(&self, layer: u8, row: u8, col: u8, action: KeyAction) {
+    /// The opaque, compressed physical-layout blob served by `GetLayout`.
+    pub fn layout_blob(&self) -> &'static [u8] {
+        self.layout_blob
+    }
+
+    /// Write one key and persist it before returning, so a flash fault reaches the host.
+    /// Ergohaven stages it instead, as its Vial firmware did: a keymap upload writes
+    /// hundreds of keys, and `CommitWrites` tells the host when they land.
+    pub async fn set_action(&self, layer: u8, row: u8, col: u8, action: KeyAction) -> Result<(), ()> {
+        #[cfg(feature = "ergohaven_rynk")]
+        return self.stage_action(layer, row, col, action).await;
+        #[cfg(not(feature = "ergohaven_rynk"))]
+        {
+            self.keymap
+                .set_action_at(KeyboardEventSource::key_pos(col, row), layer as usize, action);
+            #[cfg(feature = "storage")]
+            store(StorageItem::Keymap {
+                layer,
+                row,
+                col,
+                action,
+            })
+            .await?;
+            Ok(())
+        }
+    }
+
+    /// Vial's variant of [`set_action`](Self::set_action): persistence is staged per key
+    /// position and drained by the storage task once the host goes quiet, so a bulk keymap
+    /// upload never waits on flash. A flash fault is not reported back.
+    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
+    pub async fn stage_action(&self, layer: u8, row: u8, col: u8, action: KeyAction) -> Result<(), ()> {
         self.keymap
-            .set_action_at(KeyboardEventPos::key_pos(col, row), layer as usize, action);
+            .set_action_at(KeyboardEventSource::key_pos(col, row), layer as usize, action);
         #[cfg(feature = "storage")]
         if !queue_keymap_flash_write(layer, row, col, action) {
-            error!("Failed to stage keymap key at layer {} ({},{})", layer, row, col);
+            // Outside the staging area sized by `keyboard.toml`'s layout: write through.
+            store(StorageItem::Keymap {
+                layer,
+                row,
+                col,
+                action,
+            })
+            .await?;
         }
+        Ok(())
     }
-
-    /// Synchronous on purpose: Vial's bulk-write path (`DynamicKeymapSetBuffer`)
-    /// calls this in a tight loop. Persistence is staged in the key-position
-    /// coalescer, so a full flash channel cannot drop the update or block Vial.
-    ///
-    /// `rows` / `cols` are passed in so callers can hoist the dimensions read
-    /// out of their loop — see `keymap_dimensions()`.
-    pub fn try_set_action_flat(&self, index: usize, action: KeyAction, rows: usize, cols: usize) {
-        self.keymap.set_action_by_flat_index(index, action);
-        #[cfg(feature = "storage")]
-        {
-            let (row, col, layer) = position_from_flat_index(index, rows, cols);
-            if !queue_keymap_flash_write(layer as u8, row as u8, col as u8, action) {
-                error!("Failed to stage keymap key at layer {} ({},{})", layer, row, col);
-            }
-        }
-        #[cfg(not(feature = "storage"))]
-        let _ = (rows, cols);
-    }
-
-    // ── Encoders ─────────────────────────────────────────────────────────
 
     pub fn get_encoder(&self, layer: u8, idx: u8) -> Option<EncoderAction> {
         self.keymap.get_encoder_action(layer as usize, idx as usize)
     }
 
-    pub async fn set_encoder_clockwise(&self, layer: u8, idx: u8, action: KeyAction) {
-        let updated = self.keymap.set_encoder_clockwise(layer as usize, idx as usize, action);
+    /// Number of encoders per layer.
+    pub fn num_encoders(&self) -> usize {
+        self.keymap.num_encoders()
+    }
+
+    /// Write one encoder direction and persist the updated pair.
+    pub async fn set_encoder_direction(
+        &self,
+        layer: u8,
+        idx: u8,
+        clockwise: bool,
+        action: KeyAction,
+    ) -> Result<(), ()> {
+        let updated = if clockwise {
+            self.keymap.set_encoder_clockwise(layer as usize, idx as usize, action)
+        } else {
+            self.keymap
+                .set_encoder_counter_clockwise(layer as usize, idx as usize, action)
+        };
         #[cfg(feature = "storage")]
         if let Some(encoder) = updated {
-            FLASH_CHANNEL
-                .send(FlashOperationMessage::Encoder {
-                    idx,
-                    layer,
-                    action: encoder,
-                })
-                .await;
+            store(StorageItem::Encoder {
+                layer,
+                idx,
+                action: encoder,
+            })
+            .await?;
         }
         #[cfg(not(feature = "storage"))]
         let _ = updated;
+        Ok(())
     }
 
-    pub async fn set_encoder_counter_clockwise(&self, layer: u8, idx: u8, action: KeyAction) {
-        let updated = self
-            .keymap
-            .set_encoder_counter_clockwise(layer as usize, idx as usize, action);
+    /// Write both encoder directions in one synchronous RAM update, then persist
+    /// once.
+    pub async fn set_encoder(&self, layer: u8, idx: u8, action: EncoderAction) -> Result<(), ()> {
+        let written = self.keymap.set_encoder(layer as usize, idx as usize, action);
         #[cfg(feature = "storage")]
-        if let Some(encoder) = updated {
-            FLASH_CHANNEL
-                .send(FlashOperationMessage::Encoder {
-                    idx,
-                    layer,
-                    action: encoder,
-                })
-                .await;
+        if written {
+            store(StorageItem::Encoder { layer, idx, action }).await?;
         }
         #[cfg(not(feature = "storage"))]
-        let _ = updated;
+        let _ = written;
+        Ok(())
     }
-
-    // ── Macros ───────────────────────────────────────────────────────────
-
-    pub fn read_macro_buffer(&self, offset: usize, target: &mut [u8]) {
-        self.keymap.read_macro_buffer(offset, target);
-    }
-
-    /// Update the live macro buffer and queue a flash snapshot only after the
-    /// complete set of macro slots has arrived. Vial GUI and Entropy both send
-    /// all slots as NUL-terminated bytecode, including empty trailing slots.
-    pub fn write_macro_buffer(&self, offset: usize, data: &[u8], macro_count: usize) -> bool {
-        self.keymap.write_macro_buffer(offset, data);
-        let received_end = (offset + data.len()).min(crate::MACRO_SPACE_SIZE);
-        let transfer_complete = received_end == crate::MACRO_SPACE_SIZE
-            || self.keymap.macro_buffer_has_terminators(received_end, macro_count);
-        #[cfg(feature = "storage")]
-        if transfer_complete {
-            MACRO_FLASH_SIGNAL.signal(self.keymap.get_macro_sequences());
-            info!("Queue completed macro snapshot for storage");
-        }
-        transfer_complete
-    }
-
-    pub fn reset_macro_buffer(&self) {
-        self.keymap.reset_macro_buffer();
-    }
-
-    // ── Combos ───────────────────────────────────────────────────────────
 
     pub fn with_combos<R>(&self, f: impl FnOnce(&[Option<Combo>]) -> R) -> R {
         self.keymap.with_combos(f)
@@ -165,7 +152,9 @@ impl<'a> KeyboardContext<'a> {
 
     /// Replace the combo at `idx` with `config` (or remove it if actions,
     /// output, and layer are all empty) and persist. No-op if `idx` is out of range.
-    pub async fn set_combo(&self, idx: u8, config: ComboConfig) {
+    /// Returns `false` when `idx` is out of range (no slot written).
+    /// `Ok(false)` when `idx` is out of range (no slot written).
+    pub async fn set_combo(&self, idx: u8, config: ComboConfig) -> Result<bool, ()> {
         let valid = self.keymap.with_combos_mut(|combos| {
             if (idx as usize) >= combos.len() {
                 return false;
@@ -179,38 +168,14 @@ impl<'a> KeyboardContext<'a> {
             true
         });
         if !valid {
-            return;
+            return Ok(false);
         }
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::Combo { idx, config }).await;
+        store(StorageItem::Combo { idx, config }).await?;
         #[cfg(not(feature = "storage"))]
         let _ = config;
+        Ok(true)
     }
-
-    // ── Forks (Vial: key override) ───────────────────────────────────────
-
-    pub fn with_forks<R>(&self, f: impl FnOnce(&[Fork]) -> R) -> R {
-        self.keymap.with_forks(f)
-    }
-
-    /// Replace the fork at `idx` with `fork` and persist. No-op if `idx` is
-    /// out of range.
-    pub async fn set_fork(&self, idx: u8, fork: Fork) {
-        let valid = self.keymap.with_forks_mut(|forks| {
-            if (idx as usize) >= forks.len() {
-                return false;
-            }
-            forks[idx as usize] = fork;
-            true
-        });
-        if !valid {
-            return;
-        }
-        #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::Fork { idx, fork }).await;
-    }
-
-    // ── Morses (Vial: tap-dance) ─────────────────────────────────────────
 
     pub fn get_morse(&self, idx: u8) -> Option<Morse> {
         self.keymap.get_morse(idx as usize)
@@ -221,7 +186,7 @@ impl<'a> KeyboardContext<'a> {
     }
 
     /// Mutate the morse at `idx` and persist. No-op if `idx` is out of range.
-    pub async fn update_morse(&self, idx: u8, f: impl FnOnce(&mut Morse)) {
+    pub async fn update_morse(&self, idx: u8, f: impl FnOnce(&mut Morse)) -> Result<(), ()> {
         #[cfg(feature = "storage")]
         {
             let updated = self.keymap.with_morse_mut(idx as usize, |morse| {
@@ -229,16 +194,15 @@ impl<'a> KeyboardContext<'a> {
                 morse.clone()
             });
             if let Some(morse) = updated {
-                FLASH_CHANNEL.send(FlashOperationMessage::Morse { idx, morse }).await;
+                store(StorageItem::Morse { idx, morse }).await?;
             }
         }
         #[cfg(not(feature = "storage"))]
         {
             self.keymap.with_morse_mut(idx as usize, f);
         }
+        Ok(())
     }
-
-    // ── Behavior settings (read) ─────────────────────────────────────────
 
     pub fn combo_timeout(&self) -> Duration {
         self.keymap.combo_timeout()
@@ -264,75 +228,81 @@ impl<'a> KeyboardContext<'a> {
         self.keymap.morse_prior_idle_time()
     }
 
-    // ── Behavior settings (write+persist) ────────────────────────────────
-
-    pub async fn set_combo_timeout(&self, ms: u16) {
+    pub async fn set_combo_timeout(&self, ms: u16) -> Result<(), ()> {
         self.keymap.set_combo_timeout(Duration::from_millis(ms as u64));
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::ComboTimeout(ms)).await;
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    pub async fn set_one_shot_timeout(&self, ms: u16) {
+    pub async fn set_one_shot_timeout(&self, ms: u16) -> Result<(), ()> {
         self.keymap.set_one_shot_timeout(Duration::from_millis(ms as u64));
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::OneShotTimeout(ms)).await;
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    pub async fn set_tap_interval(&self, ms: u16) {
+    pub async fn set_tap_interval(&self, ms: u16) -> Result<(), ()> {
         self.keymap.set_tap_interval(ms);
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::TapInterval(ms)).await;
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    pub async fn set_tap_capslock_interval(&self, ms: u16) {
+    pub async fn set_tap_capslock_interval(&self, ms: u16) -> Result<(), ()> {
         self.keymap.set_tap_capslock_interval(ms);
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::TapCapslockInterval(ms)).await;
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    pub async fn set_morse_default_profile(&self, profile: MorseProfile) {
+    pub async fn set_morse_default_profile(&self, profile: MorseProfile) -> Result<(), ()> {
         self.keymap.set_morse_default_profile(profile);
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL
-            .send(FlashOperationMessage::MorseDefaultProfile(profile))
-            .await;
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    pub async fn set_morse_prior_idle_time(&self, ms: u16) {
+    pub async fn set_morse_prior_idle_time(&self, ms: u16) -> Result<(), ()> {
         self.keymap.set_morse_prior_idle_time(Duration::from_millis(ms as u64));
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::PriorIdleTime(ms)).await;
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    // ── Layout / reset ───────────────────────────────────────────────────
-
-    pub async fn layout_options(&self) -> u32 {
+    #[cfg(feature = "rynk")]
+    pub async fn set_behavior_config(&self, cfg: BehaviorConfig) -> Result<(), ()> {
+        self.keymap
+            .set_combo_timeout(Duration::from_millis(cfg.combo_timeout_ms as u64));
+        self.keymap
+            .set_one_shot_timeout(Duration::from_millis(cfg.oneshot_timeout_ms as u64));
+        self.keymap.set_tap_interval(cfg.tap_interval_ms);
+        self.keymap.set_tap_capslock_interval(cfg.tap_capslock_interval_ms);
+        self.keymap.set_morse_default_profile(cfg.morse_default_profile);
+        self.keymap
+            .set_morse_prior_idle_time(Duration::from_millis(cfg.morse_prior_idle_time_ms as u64));
         #[cfg(feature = "storage")]
-        {
-            crate::storage::read_layout_options().await.unwrap_or(0)
-        }
-        #[cfg(not(feature = "storage"))]
-        {
-            0
-        }
+        store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
+        Ok(())
     }
 
-    pub async fn set_layout_options(&self, opts: u32) {
-        // Make the change live immediately; do not wait for the flash worker.
-        #[cfg(feature = "universal_symbols")]
+    pub async fn set_layout_options(&self, opts: u32) -> Result<(), ()> {
+        self.keymap.set_layout_option(opts);
+        #[cfg(all(feature = "vial", feature = "universal_symbols"))]
         crate::universal_symbols::set_layout_options(opts);
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::LayoutOptions(opts)).await;
-        #[cfg(not(feature = "storage"))]
-        let _ = opts;
+        store(StorageItem::LayoutOption(opts)).await?;
+        Ok(())
+    }
+
+    pub fn layout_options(&self) -> u32 {
+        self.keymap.layout_option()
     }
 
     pub async fn reset_storage(&self) {
         #[cfg(feature = "storage")]
-        FLASH_CHANNEL.send(FlashOperationMessage::Reset).await;
+        crate::storage::reset().await;
     }
-
-    // ── Live state ───────────────────────────────────────────────────────
 
     pub fn led_indicator(&self) -> LedIndicator {
         crate::keyboard::current_led_indicator()
@@ -349,7 +319,37 @@ impl<'a> KeyboardContext<'a> {
 
     #[cfg(all(feature = "split", feature = "_ble"))]
     pub fn peripheral_battery_status(&self, id: usize) -> BatteryStatus {
-        crate::split::battery::current_peripheral_battery_status(id)
+        crate::split::driver::current_peripheral_battery_status(id).unwrap_or(BatteryStatus::Unavailable)
+    }
+
+    /// The halves' battery levels as Ergohaven hosts read them: a mask whose
+    /// bit 0 marks the left level known and bit 1 the right, then each level
+    /// in percent, 0xFF when unknown. Asks the halves to measure again, so a
+    /// host polling it sees fresh levels.
+    pub fn battery_halves(&self) -> (u8, u8, u8) {
+        #[cfg(all(feature = "split", feature = "_ble"))]
+        {
+            crate::event::publish_event(crate::event::PeripheralBatteryRefreshEvent);
+            let (left, right) = battery_halves_for_split(
+                self.battery_status(),
+                self.peripheral_battery_status(0),
+                self.peripheral_battery_status(1),
+                crate::SPLIT_PERIPHERALS_NUM,
+                crate::SPLIT_CENTRAL_IS_LEFT,
+            );
+            let level = |status| match status {
+                BatteryStatus::Available { level: Some(level), .. } if level <= 100 => Some(level),
+                _ => None,
+            };
+            let (left, right) = (level(left), level(right));
+            (
+                left.is_some() as u8 | (right.is_some() as u8) << 1,
+                left.unwrap_or(0xFF),
+                right.unwrap_or(0xFF),
+            )
+        }
+        #[cfg(not(all(feature = "split", feature = "_ble")))]
+        (0, 0xFF, 0xFF)
     }
 
     pub fn active_layer(&self) -> u8 {
@@ -360,21 +360,102 @@ impl<'a> KeyboardContext<'a> {
         self.keymap.get_default_layer()
     }
 
-    // ── Matrix state (host_security) ─────────────────────────────────────
+    pub async fn set_default_layer(&self, layer: u8) -> Result<(), ()> {
+        self.keymap.set_default_layer(layer);
+        #[cfg(feature = "storage")]
+        store(StorageItem::DefaultLayer(layer)).await?;
+        Ok(())
+    }
 
-    #[cfg(feature = "host_security")]
+    /// Tiebreaker connection currently chosen as preferred — independent
+    /// of which transport is actively routable.
+    pub fn preferred_connection(&self) -> ConnectionType {
+        crate::state::current_connection_status().preferred
+    }
+
+    pub fn get_fork(&self, idx: u8) -> Option<Fork> {
+        self.keymap.with_forks(|forks| forks.get(idx as usize).copied())
+    }
+
+    /// Replace the fork at `idx` with `fork` and persist.
+    /// `Ok(false)` when `idx` is out of range (no slot written).
+    pub async fn set_fork(&self, idx: u8, fork: Fork) -> Result<bool, ()> {
+        let valid = self.keymap.with_forks_mut(|forks| {
+            if let Some(slot) = forks.get_mut(idx as usize) {
+                *slot = fork;
+                true
+            } else {
+                false
+            }
+        });
+        #[cfg(feature = "storage")]
+        if valid {
+            store(StorageItem::Fork { idx, fork }).await?;
+        }
+        Ok(valid)
+    }
+
+    #[cfg(feature = "host_lock")]
     pub fn read_matrix_state(&self, target: &mut [u8]) {
         self.keymap.read_matrix_state(target);
     }
 }
 
-/// Map a flat keymap index back to `(row, col, layer)`.
-///
-/// Layout: `index = layer * (rows * cols) + row * cols + col`.
-fn position_from_flat_index(index: usize, rows: usize, cols: usize) -> (usize, usize, usize) {
-    let layer = index / (cols * rows);
-    let layer_offset = index % (cols * rows);
-    let row = layer_offset / cols;
-    let col = layer_offset % cols;
-    (row, col, layer)
+/// Which battery is which half: with one peripheral the central is the other
+/// half, with two (a dongle) the peripherals are the halves.
+#[cfg(all(feature = "split", feature = "_ble"))]
+fn battery_halves_for_split(
+    central: BatteryStatus,
+    peripheral_0: BatteryStatus,
+    peripheral_1: BatteryStatus,
+    peripheral_count: usize,
+    central_is_left: bool,
+) -> (BatteryStatus, BatteryStatus) {
+    if peripheral_count == 1 {
+        if central_is_left {
+            (central, peripheral_0)
+        } else {
+            (peripheral_0, central)
+        }
+    } else {
+        (peripheral_0, peripheral_1)
+    }
+}
+
+#[cfg(all(test, feature = "split", feature = "_ble"))]
+mod tests {
+    use rmk_types::battery::{BatteryStatus, ChargeState};
+
+    use super::battery_halves_for_split;
+
+    fn battery(level: u8) -> BatteryStatus {
+        BatteryStatus::Available {
+            charge_state: ChargeState::Unknown,
+            level: Some(level),
+        }
+    }
+
+    #[test]
+    fn no_qube_split_uses_central_and_first_peripheral_batteries() {
+        assert_eq!(
+            battery_halves_for_split(battery(80), battery(55), BatteryStatus::Unavailable, 1, true),
+            (battery(80), battery(55))
+        );
+    }
+
+    #[test]
+    fn right_central_split_reports_physical_battery_order() {
+        assert_eq!(
+            battery_halves_for_split(battery(80), battery(55), BatteryStatus::Unavailable, 1, false),
+            (battery(55), battery(80))
+        );
+    }
+
+    #[test]
+    fn qube_split_uses_both_peripheral_batteries() {
+        assert_eq!(
+            battery_halves_for_split(battery(100), battery(80), battery(55), 2, true),
+            (battery(80), battery(55))
+        );
+    }
 }

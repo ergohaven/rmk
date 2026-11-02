@@ -1,0 +1,56 @@
+[package]
+name = "rmk-rp2040-dfu-split-dfu-ext"
+version = "0.1.0"
+authors = ["RMK contributors"]
+description = "RMK example: RP2040 split keyboard with dfu_split and external SPI flash DFU (dfu_ext)"
+homepage = "https://github.com/rmk-rs/rmk"
+repository = "https://github.com/rmk-rs/rmk"
+readme = "../../README.md"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+path = "src/central.rs"
+name = "central"
+
+[[bin]]
+path = "src/peripheral.rs"
+name = "peripheral"
+
+[dependencies]
+rmk = { path = "../../../rmk", features = ["dfu_rp", "split", "dfu_split", "dfu_ext"] }
+
+embassy-embedded-hal = { version = "0.6" }
+embassy-executor = { version = "0.10", features = ["defmt", "platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10", features = ["rp2040", "defmt", "time-driver", "critical-section-impl"] }
+embassy-sync = { version = "0.8" }
+embassy-time = { version = "0.5", features = ["defmt"] }
+
+cortex-m-rt = { version = "0.7.5", features = ["set-vtor"] }
+defmt = "1"
+defmt-rtt = "1"
+embedded-storage = { version = "0.3", default-features = false }
+embedded-storage-async = { version = "0.4", default-features = false }
+panic-probe = { version = "1", features = ["print-defmt"] }
+portable-atomic = { version = "1", features = ["critical-section"] }
+static_cell = "2"
+
+[build-dependencies]
+const-gen = "1.6"
+json = "0.12"
+xz2 = "0.1.7"
+
+[profile.release]
+opt-level = "z"
+debug = true
+lto = true
+codegen-units = 1
+overflow-checks = false
+
+[profile.dev]
+opt-level = 1
+debug = true
+lto = false
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true

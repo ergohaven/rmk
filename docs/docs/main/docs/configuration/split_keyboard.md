@@ -17,7 +17,8 @@ cols = 2
 row_offset = 0
 col_offset = 0
 
-# Central's ble addr will be automatically generated. You can override it if you want.
+# Central's ble addr. On nRF52 it's derived from the chip's device ID and this value is ignored;
+# on RP2040/ESP32 it overrides the built-in default.
 # ble_addr = [0x18, 0xe2, 0x21, 0x80, 0xc0, 0xc7]
 
 # Central's matrix
@@ -33,7 +34,7 @@ rows = 2
 cols = 1
 row_offset = 2
 col_offset = 2
-# Peripheral's ble addr will be automatically generated. You can override it if you want.
+# Peripheral's ble addr. Same rules as the central's: ignored on nRF52, overrides the default on RP2040/ESP32.
 # ble_addr = [0x7e, 0xfe, 0x73, 0x9e, 0x11, 0xe3]
 
 # Peripheral 0's matrix definition
@@ -48,8 +49,8 @@ col_pins = ["P0_30"]
 rows = 2
 cols = 1
 row_offset = 2
-col_offset = 2
-# Peripheral's ble addr will be automatically generated. You can override it if you want.
+col_offset = 0
+# Peripheral's ble addr. Same rules as the central's: ignored on nRF52, overrides the default on RP2040/ESP32.
 # ble_addr = [0x7e, 0xfe, 0x71, 0x91, 0x11, 0xe3]
 
 # Peripheral 1's matrix definition
@@ -58,6 +59,10 @@ matrix_type = "normal"
 row_pins = ["P1_11", "P1_10"]
 col_pins = ["P0_30"]
 ```
+
+Note that each board's region (`rows`/`cols` plus `row_offset`/`col_offset`) must not overlap another board's region in the whole keyboard's matrix — overlapping regions are rejected at build time.
+
+Each split board can also define battery ADC settings (`battery_adc_pin`, `adc_divider_measured`, `adc_divider_total`); see [Split battery ADC configuration](./wireless.md#split-battery-adc-configuration).
 
 ## Split keyboard matrix configuration
 
@@ -81,9 +86,9 @@ col_offset = 2 # The col offset of the peripheral. Central has 2 cols, so the co
 
 ## Split keyboard connection configuration
 
-If you're using BLE, `ble_addr` will be automatically generated. You can also override it if you want.
+If you're using BLE, each board's address depends on the chip. On nRF52 it is derived from the chip's factory device ID (FICR) and `ble_addr` in `keyboard.toml` is ignored. On RP2040 and ESP32, RMK uses a built-in default address (the peripheral index is baked into each peripheral's default) which you can override with `ble_addr`.
 
-If you're using serial, in `[split.central]` you need to define a list of serial ports; the number of items in the list should be the same as the number of peripherals:
+If you're using serial, in `[split.central]` you need to define a list of serial ports; the number of items in the list should be the same as the number of peripherals. Serial split via `keyboard.toml` is generated for RP2040 only; on other chips the build fails with "Serial for chip ... isn't implemented yet", so use the [Rust API](#define-central-and-peripherals-via-rust) there.
 
 ```toml
 [split]
@@ -111,7 +116,7 @@ serial = [{ instance = "UART0", tx_pin = "PIN_0", rx_pin = "PIN_1" }]
 serial = [{ instance = "UART0", tx_pin = "PIN_0", rx_pin = "PIN_1" }]
 ```
 
-If you're using the Programmable IO (PIO) serial port with an RP2040 chip, substitute the UART serial port interface with the PIO block, e.g. `PIO0`:
+If you're using the Programmable IO (PIO) serial port with an RP2040 chip, substitute the UART serial port interface with the PIO block, e.g. `PIO0`. PIO needs the `rp2040` feature of the `rmk` crate. Setting `tx_pin` and `rx_pin` to the same pin selects half-duplex mode; different pins select full-duplex mode:
 
 ```toml
 [split]
@@ -129,9 +134,52 @@ serial = [
 serial = [{ instance = "PIO0", tx_pin = "PIN_0", rx_pin = "PIN_0" }]
 ```
 
-## Define central and peripherals via `keyboard.toml`
+## Split keyboard DFU configuration
 
-See [this section](../configuration/split_keyboard) for more details.
+DFU (see [Bootloader Configuration](./bootloader.mdx)) is configured globally via `[dfu]`. On a split keyboard, each side can additionally define its own `[split.central.dfu]` or `[split.peripheral.dfu]` section — for example to give the central an external flash DFU partition while the peripheral keeps an internal one, since each side may use different SPI pins or flash chips.
+
+A side's `[dfu]` section **completely replaces** the global `[dfu]` for that side; options from the global section are not merged into it. When a side has no own `[dfu]` section, it falls back to the global `[dfu]`.
+
+```toml
+[split.central]
+rows = 2
+cols = 2
+
+[split.central.matrix]
+matrix_type = "normal"
+row_pins = ["PIN_12", "PIN_13"]
+col_pins = ["PIN_14", "PIN_15"]
+
+# The central's DFU config: full replacement of the global [dfu] for this side.
+[split.central.dfu]
+led = "PIN_16"
+
+# The central's DFU download slot lives on an external SPI flash.
+[split.central.dfu.external_flash]
+driver = "w25q"
+flash_size = 8388608
+
+[split.central.dfu.external_flash.spi]
+instance = "SPI0"
+sck = "PIN_18"
+mosi = "PIN_19"
+miso = "PIN_20"
+cs = "PIN_17"
+
+[[split.peripheral]]
+rows = 2
+cols = 1
+row_offset = 2
+col_offset = 2
+
+# An empty [dfu] section means: internal DFU partition for this side —
+# no external flash, no DFU LED. The global [dfu] is ignored for it.
+[split.peripheral.dfu]
+```
+
+The empty `[split.peripheral.dfu]` above disables all DFU behaviour for the peripheral (no external flash, no LED); use `[split.peripheral.dfu.external_flash]` to give the peripheral its own external flash instead. A peripheral without a `dfu` section simply uses the global `[dfu]`.
+
+See `examples/use_config/rp2040_dfu_split_dfu_ext` for a complete example (central with external flash DFU, peripheral with internal DFU).
 
 ## Define central and peripherals via Rust
 
@@ -141,6 +189,16 @@ When using the Rust API without `[[split.peripheral]]` entries in `keyboard.toml
 ```toml
 [rmk]
 split_peripherals_num = 2
+```
+
+`split_peripherals_num` only sets the number of peripherals used for split build-time sizing. It does not enable peripheral battery reporting. To use the Peripheral Battery Service from the Rust API, declare `battery_adc_pin` for the relevant peripheral in the same `keyboard.toml`, for example:
+
+```toml
+[rmk]
+split_peripherals_num = 2
+
+[[split.peripheral]]
+battery_adc_pin = "P0_02"
 ```
 
 Make sure `KEYBOARD_TOML_PATH` points to this file.
@@ -174,14 +232,21 @@ import { Rust, Toml, Tab, Tabs } from '@theme'
 <Tab label={<Rust />}>
 
 ```rust title="BLE Split Central"
-// BLE split central, arguments might be different for other microcontrollers, check the API docs or examples for other usages.
-run_peripheral_manager::<
-    2, // PERIPHERAL_ROW
-    1, // PERIPHERAL_COL
-    2, // PERIPHERAL_ROW_OFFSET
-    2, // PERIPHERAL_COL_OFFSET
-    _,
-  >(peripheral_id, peripheral_addr, &stack)
+// BLE split central: the transport takes one `PeripheralMatrixConfig` per
+// peripheral, loads the peripherals' stored addresses itself, and runs the
+// peripheral managers and the scanner on its own BLE stack.
+let mut ble_transport = BleTransport::new(
+    controller,
+    ble_addr,
+    rmk_config,
+    [PeripheralMatrixConfig {
+        rows: 2,
+        cols: 1,
+        row_offset: 2,
+        col_offset: 2,
+    }],
+);
+run_all!(matrix, storage, ble_transport, keyboard).await;
 ```
 
 </Tab>
@@ -189,13 +254,16 @@ run_peripheral_manager::<
 
 ```rust title="Serial Split Central"
 // UART split central, arguments might be different for other microcontrollers, check the API docs or examples for other usages.
-run_peripheral_manager::<
-    2, // PERIPHERAL_ROW
-    1, // PERIPHERAL_COL
-    2, // PERIPHERAL_ROW_OFFSET
-    2, // PERIPHERAL_COL_OFFSET
-    _,
-  >(peripheral_id, uart_receiver),
+run_peripheral_manager(
+    peripheral_id,
+    uart_receiver,
+    PeripheralMatrixConfig {
+        rows: 2,
+        cols: 1,
+        row_offset: 2,
+        col_offset: 2,
+    },
+),
 ```
 
 </Tab>
@@ -213,7 +281,8 @@ Running split peripheral is simpler. For the peripheral, we don't need to specif
 let mut matrix = Matrix::<_, _, _, 4, 7, true>::new(row_pins, col_pins, debouncer);
 
 // BLE split peripheral, arguments might be different for other microcontrollers, check the API docs or examples for other usages.
-run_rmk_split_peripheral(central_addr, &stack),
+// The first argument is the peripheral's id, which should match the index of this peripheral in the `PeripheralMatrixConfig` array the central passes to `BleTransport::new`.
+run_rmk_split_peripheral(peripheral_id, controller, ble_addr),
 ```
 
 </Tab>

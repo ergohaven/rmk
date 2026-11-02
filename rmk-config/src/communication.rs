@@ -2,6 +2,11 @@ use crate::chip::{ChipModel, ChipSeries};
 use crate::usb_interrupt_map::get_usb_info;
 use crate::{BleConfig, KeyboardTomlConfig};
 
+/// The SoftDevice Controller's connection event length when the board sets none.
+const SDC_DEFAULT_EVENT_LENGTH_US: u32 = 7500;
+/// The SoftDevice Controller's central ACL event spacing when the board sets none.
+const SDC_DEFAULT_ACL_EVENT_SPACING_US: u32 = 7500;
+
 /// Information about USB interface
 #[derive(Clone, Debug, Default)]
 pub struct UsbInfo {
@@ -76,27 +81,63 @@ impl CommunicationConfig {
 impl KeyboardTomlConfig {
     pub(crate) fn get_communication_config(&self) -> Result<CommunicationConfig, String> {
         let usb_enabled = self.keyboard.clone().unwrap_or_default().usb_enable.unwrap_or(false);
-        let chip = self.get_chip_model().unwrap();
-        let usb_info = if usb_enabled { get_usb_info(&chip.chip) } else { None };
-        let ble_config = self.ble.clone();
+        let chip = self.get_chip_model()?;
+        // Distinguish "USB not enabled" from "chip unknown to the USB map":
+        // silently dropping USB here would misreport the user's config as the cause.
+        let usb_info = if usb_enabled {
+            Some(get_usb_info(&chip.chip).ok_or_else(|| {
+                format!(
+                    "`usb_enable = true`, but chip \"{}\" has no USB mapping in RMK — set `usb_enable = false` in [keyboard], or report the missing chip at https://github.com/rmk-rs/rmk/issues",
+                    chip.chip
+                )
+            })?)
+        } else {
+            None
+        };
+        let ble_config = self.ble.as_ref().filter(|config| config.enabled).cloned();
+        if let Some(ble) = &ble_config
+            && (ble.central_event_length_us.is_some() || ble.central_acl_event_spacing_us.is_some())
+        {
+            if chip.series != ChipSeries::Nrf52 {
+                return Err(format!(
+                    "keyboard.toml: [ble] central_event_length_us and central_acl_event_spacing_us configure the nRF SoftDevice Controller, but chip \"{}\" is not an nRF52",
+                    chip.chip
+                ));
+            }
+            let event_length = ble.central_event_length_us.unwrap_or(SDC_DEFAULT_EVENT_LENGTH_US);
+            if event_length == 0 {
+                return Err("keyboard.toml: [ble] central_event_length_us must be greater than zero".to_string());
+            }
+            // Spaced closer than one event, the central's own links overlap.
+            let spacing = ble
+                .central_acl_event_spacing_us
+                .unwrap_or(SDC_DEFAULT_ACL_EVENT_SPACING_US);
+            if spacing < event_length {
+                return Err(format!(
+                    "keyboard.toml: [ble] central_acl_event_spacing_us ({spacing}) must be at least the central event length ({event_length})"
+                ));
+            }
+        }
+
+        if ble_config
+            .as_ref()
+            .is_some_and(|ble| ble.host_advertising == Some(false))
+            && usb_info.is_none()
+        {
+            return Err(
+                "keyboard.toml: [ble] host_advertising = false leaves the board without a host link — set `usb_enable = true` in [keyboard]"
+                    .to_string(),
+            );
+        }
 
         match (usb_info, ble_config) {
             (Some(usb_info), None) => Ok(CommunicationConfig::Usb(usb_info)),
-            (Some(usb_info), Some(ble_config)) => {
-                if !ble_config.enabled {
-                    Ok(CommunicationConfig::Usb(usb_info))
-                } else {
-                    Ok(CommunicationConfig::Both(usb_info, ble_config))
-                }
-            }
-            (None, Some(c)) => {
-                if !c.enabled {
-                    Err("You must enable at least one of usb or ble".to_string())
-                } else {
-                    Ok(CommunicationConfig::Ble(c))
-                }
-            }
-            _ => Err("You must enable at least one of usb or ble".to_string()),
+            (Some(usb_info), Some(ble_config)) => Ok(CommunicationConfig::Both(usb_info, ble_config)),
+            (None, Some(ble_config)) => Ok(CommunicationConfig::Ble(ble_config)),
+            (None, None) => Err(
+                "keyboard.toml: no transport is enabled — set `usb_enable = true` in [keyboard], or `enabled = true` in [ble]"
+                    .to_string(),
+            ),
         }
     }
 }

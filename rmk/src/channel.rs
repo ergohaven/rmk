@@ -3,24 +3,23 @@
 use core::future::poll_fn;
 
 use embassy_sync::channel::{Channel, TrySendError};
-#[cfg(any(feature = "_ble", all(feature = "storage", feature = "host")))]
+#[cfg(feature = "_ble")]
 use embassy_sync::signal::Signal;
 pub use embassy_sync::{blocking_mutex, channel, pubsub, zerocopy_channel};
 use embassy_time::Instant;
 use rmk_types::connection::ConnectionType;
+use usbd_hid::descriptor::{MediaKeyboardReport, SystemControlReport};
 #[cfg(feature = "_ble")]
 use {
     crate::ble::profile::BleProfileAction,
     rmk_types::{ble::BleState, led_indicator::LedIndicator},
 };
 
-#[cfg(all(feature = "storage", feature = "host"))]
-use crate::MACRO_SPACE_SIZE;
-#[cfg(feature = "host")]
+#[cfg(all(feature = "vial", feature = "_ble"))]
 use crate::VIAL_CHANNEL_SIZE;
-use crate::hid::{KeyboardReport, Report};
-#[cfg(feature = "storage")]
-use crate::{FLASH_CHANNEL_SIZE, storage::FlashOperationMessage};
+#[cfg(feature = "steno")]
+use crate::hid::StenoReport;
+use crate::hid::{KeyboardReport, MouseReport, Report};
 use crate::{REPORT_CHANNEL_SIZE, RawMutex};
 
 /// One HID report together with the instant at which its producer entered the
@@ -245,90 +244,33 @@ pub(crate) fn try_send_hid_report(report: Report) {
     }
 }
 
-/// Drains queued reports for `transport` and leaves an all-up keyboard report
-/// for its writer. Called on active-transport flips so the previous host
-/// releases any pressed keys without replaying stale queued reports later.
+/// Drains queued reports for `transport` and leaves an all-up report of every
+/// type for its writer. Called on active-transport flips so the previous host
+/// releases any pressed keys and buttons without replaying stale queued reports later.
 pub(crate) fn clear_and_release_report_channel(transport: ConnectionType) {
     if let Some(ch) = report_channel(transport) {
         ch.clear();
-        let _ = ch.try_send(QueuedReport::new(Report::KeyboardReport(KeyboardReport::default())));
+        for report in [
+            Report::KeyboardReport(KeyboardReport::default()),
+            Report::MouseReport(MouseReport::default()),
+            Report::MediaKeyboardReport(MediaKeyboardReport { usage_id: 0 }),
+            Report::SystemControlReport(SystemControlReport { usage_id: 0 }),
+            #[cfg(feature = "steno")]
+            Report::StenoReport(StenoReport::default()),
+        ] {
+            let _ = ch.try_send(QueuedReport::new(report));
+        }
     }
 }
 
-// Sync messages from server to flash
-#[cfg(feature = "storage")]
-pub(crate) static FLASH_CHANNEL: Channel<RawMutex, FlashOperationMessage, FLASH_CHANNEL_SIZE> = Channel::new();
-/// Latest complete macro snapshot waiting for a quiet-period flash commit.
-/// `Signal` replaces an older completed snapshot so consecutive editor saves
-/// collapse into one flash write without back-pressuring the Vial host service.
-#[cfg(all(feature = "storage", feature = "host"))]
-pub(crate) static MACRO_FLASH_SIGNAL: Signal<RawMutex, [u8; MACRO_SPACE_SIZE]> = Signal::new();
 #[cfg(feature = "_ble")]
 pub(crate) static BLE_PROFILE_CHANNEL: Channel<RawMutex, BleProfileAction, 1> = Channel::new();
 
-/// Vial host requests from any active transport (USB or BLE) to the central `HostService`.
-/// Items carry the originating transport tag so replies can be routed back to the right
-/// per-transport reply channel.
-///
-/// Note: `HostService` processes requests strictly serially, so a slow request from one
-/// transport (e.g. flash-bound `process_vial`) blocks queries from the other transport
-/// queued behind it until it completes.
-#[cfg(feature = "host")]
-pub(crate) static HOST_REQUEST_CHANNEL: Channel<RawMutex, (HostTransport, [u8; 32]), VIAL_CHANNEL_SIZE> =
-    Channel::new();
+/// Vial RX from BLE GATT `output_data` writes — one 32-byte chunk per write.
+/// Pushed by `gatt_events_task`, drained by [`crate::ble::host::HostGattHandler::run`].
+#[cfg(all(feature = "vial", feature = "_ble"))]
+pub(crate) static VIAL_BLE_RX_CHANNEL: Channel<RawMutex, [u8; 32], VIAL_CHANNEL_SIZE> = Channel::new();
 
-/// BLE endpoint that originated a Vial request. The tag travels through
-/// `HostService` with the packet so the reply reaches the matching
-/// characteristic even when HOGP and vendor GATT are both exposed.
-#[cfg(all(feature = "host", feature = "_ble"))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum BleHostTransport {
-    Hid,
-    VendorGatt,
-}
-
-/// Physical Vial endpoint that originated a host request.
-#[cfg(feature = "host")]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub(crate) enum HostTransport {
-    #[cfg(not(feature = "_no_usb"))]
-    Usb,
-    #[cfg(feature = "_ble")]
-    Ble(BleHostTransport),
-}
-
-/// Per-transport reply for USB. Capacity matches the request queue so bursts of
-/// host requests can keep their replies queued until the transport drains them.
-#[cfg(all(feature = "host", not(feature = "_no_usb")))]
-pub(crate) static HOST_USB_REPLY: Channel<RawMutex, [u8; 32], VIAL_CHANNEL_SIZE> = Channel::new();
-
-/// Per-transport reply for BLE. See `HOST_USB_REPLY` for the sizing/draining rationale.
-#[cfg(all(feature = "host", feature = "_ble"))]
-pub(crate) static HOST_BLE_REPLY: Channel<RawMutex, (BleHostTransport, [u8; 32]), VIAL_CHANNEL_SIZE> = Channel::new();
-
-/// Routes a Vial reply back to the channel owned by the originating transport.
-/// Drops with a warning when the destination queue already has a pending reply
-/// (the `HostService` produced faster than the transport drained it).
-#[cfg(feature = "host")]
-pub(crate) fn try_send_host_reply(transport: HostTransport, reply: [u8; 32]) {
-    let ok = match transport {
-        #[cfg(not(feature = "_no_usb"))]
-        HostTransport::Usb => HOST_USB_REPLY.try_send(reply).is_ok(),
-        #[cfg(feature = "_ble")]
-        HostTransport::Ble(endpoint) => HOST_BLE_REPLY.try_send((endpoint, reply)).is_ok(),
-        #[allow(unreachable_patterns)]
-        _ => false,
-    };
-    if !ok {
-        warn!("Dropping Vial {:?} reply: reply queue full", transport);
-    }
-}
-
-/// Enqueues a Vial request from a transport into `HOST_REQUEST_CHANNEL`,
-/// back-pressuring the transport task when the queue is full.
-#[cfg(feature = "host")]
-pub(crate) async fn enqueue_host_request(transport: HostTransport, data: [u8; 32]) {
-    HOST_REQUEST_CHANNEL.send((transport, data)).await;
-}
+/// Rynk RX from the BLE `output_data` writes. The 512 B ring is ~2× one MTU's maximal payload.
+#[cfg(all(feature = "rynk", feature = "_ble"))]
+pub(crate) static RYNK_BLE_RX_PIPE: embassy_sync::pipe::Pipe<RawMutex, 512> = embassy_sync::pipe::Pipe::new();

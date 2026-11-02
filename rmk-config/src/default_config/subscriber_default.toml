@@ -16,11 +16,13 @@
 features = ["display"]
 events = [
     # display/mod.rs: DisplayProcessor subscribes to these events
+    { name = "keyboard" },
     { name = "wpm_update" },
     { name = "modifier" },
     { name = "sleep_state" },
     { name = "layer_change" },
     { name = "battery_status" },
+    { name = "led_indicator" },
 ]
 
 [[subscriber]]
@@ -36,9 +38,13 @@ events = [
     # split/driver.rs: each PeripheralManager subscribes when display is enabled
     # (gated on #[cfg(feature = "display")] in driver.rs)
     # Covers up to 2 peripherals; for 3+ peripherals override subs in keyboard.toml
-    { name = "wpm_update" },
-    { name = "sleep_state" },
+    { name = "wpm_update", count = 2 },
 ]
+
+# BatteryLedProcessor can run on USB-only boards too.
+[[subscriber]]
+features = []
+events = [{ name = "battery_status" }]
 
 # --- BLE-gated internal subscribers ---
 
@@ -46,11 +52,65 @@ events = [
 features = ["_ble"]
 events = [
     # ble/battery_service.rs: BatteryStatusEvent::subscriber()
-    # processor/builtin/battery_led.rs: subscribe = [BatteryStatusEvent] (user-optional but _ble-gated)
-    { name = "battery_status", count = 2 },
-    # ble/mod.rs: temporary wake subscribers after advertising times out
+    { name = "battery_status" },
+    # ble/mod.rs: KeyboardEvent/PointingEvent wake subscribers, created when
+    # advertising times out. Without a reserved slot they panic on boards whose
+    # permanent subscribers already fill the base count.
     { name = "keyboard" },
     { name = "pointing" },
+    # processor/builtin/ergohaven.rs: ErgohavenUserKeys subscribes ActionEvent
+    # (User keys) and KeyboardEvent (any other key disarms a 5 s hold).
+    { name = "action" },
+    { name = "keyboard" },
+]
+
+# Rynk sessions subscribe to these topics; USB+BLE boards need two slots.
+
+[[subscriber]]
+features = ["rynk"]
+events = [
+    { name = "layer_change" },
+    { name = "wpm_update" },
+    { name = "connection_status_change" },
+    { name = "sleep_state" },
+    { name = "led_indicator" },
+]
+
+[[subscriber]]
+features = ["rynk", "_ble"]
+events = [
+    # battery_status is only subscribed under `_ble`; needs one slot per
+    # concurrent session (USB + BLE = 2).
+    { name = "battery_status", count = 2 },
+    # Second session slot for the always-on topics on dual-transport boards.
+    { name = "layer_change" },
+    { name = "wpm_update" },
+    { name = "connection_status_change" },
+    { name = "sleep_state" },
+    { name = "led_indicator" },
+]
+
+# --- Dongle-gated internal subscribers (both binaries enable `dongle`) ---
+
+[[subscriber]]
+features = ["dongle"]
+events = [
+    # dongle/mod.rs: LedIndicatorEvent::subscriber() on the one keyboard link.
+    { name = "led_indicator" },
+    # dongle/event.rs: keyboard side, one subscriber per row of DongleEvent.
+    { name = "action" },
+    { name = "modifier" },
+    { name = "layer_change" },
+    { name = "wpm_update" },
+    { name = "sleep_state" },
+    { name = "battery_status" },
+]
+
+[[subscriber]]
+features = ["dongle", "display"]
+events = [
+    # display/mod.rs: DisplayProcessor subscribes on a dongle with a screen.
+    { name = "dongle_state" },
 ]
 
 # --- Split-gated internal subscribers ---
@@ -63,7 +123,8 @@ events = [
     # split/peripheral.rs: PointingEvent::subscriber()
     { name = "pointing" },
     # split/driver.rs: LedIndicatorEvent::subscriber()
-    { name = "led_indicator" },
+    # Covers up to 2 peripherals; for 3+ peripherals override subs in keyboard.toml
+    { name = "led_indicator", count = 2 },
     # split/driver.rs: LayerChangeEvent::subscriber()
     { name = "layer_change" },
     # split/driver.rs: PeripheralSettingsEvent::subscriber()
@@ -72,6 +133,9 @@ events = [
     # split/driver.rs: ConnectionStatusChangeEvent::subscriber()
     # Covers up to 2 peripherals; for 3+ peripherals override subs in keyboard.toml
     { name = "connection_status_change", count = 2 },
+    # split/driver.rs: SleepStateEvent::subscriber()
+    # Covers up to 2 peripherals; for 3+ peripherals override subs in keyboard.toml
+    { name = "sleep_state", count = 2 },
 ]
 
 # --- Split + BLE-gated internal subscribers ---
@@ -86,14 +150,21 @@ events = [
     { name = "keyboard" },
     # split/ble/peripheral.rs: PointingEvent::subscriber() (temporary, on timeout)
     { name = "pointing" },
-    # split/peripheral.rs: ChargingStateEvent::subscriber() (cfg _ble)
-    { name = "charging_state" },
     # split/peripheral.rs: BatteryStatusEvent::subscriber() (cfg _ble)
     { name = "battery_status" },
     # split/driver.rs: ClearPeerEvent::subscriber() (cfg _ble)
     # Covers up to 2 peripherals; for 3+ peripherals override subs in keyboard.toml
     { name = "clear_peer", count = 2 },
-    # split/ble/central.rs: one sleep-state follower per connected link
+    # split/ble/central.rs: SleepStateEvent::subscriber() per connected link
     # Covers up to 2 peripherals; for 3+ peripherals override subs in keyboard.toml
     { name = "sleep_state", count = 2 },
+]
+
+# --- DFU Lock-gated internal subscribers ---
+
+[[subscriber]]
+features = ["dfu_lock"]
+events = [
+    # dfu/mod.rs: DfuLock subscribes to DfuCmdEvent for UnlockRequest
+    { name = "dfu_cmd" },
 ]

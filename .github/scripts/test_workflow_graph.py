@@ -9,7 +9,8 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OWNERS = {
     'build.yml': ('firmware', ['validate-profile', 'build', 'build-qube', 'build-settings-reset']),
-    'ci.yml': ('tests', ['format', 'fetch-check', 'check', 'test', 'discover', 'build', 'bloat-report', 'build-esp']),
+    'ci.yml': ('tests', ['format', 'fetch-check', 'check', 'test', 'host', 'qemu-rynk', 'discover', 'build',
+                         'bloat-report', 'build-esp']),
 }
 
 
@@ -30,13 +31,13 @@ class WorkflowGraphTests(unittest.TestCase):
                 self.assertEqual(jobs['complete']['if'], '${{ always() }}')
 
     def test_original_job_payloads_are_preserved(self):
-        # Reviewed owner payload baselines. build.yml additionally enables
-        # universal_mac_iso only for approved models and isolates unchanged
-        # Qube descriptors; dedicated regressions lock both contracts.
-        # Intentional coverage edits must review/update, not drop, this test.
+        # Pre-policy owner payloads from 89a6f853; build.yml since gained the Phenom
+        # rows, selectable Vial-only rows and isolated Qube descriptors; ci.yml keeps
+        # the target QEMU/LLVM runner dependencies. Intentional future
+        # coverage edits must review/update these baselines, not drop this test.
         expected = {
-            'build.yml': 'bd0c798ac2529ea4f40944226e506858e5fc844768e34ac7e501de9bddfaefe5',
-            'ci.yml': 'e799514a3d8296c6f28a8da50dafe82a5535b44f9b70dc0c43f6b14592fad343',
+            'build.yml': '2c2399cc754e81e15be948175d744963aede98e73359f341f9d56ee3b51313ad',
+            'ci.yml': 'ad95fff3035d3f5a6bfbd3f1943ec081755e636ac7fb549cf13f1e4e1329592e',
         }
         for name, (_, owners) in OWNERS.items():
             jobs = load(name)['jobs']

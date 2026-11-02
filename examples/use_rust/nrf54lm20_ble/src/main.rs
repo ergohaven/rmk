@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-mod vial;
 #[macro_use]
 mod macros;
 mod keymap;
@@ -10,8 +9,10 @@ use defmt::{info, unwrap};
 use defmt_rtt as _;
 use embassy_executor::Spawner;
 use embassy_nrf::config::{ClockSpeed, Config as NrfConfig, HfclkSource, LfclkSource};
+use embassy_nrf::gpio::{Input, Level, Output, OutputDrive, Pull};
 use embassy_nrf::mode::Blocking;
-use embassy_nrf::peripherals::USBHS;
+use embassy_nrf::peripherals::{SERIAL22, USBHS};
+use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::usb::vbus_detect::HardwareVbusDetect;
 use embassy_nrf::usb::{self, Driver};
 use embassy_nrf::{bind_interrupts, cracen, pac};
@@ -20,17 +21,18 @@ use nrf_mpsl::Flash;
 use nrf_sdc::mpsl::MultiprotocolServiceLayer;
 use nrf_sdc::{self as sdc, mpsl};
 use panic_probe as _;
-use rmk::ble::{BleTransport, build_ble_stack};
-use rmk::config::{BehaviorConfig, DeviceConfig, PositionalConfig, RmkConfig, StorageConfig, VialConfig};
+use rmk::ble::BleTransport;
+use rmk::config::{BehaviorConfig, DeviceConfig, LockConfig, PositionalConfig, RmkConfig, StorageConfig};
 use rmk::debounce::default_debouncer::DefaultDebouncer;
 use rmk::host::HostService;
+use rmk::input_device::pmw3610::{Pmw3610, Pmw3610Config};
+use rmk::input_device::pointing::{PointingDevice, PointingProcessor, PointingProcessorConfig};
 use rmk::keyboard::Keyboard;
 use rmk::matrix::direct_pin::DirectPinMatrix;
 use rmk::processor::builtin::wpm::WpmProcessor;
 use rmk::usb::UsbTransport;
-use rmk::{DefaultPacketPool, HostResources, KeymapData, PacketPool, initialize_keymap_and_storage, run_all};
+use rmk::{DefaultPacketPool, KeymapData, PacketPool, initialize_keymap_and_storage, run_all};
 use static_cell::StaticCell;
-use vial::{VIAL_KEYBOARD_DEF, VIAL_KEYBOARD_ID};
 
 type RandomSource = cracen::Cracen<'static, Blocking>;
 
@@ -42,6 +44,7 @@ bind_interrupts!(struct Irqs {
     RADIO_0 => nrf_sdc::mpsl::HighPrioInterruptHandler;
     TIMER10 => nrf_sdc::mpsl::HighPrioInterruptHandler;
     GRTC_3 => nrf_sdc::mpsl::HighPrioInterruptHandler;
+    SERIAL22 => spim::InterruptHandler<SERIAL22>;
 });
 
 #[embassy_executor::task]
@@ -52,11 +55,10 @@ async fn mpsl_task(mpsl: &'static MultiprotocolServiceLayer<'static>) -> ! {
 const SDC_MEM_SIZE: usize = 5788;
 const FLASH_START_ADDR: usize = 0x120000;
 const FLASH_SECTORS: u8 = 6;
+const RYNK_UNLOCK_KEYS: &[(u8, u8)] = &[(0, 0), (0, 1)];
 
 const L2CAP_TXQ: u8 = 4;
 const L2CAP_RXQ: u8 = 4;
-
-const UNLOCK_KEYS: &[(u8, u8)] = &[(0, 0), (0, 1)];
 
 fn build_sdc<'d, const N: usize>(
     p: nrf_sdc::Peripherals<'d>,
@@ -67,9 +69,9 @@ fn build_sdc<'d, const N: usize>(
     sdc::Builder::new()?
         .support_adv()
         .support_peripheral()
-        // .support_dle_peripheral()
-        // .support_phy_update_peripheral()
-        // .support_le_2m_phy()
+        .support_dle_peripheral()
+        .support_phy_update_peripheral()
+        .support_le_2m_phy()
         .peripheral_count(1)?
         .buffer_cfg(
             DefaultPacketPool::MTU as u16,
@@ -97,6 +99,8 @@ async fn main(spawner: Spawner) {
     nrf_config.hfclk_source = HfclkSource::ExternalXtal;
     nrf_config.lfclk_source = LfclkSource::ExternalXtal;
     let p = embassy_nrf::init(nrf_config);
+    // Off at reset; enabling it makes compute-bound code such as LESC pairing ~3x faster.
+    pac::ICACHE.enable().write(|w| w.set_enable(true));
     info!("nRF initialized");
 
     let mpsl_p = mpsl::Peripherals::new(
@@ -157,8 +161,6 @@ async fn main(spawner: Spawner) {
     let mut sdc_mem = sdc::Mem::<SDC_MEM_SIZE>::new();
     let sdc = unwrap!(build_sdc(sdc_p, &mut rng, mpsl, &mut sdc_mem));
     info!("SDC built");
-    let mut host_resources = HostResources::new();
-    let stack = build_ble_stack(sdc, ble_addr(), &mut host_resources).await;
     info!("BLE stack ready");
 
     static EP_OUT_BUFFER: StaticCell<[u8; 2048]> = StaticCell::new();
@@ -186,7 +188,6 @@ async fn main(spawner: Spawner) {
         product_name: "RMK nRF54LM20A",
         ..DeviceConfig::default()
     };
-    let vial_config = VialConfig::new(VIAL_KEYBOARD_ID, VIAL_KEYBOARD_DEF, UNLOCK_KEYS);
     let storage_config = StorageConfig {
         start_addr: FLASH_START_ADDR,
         num_sectors: FLASH_SECTORS,
@@ -194,7 +195,11 @@ async fn main(spawner: Spawner) {
     };
     let rmk_config = RmkConfig {
         device_config: keyboard_device_config,
-        vial_config,
+        lock_config: LockConfig {
+            unlock_keys: RYNK_UNLOCK_KEYS,
+            insecure: false,
+            write_requires_unlock: false,
+        },
         storage_config,
         ..Default::default()
     };
@@ -218,12 +223,42 @@ async fn main(spawner: Spawner) {
     let debouncer = DefaultDebouncer::new();
     let mut matrix = DirectPinMatrix::<_, _, ROW, COL, SIZE>::new(direct_pins, debouncer, true);
     let mut keyboard = Keyboard::new(&keymap);
-    let host_ctx = rmk::host::KeyboardContext::new(&keymap);
-    let mut host_service = HostService::new(&host_ctx, &rmk_config);
+    let host_service = HostService::new(&keymap, &rmk_config);
 
-    let mut usb_transport = UsbTransport::new(driver, rmk_config.device_config);
-    let mut ble_transport = BleTransport::new(&stack, rmk_config).await;
+    let mut usb_transport =
+        UsbTransport::new(driver, rmk_config.device_config.clone()).with_host_service(&host_service);
+    let mut ble_transport = BleTransport::new(sdc, ble_addr(), rmk_config).with_host_service(&host_service);
     let mut wpm_processor = WpmProcessor::new();
+
+    // PMW3610 trackball: SCK P1.17, SDIO P1.16, CS P1.15, MOTION P1.18.
+    let mut trackball_spi_config = spim::Config::default();
+    trackball_spi_config.frequency = spim::Frequency::M2;
+    trackball_spi_config.mode = spim::MODE_3;
+    // The read phase clocks ORC out onto the shared line; idle it high.
+    trackball_spi_config.orc = 0xFF;
+    let trackball_sdio = p.P1_16;
+    let trackball_sdio_mosi = unsafe { trackball_sdio.clone_unchecked() };
+    let trackball_spi = Spim::new(
+        p.SERIAL22,
+        Irqs,
+        p.P1_17,
+        trackball_sdio,
+        trackball_sdio_mosi,
+        trackball_spi_config,
+    );
+
+    let trackball_cs = Output::new(p.P1_15, Level::High, OutputDrive::Standard);
+    let trackball_motion = Some(Input::new(p.P1_18, Pull::Up));
+    let trackball_config = Pmw3610Config {
+        res_cpi: 800,
+        smart_mode: true,
+        // Flipped in the sensor's RES_STEP register, so it costs nothing at runtime.
+        invert_x: true,
+        ..Default::default()
+    };
+    let mut trackball =
+        PointingDevice::<Pmw3610<_, _, _>>::new(0, trackball_spi, trackball_cs, trackball_motion, trackball_config);
+    let mut trackball_processor = PointingProcessor::new(&keymap, PointingProcessorConfig::default());
 
     run_all!(
         matrix,
@@ -232,7 +267,8 @@ async fn main(spawner: Spawner) {
         ble_transport,
         wpm_processor,
         keyboard,
-        host_service
+        trackball,
+        trackball_processor
     )
     .await;
 }

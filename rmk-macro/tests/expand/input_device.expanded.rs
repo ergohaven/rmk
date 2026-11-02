@@ -88,8 +88,8 @@ impl ::rmk::event::PublishableEvent for NrfAdcEvent {
 }
 impl ::rmk::event::AsyncPublishableEvent for NrfAdcEvent {
     type AsyncPublisher = NrfAdcEventPublisher;
-    fn publisher_async() -> Self::AsyncPublisher {
-        NrfAdcEventPublisher
+    fn publisher_async() -> Result<Self::AsyncPublisher, ::embassy_sync::pubsub::Error> {
+        Ok(NrfAdcEventPublisher)
     }
 }
 impl From<PointingEvent> for NrfAdcEvent {
@@ -157,6 +157,7 @@ mod basic {
             loop {
                 let event = self.read_event().await;
                 publish_event_async(event).await;
+                ::rmk::embassy_futures::yield_now().await;
             }
         }
     }
@@ -188,16 +189,7 @@ mod multi_event {
         }
     }
     pub struct NrfAdc<'a, const PIN_NUM: usize, const EVENT_NUM: usize> {
-        saadc: Saadc<'a, PIN_NUM>,
-        polling_interval: Duration,
-        light_sleep: Option<Duration>,
-        buf: [[i16; PIN_NUM]; 2],
-        event_type: [AnalogEventType; EVENT_NUM],
-        event_state: u8,
-        channel_state: u8,
-        buf_state: bool,
-        adc_state: AdcState,
-        active_instant: Instant,
+        samples: &'a [[i16; PIN_NUM]; EVENT_NUM],
     }
     impl<
         'a,
@@ -217,6 +209,7 @@ mod multi_event {
             loop {
                 let event = self.read_event().await;
                 publish_event_async(event).await;
+                ::rmk::embassy_futures::yield_now().await;
             }
         }
     }

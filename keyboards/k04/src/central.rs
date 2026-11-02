@@ -5,6 +5,7 @@ mod battery_level;
 mod battery_nrf;
 #[path = "../../common/ble_host_power.rs"]
 mod ble_host_power;
+mod board;
 #[path = "../../common/default_layer_names.rs"]
 mod default_layer_names;
 mod layer_led;
@@ -23,7 +24,7 @@ mod keyboard_central {
         TWISPI1 => ::embassy_nrf::twim::InterruptHandler<::embassy_nrf::peripherals::TWISPI1>;
     );
 
-    #[register_processor(deadline)]
+    #[register_processor]
     fn layer_led() -> crate::layer_led::LayerLed {
         let mut config = ::embassy_nrf::pwm::Config::default();
         config.prescaler = ::embassy_nrf::pwm::Prescaler::Div1;
@@ -33,30 +34,33 @@ mod keyboard_central {
         crate::layer_led::LayerLed::new(led, 0)
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn module_settings_sync() -> crate::module_settings::ModuleSettingsSync {
         crate::module_settings::ModuleSettingsSync::new()
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn module_settings_broadcast() -> crate::layer_names::ModuleSettingsBroadcast {
         crate::layer_names::ModuleSettingsBroadcast::new()
     }
 
-    #[register_processor(poll)]
+    #[register_processor]
     fn ergohaven_user_keys() -> ::rmk::processor::builtin::ergohaven::ErgohavenUserKeys {
         ::rmk::processor::builtin::ergohaven::ErgohavenUserKeys::new()
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn trackball() -> crate::trackball::Trackball {
         crate::trackball::Trackball::new_central(
-            crate::trackball::new_trackball_from_pins(0, p.P0_01, p.P0_00, p.P0_05, p.P1_09),
+            crate::trackball::new_trackball_from_pins(
+                0,
+                crate::board::TrackballPins::new(p.P0_01, p.P0_00, p.P0_05, p.P1_09),
+            ),
             0,
         )
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn touchpad() -> crate::touchpad::Touchpad {
         static TOUCH_TWIM_TX_BUF: ::static_cell::StaticCell<[u8; 4]> = ::static_cell::StaticCell::new();
         let mut config = ::embassy_nrf::twim::Config::default();
@@ -74,12 +78,12 @@ mod keyboard_central {
         crate::touchpad::Touchpad::new(2, i2c)
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn battery() -> crate::battery_nrf::K04Battery {
         crate::battery_nrf::K04Battery::new(p.SAADC, p.P0_31)
     }
 
-    #[register_processor(poll)]
+    #[register_processor]
     fn pointing_processor() -> ::rmk::input_device::pointing::QubePointingModeProcessor<'static> {
         ::rmk::input_device::pointing::QubePointingModeProcessor::new(&keymap)
     }

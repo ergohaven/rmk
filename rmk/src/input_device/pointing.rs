@@ -10,17 +10,17 @@ use rmk_types::action::Action;
 use rmk_types::keycode::HidKeyCode;
 #[cfg(feature = "split")]
 use rmk_types::keycode::KeyCode;
-use usbd_hid::descriptor::MouseReport;
 
 use crate::channel::{send_hid_mouse_report, send_hid_report};
 use crate::core_traits::Runnable;
 #[cfg(feature = "split")]
-use crate::event::{ActionEvent, KeyboardEvent, LayerChangeEvent, PeripheralSettingsEvent};
+use crate::event::{ActionEvent, LayerChangeEvent, PeripheralSettingsEvent};
 use crate::event::{
-    Axis, AxisEvent, AxisValType, EventSubscriber, PointingEvent, PointingProcessorEvent, PointingSetCpiEvent,
-    PointingTransformEvent, SubscribableEvent, publish_event,
+    Axis, AxisEvent, AxisValType, EventSubscriber, KeyboardEvent, PointingEvent, PointingProcessorEvent,
+    PointingSetCpiEvent, PointingTransformEvent, SleepStateEvent, SubscribableEvent, publish_event,
+    publish_event_async,
 };
-use crate::hid::{KeyboardReport, Report};
+use crate::hid::{KeyboardReport, MouseReport, Report};
 use crate::keymap::KeyMap;
 
 pub const ALL_POINTING_DEVICES: u8 = 255;
@@ -63,6 +63,12 @@ pub trait PointingDriver {
         debug!("set_resolution() is not implemented for this sensor.");
         Err(PointingDriverError::NotImplementedError)
     }
+    /// Set low-power mode.
+    /// A pointing driver which has low-power mode should re-implement this function.
+    /// This function is called when the keyboard goes idle(sleep).
+    async fn set_low_power(&mut self, _enabled: bool) -> Result<(), PointingDriverError> {
+        Ok(())
+    }
 }
 
 /// Initialization state for the device
@@ -77,7 +83,7 @@ pub enum InitState {
 /// PointingDevice an InputDevice for RMK
 ///
 /// This device publishes `PointingEvent` events with relative X/Y movement.
-#[processor(subscribe = [PointingSetCpiEvent])]
+#[processor(subscribe = [PointingSetCpiEvent, SleepStateEvent])]
 #[input_device(publish = PointingEvent)]
 #[::rmk::macros::runnable_generated]
 pub struct PointingDevice<S: PointingDriver> {
@@ -99,13 +105,15 @@ pub struct PointingDevice<S: PointingDriver> {
 // let lagging subscribers skip obsolete samples.
 impl<S: PointingDriver> Runnable for PointingDevice<S> {
     async fn run(&mut self) -> ! {
-        use embassy_futures::select::{Either, select};
+        use embassy_futures::select::{Either3, select3};
 
         let mut cpi_sub = PointingSetCpiEvent::subscriber();
+        let mut sleep_sub = SleepStateEvent::subscriber();
         loop {
-            match select(self.read_pointing_event(), cpi_sub.next_event()).await {
-                Either::First(event) => publish_event(event),
-                Either::Second(event) => self.on_pointing_set_cpi_event(event).await,
+            match select3(self.read_pointing_event(), cpi_sub.next_event(), sleep_sub.next_event()).await {
+                Either3::First(event) => publish_event(event),
+                Either3::Second(event) => self.on_pointing_set_cpi_event(event).await,
+                Either3::Third(event) => self.on_sleep_state_event(event).await,
             }
         }
     }
@@ -155,10 +163,6 @@ impl<S: PointingDriver> PointingDevice<S> {
     }
 
     async fn poll_once(&mut self) {
-        if self.init_state != InitState::Ready && !self.try_init().await {
-            return;
-        }
-
         if !self.sensor.motion_pending() {
             return;
         }
@@ -179,11 +183,11 @@ impl<S: PointingDriver> PointingDevice<S> {
             return None;
         }
 
-        // A HID mouse report can carry only i8 motion. Emit one transport-safe
-        // chunk and preserve the residual for subsequent 125 Hz reports; zeroing
-        // the full accumulator here silently discarded fast PMW3610 movement.
-        let dx = self.accumulated_x.clamp(i8::MIN as i32, i8::MAX as i32) as i16;
-        let dy = self.accumulated_y.clamp(i8::MIN as i32, i8::MAX as i32) as i16;
+        // Emit one event-sized chunk and preserve the residual for subsequent
+        // reports; zeroing the full accumulator here silently discarded fast
+        // PMW3610 movement.
+        let dx = self.accumulated_x.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+        let dy = self.accumulated_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
 
         self.accumulated_x -= i32::from(dx);
         self.accumulated_y -= i32::from(dy);
@@ -221,6 +225,17 @@ impl<S: PointingDriver> PointingDevice<S> {
         }
     }
 
+    async fn on_sleep_state_event(&mut self, e: SleepStateEvent) {
+        // Before init the sensor has no registers to update; init applies the
+        // awake state itself.
+        if self.init_state != InitState::Ready {
+            return;
+        }
+        if let Err(err) = self.sensor.set_low_power(e.0).await {
+            debug!("PointingDevice {}: low power switch failed: {:?}", self.id, err);
+        }
+    }
+
     // Read accumulated pointing event
     //
     // +--------------- loop ---------------+
@@ -234,6 +249,12 @@ impl<S: PointingDriver> PointingDevice<S> {
     // +------------------------------------+
     async fn read_pointing_event(&mut self) -> PointingEvent {
         use embassy_futures::select::{Either, select};
+
+        while self.init_state != InitState::Ready {
+            if !self.try_init().await && self.init_state == InitState::Failed {
+                pending::<()>().await;
+            }
+        }
 
         if self.last_poll == Instant::MIN {
             self.last_poll = Instant::now();
@@ -383,6 +404,12 @@ pub struct CursorConfig {
     pub multiplier_x: u8,
     /// Multiplier for Y axis. Higher = more output per unit of motion. 0 disables Y.
     pub multiplier_y: u8,
+    /// Divisor for X axis, so the cursor can be slower than the sensor, e.g. 2/3 with
+    /// `multiplier_x: 2, divisor_x: 3`. Fractions carry over to the next motion. 0
+    /// disables X.
+    pub divisor_x: u8,
+    /// Divisor for Y axis. 0 disables Y.
+    pub divisor_y: u8,
     /// Invert X axis movement.
     pub invert_x: bool,
     /// Invert Y axis movement.
@@ -394,6 +421,8 @@ impl Default for CursorConfig {
         Self {
             multiplier_x: 1,
             multiplier_y: 1,
+            divisor_x: 1,
+            divisor_y: 1,
             invert_x: false,
             invert_y: false,
         }
@@ -440,36 +469,42 @@ impl Default for CaretConfig {
         }
     }
 }
-/// Configuration for scroll mode
+/// How one scroll output, the wheel or pan, is made from its input axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct ScrollConfig {
-    /// Multiplier for X axis (→ pan). Higher = more output per unit of motion. 0 disables horizontal pan.
-    pub multiplier_x: u8,
-    /// Divisor for X axis (→ pan). Higher = slower. 0 disables horizontal pan.
-    pub divisor_x: u8,
-    /// Multiplier for Y axis (→ wheel). Higher = more output per unit of motion. 0 disables vertical scroll.
-    pub multiplier_y: u8,
-    /// Divisor for Y axis (→ wheel). Higher = slower. 0 disables vertical scroll.
-    pub divisor_y: u8,
-    /// Invert X axis. In scroll mode X maps to pan, so this reverses pan direction.
-    pub invert_x: bool,
-    /// Invert Y axis. In scroll mode Y maps to wheel, so this reverses scroll direction.
-    pub invert_y: bool,
+pub struct ScrollAxis {
+    /// Higher = more output per unit of motion. 0 disables this output.
+    pub multiplier: u8,
+    /// Higher = slower. 0 disables this output.
+    pub divisor: u8,
+    /// Reverse the direction.
+    pub invert: bool,
 }
 
-impl Default for ScrollConfig {
+impl Default for ScrollAxis {
     fn default() -> Self {
         Self {
-            multiplier_x: 1,
-            multiplier_y: 1,
-            divisor_x: 8,
-            divisor_y: 8,
-            invert_x: false,
-            invert_y: false,
+            multiplier: 1,
+            divisor: 8,
+            invert: false,
         }
     }
 }
+
+/// How motion becomes scrolling: the vertical wheel and the horizontal pan.
+///
+/// Used twice: in [`PointingMode::Scroll`], where X/Y cursor motion scrolls, and as
+/// [`PointingProcessorConfig::device_scroll`], for the scrolling a device reports
+/// itself on its H/V axes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ScrollConfig {
+    /// Made from Y, or V. Motion +Y scrolls up unless inverted.
+    pub wheel: ScrollAxis,
+    /// Made from X, or H.
+    pub pan: ScrollAxis,
+}
+
 /// Configuration for sniper (precision) mode
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -495,7 +530,20 @@ impl Default for SniperConfig {
     }
 }
 
-/// Accumulator for sub-unit motion deltas (used in Scroll and Sniper modes)
+/// `d * multiplier / divisor`, saturating, with `remainder` carrying the fraction
+/// to the next call. A divisor of 0 disables the axis.
+fn scale_motion(d: i16, multiplier: u8, divisor: u8, remainder: &mut i16) -> i16 {
+    if divisor == 0 {
+        *remainder = 0;
+        return 0;
+    }
+    let total = i32::from(d) * i32::from(multiplier) + i32::from(*remainder);
+    let out = total / i32::from(divisor);
+    *remainder = (total - out * i32::from(divisor)) as i16;
+    out.clamp(i16::MIN.into(), i16::MAX.into()) as i16
+}
+
+/// Accumulator for sub-unit motion deltas (used in Cursor, Scroll and Sniper modes)
 ///
 /// When dividing motion by a divisor, small movements would be lost.
 /// The accumulator keeps track of the remainder so sub-unit deltas
@@ -576,6 +624,64 @@ impl MotionAccumulator {
     }
 }
 
+/// Pointer acceleration for cursor or scroll mode. Motion faster than `from_counts_per_s` is
+/// scaled up in proportion to its speed, to at most `max_percent`; slower motion
+/// passes unchanged, so fine positioning keeps its precision while fast moves cover
+/// more ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct PointerAcceleration {
+    /// Speed where acceleration starts, in sensor counts per second.
+    pub from_counts_per_s: u16,
+    /// The most motion is scaled up, in percent (250 = 2.5×).
+    pub max_percent: u16,
+}
+
+/// Turns two axes of motion into a `(wheel, pan)` delta. Used for X/Y in scroll mode
+/// and for the H/V scrolling a device reports itself.
+///
+/// The motion is accelerated with `acceleration` over the given milliseconds, carrying
+/// fractions in `rest`, then scaled by `config` with the remainder in `accumulator`.
+/// Motion +Y scrolls up (negative wheel) unless the wheel is inverted.
+fn calculate_scroll_delta(
+    motion: (i16, i16),
+    config: &ScrollConfig,
+    acceleration: Option<(PointerAcceleration, u64)>,
+    accumulator: &mut MotionAccumulator,
+    rest: &mut (i64, i64),
+) -> (i16, i16) {
+    let (mut x, mut y) = motion;
+    if let Some((accel, dt_ms)) = acceleration {
+        (x, y) = accelerate(x, y, dt_ms, accel, rest);
+    }
+    let (pan, wheel) = (&config.pan, &config.wheel);
+    let (sx, sy) = accumulator.accumulate(x, y, (pan.multiplier, pan.divisor), (wheel.multiplier, wheel.divisor));
+    (
+        if wheel.invert { sy } else { sy.saturating_neg() },
+        if pan.invert { sx.saturating_neg() } else { sx },
+    )
+}
+
+/// `(dx, dy)`, moved over `dt_ms`, under `accel`. `rest` carries the fractions of a
+/// count between calls.
+fn accelerate(dx: i16, dy: i16, dt_ms: u64, accel: PointerAcceleration, rest: &mut (i64, i64)) -> (i16, i16) {
+    let (dx, dy) = (i64::from(dx), i64::from(dy));
+    let speed = (dx * dx + dy * dy).unsigned_abs().isqrt() * 1000 / dt_ms.max(1);
+    let from = u64::from(accel.from_counts_per_s);
+    let gain = if from == 0 || speed <= from {
+        100
+    } else {
+        (speed * 100 / from).min(u64::from(accel.max_percent.max(100))) as i64
+    };
+    let scale = |d: i64, rest: &mut i64| {
+        let total = d * gain + *rest;
+        let out = total / 100;
+        *rest = total - out * 100;
+        out.clamp(i16::MIN.into(), i16::MAX.into()) as i16
+    };
+    (scale(dx, &mut rest.0), scale(dy, &mut rest.1))
+}
+
 #[derive(Clone)]
 pub struct PointingProcessorConfig {
     /// The id of the PointingDevice this processor handles.
@@ -587,6 +693,14 @@ pub struct PointingProcessorConfig {
     pub invert_y: bool,
     /// Swap X and Y axes (applied to all modes before mode-specific processing)
     pub swap_xy: bool,
+    /// Acceleration in cursor mode, applied before the cursor multiplier. Off when `None`.
+    pub acceleration: Option<PointerAcceleration>,
+    /// Acceleration in scroll mode and of the device's own scrolling, applied before
+    /// the scroll multipliers and divisors. Off when `None`.
+    pub scroll_acceleration: Option<PointerAcceleration>,
+    /// Scrolling reported by the device itself on the H/V axes (e.g. a two-finger
+    /// trackpad gesture). It becomes wheel/pan in every mode, after the transforms above.
+    pub device_scroll: ScrollConfig,
 }
 
 impl Default for PointingProcessorConfig {
@@ -596,6 +710,9 @@ impl Default for PointingProcessorConfig {
             invert_x: false,
             invert_y: false,
             swap_xy: false,
+            acceleration: None,
+            scroll_acceleration: None,
+            device_scroll: ScrollConfig::default(),
         }
     }
 }
@@ -643,10 +760,10 @@ impl SimplePointingProcessor {
 
         send_hid_report(Report::MouseReport(MouseReport {
             buttons: 0,
-            x: x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-            y: y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-            wheel: wheel.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-            pan: pan.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+            x,
+            y,
+            wheel,
+            pan,
         }))
         .await;
     }
@@ -1390,6 +1507,9 @@ fn qube_action_deactivates_auto_layer(action: Action) -> bool {
         Action::Key(_) => true,
         Action::KeyWithModifier(hid, _) | Action::OneShotKey(hid) => !hid.is_mouse_key(),
         Action::Modifier(modifiers) => modifiers.into_bits() != 0,
+        // An unbound key is a real press that does nothing, so it tears the
+        // layer down like any other non-mouse key.
+        Action::No => true,
         // Unclassifiable (layer switches, macros, pointer-mode user keys, ...):
         // leave the layer intact; the timeout path handles it.
         _ => false,
@@ -1528,8 +1648,18 @@ pub struct PointingProcessor<'a> {
     config: PointingProcessorConfig,
     /// Motion accumulator for scroll/sniper modes
     accumulator: MotionAccumulator,
+    /// Accumulator and acceleration fractions for the device's own H/V scrolling, apart
+    /// from scroll mode's
+    device_scroll_accumulator: MotionAccumulator,
+    device_scroll_acceleration_rest: (i64, i64),
     /// current active mode
     current_mode: PointingMode,
+    /// Fractions of a count that acceleration carries to the next event, for the
+    /// cursor and for scrolling
+    acceleration_rest: (i64, i64),
+    scroll_acceleration_rest: (i64, i64),
+    /// When the previous event arrived, to measure the speed for acceleration
+    last_event_at: Instant,
     runtime_rotation: u8,
     runtime_acceleration: bool,
 }
@@ -1541,7 +1671,12 @@ impl<'a> PointingProcessor<'a> {
             keymap,
             config,
             accumulator: MotionAccumulator::default(),
+            device_scroll_accumulator: MotionAccumulator::default(),
+            device_scroll_acceleration_rest: (0, 0),
             current_mode: PointingMode::default(),
+            acceleration_rest: (0, 0),
+            scroll_acceleration_rest: (0, 0),
+            last_event_at: Instant::MIN,
             runtime_rotation: 0,
             runtime_acceleration: false,
         }
@@ -1551,8 +1686,10 @@ impl<'a> PointingProcessor<'a> {
     pub fn set_pointing_mode(&mut self, mode: PointingMode) -> &mut Self {
         if self.current_mode != mode {
             self.accumulator.reset();
-            self.current_mode = mode;
+            self.acceleration_rest = (0, 0);
+            self.scroll_acceleration_rest = (0, 0);
         }
+        self.current_mode = mode;
         self
     }
 
@@ -1563,13 +1700,23 @@ impl<'a> PointingProcessor<'a> {
             return;
         }
 
+        // Report activity for sleep management, as the keyboard does for key
+        // events: on a pointing device, moving the ball is the activity. Sensor
+        // settling noise is ignored so an idle ball cannot keep the keyboard awake.
+        #[cfg(feature = "_ble")]
+        crate::ble::sleep::report_pointing_activity(&event);
+
         let mut x = 0i16;
         let mut y = 0i16;
+        let mut h = 0i16;
+        let mut v = 0i16;
 
         for axis_event in event.axes.iter() {
             match axis_event.axis {
                 Axis::X => x = axis_event.value,
                 Axis::Y => y = axis_event.value,
+                Axis::H => h = axis_event.value,
+                Axis::V => v = axis_event.value,
                 _ => {}
             }
         }
@@ -1577,15 +1724,47 @@ impl<'a> PointingProcessor<'a> {
         // Apply global config transforms (before mode-specific processing).
         // Order: invert → swap → mode invert.
         // Mode-specific invert_x/y operate on the post-swap logical axes,
-        // so if swap_xy is enabled, ScrollConfig::invert_y affects the physical X axis.
+        // so if swap_xy is enabled, scroll mode's wheel invert affects the physical X axis.
+        // H and V follow the sensor's X and Y, so they get the same transforms.
         if self.config.invert_x {
-            x = -x;
+            x = x.saturating_neg();
+            h = h.saturating_neg();
         }
         if self.config.invert_y {
-            y = -y;
+            y = y.saturating_neg();
+            v = v.saturating_neg();
         }
         if self.config.swap_xy {
             (x, y) = (y, x);
+            (h, v) = (v, h);
+        }
+
+        let now = Instant::now();
+        let dt_ms = now.saturating_duration_since(self.last_event_at).as_millis();
+        self.last_event_at = now;
+
+        // The device's own scrolling, in every mode.
+        if (h, v) != (0, 0) {
+            let (wheel, pan) = calculate_scroll_delta(
+                (h, v),
+                &self.config.device_scroll,
+                self.config.scroll_acceleration.map(|accel| (accel, dt_ms)),
+                &mut self.device_scroll_accumulator,
+                &mut self.device_scroll_acceleration_rest,
+            );
+            if (wheel, pan) != (0, 0) {
+                send_hid_report(Report::MouseReport(MouseReport {
+                    buttons: self.keymap.mouse_buttons(),
+                    x: 0,
+                    y: 0,
+                    wheel,
+                    pan,
+                }))
+                .await;
+            }
+            if x == 0 && y == 0 {
+                return;
+            }
         }
         (x, y) = apply_runtime_transform(x, y, self.runtime_rotation, self.runtime_acceleration);
 
@@ -1596,39 +1775,54 @@ impl<'a> PointingProcessor<'a> {
                 // modes that generate mouse reports
                 let mouse_report = match self.current_mode {
                     PointingMode::Cursor(cursor_config) => {
-                        let out_x = x.saturating_mul(cursor_config.multiplier_x as i16);
-                        let out_y = y.saturating_mul(cursor_config.multiplier_y as i16);
+                        if let Some(acceleration) = self.config.acceleration {
+                            (x, y) = accelerate(x, y, dt_ms, acceleration, &mut self.acceleration_rest);
+                        }
+                        let accumulator = &mut self.accumulator;
+                        let out_x = scale_motion(
+                            x,
+                            cursor_config.multiplier_x,
+                            cursor_config.divisor_x,
+                            &mut accumulator.remainder_x,
+                        );
+                        let out_y = scale_motion(
+                            y,
+                            cursor_config.multiplier_y,
+                            cursor_config.divisor_y,
+                            &mut accumulator.remainder_y,
+                        );
+                        // Motion too small to move the cursor yet, as in sniper mode.
+                        if out_x == 0 && out_y == 0 && (x, y) != (0, 0) {
+                            return;
+                        }
                         let out_x = if cursor_config.invert_x { -out_x } else { out_x };
                         let out_y = if cursor_config.invert_y { -out_y } else { out_y };
                         MouseReport {
                             buttons,
-                            x: out_x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-                            y: out_y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+                            x: out_x,
+                            y: out_y,
                             wheel: 0,
                             pan: 0,
                         }
                     }
                     PointingMode::Scroll(scroll_config) => {
-                        let (sx, sy) = self.accumulator.accumulate(
-                            x,
-                            y,
-                            (scroll_config.multiplier_x, scroll_config.divisor_x),
-                            (scroll_config.multiplier_y, scroll_config.divisor_y),
+                        // Sensor X → pan, sensor Y → wheel.
+                        let (wheel, pan) = calculate_scroll_delta(
+                            (x, y),
+                            &scroll_config,
+                            self.config.scroll_acceleration.map(|accel| (accel, dt_ms)),
+                            &mut self.accumulator,
+                            &mut self.scroll_acceleration_rest,
                         );
-                        if sx == 0 && sy == 0 {
+                        if (wheel, pan) == (0, 0) {
                             return;
                         }
-                        // Sensor X → pan, sensor Y → wheel.
-                        // Default: sensor +Y produces negative wheel (scroll up in HID convention).
-                        // invert_y reverses wheel direction; invert_x reverses pan direction.
-                        let wheel = if scroll_config.invert_y { sy } else { -sy };
-                        let pan = if scroll_config.invert_x { -sx } else { sx };
                         MouseReport {
                             buttons,
                             x: 0,
                             y: 0,
-                            wheel: wheel.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-                            pan: pan.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+                            wheel,
+                            pan,
                         }
                     }
                     PointingMode::Sniper(sniper_config) => {
@@ -1645,8 +1839,8 @@ impl<'a> PointingProcessor<'a> {
                         let out_y = if sniper_config.invert_y { -sy } else { sy };
                         MouseReport {
                             buttons,
-                            x: out_x.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
-                            y: out_y.clamp(i8::MIN as i16, i8::MAX as i16) as i8,
+                            x: out_x,
+                            y: out_y,
                             wheel: 0,
                             pan: 0,
                         }
@@ -1659,7 +1853,10 @@ impl<'a> PointingProcessor<'a> {
             PointingMode::Caret(caret_config) => {
                 if let Some((keycode, count)) = compute_caret_taps(x, y, &mut self.accumulator, &caret_config) {
                     for _ in 0..count {
-                        tap_key(keycode).await;
+                        publish_event_async(KeyboardEvent::keycode(keycode, true)).await;
+                        Timer::after_millis(5).await;
+                        publish_event_async(KeyboardEvent::keycode(keycode, false)).await;
+                        Timer::after_millis(5).await;
                     }
                 }
             }
@@ -1689,10 +1886,7 @@ impl<'a> PointingProcessor<'a> {
     }
 }
 
-/// Tap a key (press and release with a short delay) - used for caret mode
-/// NOTE: This is a basic implementation because at the current state Keyboard (in keyboard.rs) does not support
-/// sending in KeyActions from the processor layer. If that changes in the future, this can be updated to use KeyActions and support more complex behavior (e.g. modifiers, macros).
-/// For the time being, this sends only simple key taps without modifiers.
+/// Tap a key (press and release with a short delay) - used for Qube text mode
 async fn tap_key(keycode: HidKeyCode) {
     // Press
     send_hid_report(Report::KeyboardReport(KeyboardReport {
@@ -2727,9 +2921,9 @@ mod tests {
                 let mut processor = QubePointingModeProcessor::new(&keymap);
                 crate::state::set_usb_state(UsbState::Configured);
                 USB_REPORT_CHANNEL.clear();
-                let sender = KeyboardEvent::publisher_async();
-                let settings_sender = PeripheralSettingsEvent::publisher_async();
-                let motion_sender = PointingEvent::publisher_async();
+                let sender = KeyboardEvent::publisher_async().unwrap();
+                let settings_sender = PeripheralSettingsEvent::publisher_async().unwrap();
+                let motion_sender = PointingEvent::publisher_async().unwrap();
                 let mut actions = ActionEvent::subscriber();
                 let mut main = packet(0xc0, auto_flags, 0);
                 main.0[1] = 4 << 4; // configured Normal, actual pointing layer 4
@@ -2909,7 +3103,7 @@ mod tests {
                 let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
                 let mut keyboard = Keyboard::new(&keymap);
                 let mut processor = QubePointingModeProcessor::new(&keymap);
-                let sender = KeyboardEvent::publisher_async();
+                let sender = KeyboardEvent::publisher_async().unwrap();
                 sender.clear();
                 let mut actions = ActionEvent::subscriber();
                 let scenario = async {
@@ -2969,15 +3163,6 @@ mod tests {
                 assert!(matches!(select(keyboard.run(), scenario).await, Either::Second(())));
             });
         }
-    }
-
-    // Init logger for tests
-    #[ctor::ctor(unsafe)]
-    fn init_log() {
-        let _ = env_logger::builder()
-            .filter_level(log::LevelFilter::Debug)
-            .is_test(true)
-            .try_init();
     }
 
     #[test]
@@ -3188,11 +3373,14 @@ mod tests {
             ModifierCombination::new().with_left_ctrl(true)
         )));
 
+        // An unbound key is a real press that does nothing, so it tears the
+        // layer down like any other non-mouse key.
+        assert!(qube_action_deactivates_auto_layer(Action::No));
+
         // Unclassifiable actions leave the layer to the timeout path. The Qube
         // pointer-mode keys are `Action::User`, so sniper/scroll/text keep it.
         assert!(!qube_action_deactivates_auto_layer(Action::User(QUBE_USER_SNIPER)));
         assert!(!qube_action_deactivates_auto_layer(Action::LayerOn(3)));
-        assert!(!qube_action_deactivates_auto_layer(Action::No));
     }
 
     /// The Vial auto-layer target used by the ownership tests below.
@@ -3792,7 +3980,7 @@ mod tests {
     }
 
     #[test]
-    fn report_preserves_motion_that_does_not_fit_one_hid_frame() {
+    fn report_preserves_motion_that_does_not_fit_one_event() {
         let driver = DummyDriver {
             motion_pending: false,
             motion: MotionData { dx: 0, dy: 0 },
@@ -3808,22 +3996,22 @@ mod tests {
             report_interval: Duration::from_millis(8),
             last_poll: Instant::MIN,
             last_report: Instant::MIN,
-            accumulated_x: 300,
-            accumulated_y: -300,
+            accumulated_x: 40_000,
+            accumulated_y: -40_000,
             id: 1,
         };
 
         let first = device.take_report_event().unwrap();
-        assert_eq!(first.axes[0].value, 127);
-        assert_eq!(first.axes[1].value, -128);
-        assert_eq!(device.accumulated_x, 173);
-        assert_eq!(device.accumulated_y, -172);
+        assert_eq!(first.axes[0].value, i16::MAX);
+        assert_eq!(first.axes[1].value, i16::MIN);
+        assert_eq!(device.accumulated_x, 7_233);
+        assert_eq!(device.accumulated_y, -7_232);
 
         let second = device.take_report_event().unwrap();
-        assert_eq!(second.axes[0].value, 127);
-        assert_eq!(second.axes[1].value, -128);
-        assert_eq!(device.accumulated_x, 46);
-        assert_eq!(device.accumulated_y, -44);
+        assert_eq!(second.axes[0].value, 7_233);
+        assert_eq!(second.axes[1].value, -7_232);
+        assert_eq!(device.accumulated_x, 0);
+        assert_eq!(device.accumulated_y, 0);
     }
 
     // === MotionAccumulator tests ===
@@ -4214,14 +4402,6 @@ mod tests {
     }
 
     #[test]
-    fn test_pointing_mode_array_default() {
-        let modes: [PointingMode; 4] = [PointingMode::default(); 4];
-        for mode in &modes {
-            assert_eq!(*mode, PointingMode::Cursor(CursorConfig::default()));
-        }
-    }
-
-    #[test]
     fn test_motion_accumulator_change_resets_accumulator() {
         let mut acc = MotionAccumulator::default();
         acc.accumulate(3, 5, (1, 8), (1, 8));
@@ -4234,73 +4414,284 @@ mod tests {
         assert_eq!(acc.remainder_y, 0);
     }
 
+    // === Cursor speed ===
+
     #[test]
-    fn test_pointing_cursor_multiplier_scales_motion() {
-        let config = CursorConfig {
-            multiplier_x: 2,
-            multiplier_y: 3,
-            invert_x: false,
-            invert_y: false,
-        };
-        assert_eq!(10 * config.multiplier_x as i16, 20);
-        assert_eq!(10 * config.multiplier_y as i16, 30);
+    fn test_cursor_speed_scales_with_fractions_carried_over() {
+        let mut rest = 0;
+        // 8/27 of 10 is 2.96: 2, then 2.96 + 0.96 = 3.92: 3.
+        assert_eq!(scale_motion(10, 8, 27, &mut rest), 2);
+        assert_eq!(scale_motion(10, 8, 27, &mut rest), 3);
+        // Negative motion carries its own fraction the other way.
+        let mut rest = 0;
+        assert_eq!(scale_motion(-10, 8, 27, &mut rest), -2);
+        // 1/1 passes motion through unchanged, and a divisor of 0 stops the axis.
+        assert_eq!(scale_motion(7, 1, 1, &mut 0), 7);
+        assert_eq!(scale_motion(7, 1, 0, &mut 0), 0);
+        // Large accelerated motion saturates instead of overflowing.
+        assert_eq!(scale_motion(i16::MAX, 8, 1, &mut 0), i16::MAX);
+    }
+
+    // === Acceleration tests ===
+
+    /// From 1000 counts per second, up to 2.5×.
+    const ACCEL: PointerAcceleration = PointerAcceleration {
+        from_counts_per_s: 1000,
+        max_percent: 250,
+    };
+
+    #[test]
+    fn test_acceleration_leaves_slow_motion_unchanged() {
+        let mut rest = (0, 0);
+        // 5 counts in 10 ms is 500 counts/s, below 1000.
+        assert_eq!(accelerate(5, -3, 10, ACCEL, &mut rest), (5, -3));
+        assert_eq!(rest, (0, 0));
     }
 
     #[test]
-    fn test_pointing_cursor_invert_axes() {
-        let config = CursorConfig {
-            multiplier_x: 1,
-            multiplier_y: 1,
-            invert_x: true,
-            invert_y: true,
+    fn test_acceleration_gains_in_proportion_to_speed_up_to_max() {
+        let mut rest = (0, 0);
+        // 2000 counts/s: twice the threshold, twice the motion.
+        assert_eq!(accelerate(20, 0, 10, ACCEL, &mut rest), (40, 0));
+        // 10000 counts/s would be 10×, capped at 2.5×.
+        assert_eq!(accelerate(100, 0, 10, ACCEL, &mut rest), (250, 0));
+    }
+
+    #[test]
+    fn test_acceleration_carries_fractions_over() {
+        let mut rest = (0, 0);
+        // 1500 counts/s: 1.5 × 15 = 22.5, then 22.5 + 0.5 left over = 23.
+        assert_eq!(accelerate(15, 0, 10, ACCEL, &mut rest), (22, 0));
+        assert_eq!(accelerate(15, 0, 10, ACCEL, &mut rest), (23, 0));
+    }
+
+    #[test]
+    fn test_acceleration_after_idle_is_slow() {
+        let mut rest = (0, 0);
+        // The first event after a pause spans the whole pause, so it is not accelerated.
+        assert_eq!(accelerate(30, 0, 5000, ACCEL, &mut rest), (30, 0));
+    }
+
+    #[test]
+    fn test_acceleration_saturates_instead_of_overflowing() {
+        let mut rest = (0, 0);
+        assert_eq!(
+            accelerate(i16::MAX, i16::MIN, 1, ACCEL, &mut rest),
+            (i16::MAX, i16::MIN)
+        );
+    }
+
+    // === Device scrolling ===
+
+    #[cfg(not(feature = "_no_usb"))]
+    #[test]
+    fn test_device_scroll_becomes_wheel_and_pan() {
+        use rmk_types::action::KeyAction;
+        use rmk_types::connection::UsbState;
+
+        use crate::channel::USB_REPORT_CHANNEL;
+        use crate::config::{BehaviorConfig, PositionalConfig};
+        use crate::keymap::KeymapData;
+
+        let rel = |axis, value| AxisEvent {
+            typ: AxisValType::Rel,
+            axis,
+            value,
         };
-        assert_eq!(-(10 * config.multiplier_x as i16), -10);
-        assert_eq!(-(10 * config.multiplier_y as i16), -10);
+        let mouse = |report| match report {
+            Report::MouseReport(m) => (m.x, m.y, m.wheel, m.pan),
+            _ => panic!("expected a mouse report"),
+        };
+
+        block_on(async {
+            crate::state::set_usb_state(UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+            let mut behavior = BehaviorConfig::default();
+            let positional: PositionalConfig<1, 1> = PositionalConfig::default();
+            let mut data: KeymapData<1, 1, 1, 0> = KeymapData::new([[[KeyAction::No]]]);
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut processor = PointingProcessor::new(
+                &keymap,
+                PointingProcessorConfig {
+                    device_scroll: ScrollConfig {
+                        wheel: ScrollAxis {
+                            divisor: 4,
+                            ..ScrollAxis::default()
+                        },
+                        pan: ScrollAxis {
+                            divisor: 4,
+                            ..ScrollAxis::default()
+                        },
+                    },
+                    ..PointingProcessorConfig::default()
+                },
+            );
+            let scroll = |h, v| PointingEvent {
+                device_id: 0,
+                axes: [rel(Axis::H, h), rel(Axis::V, v), rel(Axis::Z, 0)],
+            };
+
+            // 6 / 4 scrolls one step and keeps 2 for the next event: 2 + 6 = 8, two steps.
+            processor.on_pointing_event(scroll(0, 6)).await;
+            assert_eq!(
+                mouse(USB_REPORT_CHANNEL.try_receive().unwrap().into_report()),
+                (0, 0, -1, 0)
+            );
+            processor.on_pointing_event(scroll(6, 6)).await;
+            assert_eq!(
+                mouse(USB_REPORT_CHANNEL.try_receive().unwrap().into_report()),
+                (0, 0, -2, 1)
+            );
+            // Less than a step sends nothing.
+            processor.on_pointing_event(scroll(0, 1)).await;
+            assert!(USB_REPORT_CHANNEL.try_receive().is_err());
+
+            // Inverting i16::MIN saturates instead of overflowing.
+            let mut inverted = PointingProcessor::new(
+                &keymap,
+                PointingProcessorConfig {
+                    invert_x: true,
+                    device_scroll: ScrollConfig {
+                        pan: ScrollAxis {
+                            divisor: 1,
+                            ..ScrollAxis::default()
+                        },
+                        ..ScrollConfig::default()
+                    },
+                    ..PointingProcessorConfig::default()
+                },
+            );
+            inverted.on_pointing_event(scroll(i16::MIN, 0)).await;
+            assert_eq!(
+                mouse(USB_REPORT_CHANNEL.try_receive().unwrap().into_report()),
+                (0, 0, 0, i16::MAX)
+            );
+        });
     }
 
     // === Integration tests for PointingProcessor ===
 
-    #[test]
-    fn test_pointing_processor_mode_selection() {
-        // Test that the processor correctly selects the mode based on current layer
-        let modes = [
-            PointingMode::Disabled,
-            PointingMode::Cursor(CursorConfig::default()),
-            PointingMode::Scroll(ScrollConfig::default()),
-            PointingMode::Sniper(SniperConfig {
-                multiplier: 1,
-                divisor: 4,
-                invert_x: false,
-                invert_y: false,
-            }),
-            PointingMode::Caret(CaretConfig::default()),
-            PointingMode::Cursor(CursorConfig::default()),
-        ];
+    #[cfg(not(feature = "_no_usb"))]
+    async fn expect_keyboard_report(modifier: u8, keys: &[HidKeyCode]) {
+        let Report::KeyboardReport(report) = crate::channel::USB_REPORT_CHANNEL.receive().await.into_report() else {
+            panic!("expected a keyboard report");
+        };
+        assert_eq!(report.modifier, modifier);
+        assert_eq!(
+            report
+                .keycodes
+                .into_iter()
+                .filter(|code| *code != 0)
+                .collect::<Vec<_>>(),
+            keys.iter().map(|key| *key as u8).collect::<Vec<_>>()
+        );
+    }
 
-        // Verify all modes are correctly stored
-        for (i, expected_mode) in modes.iter().enumerate() {
-            assert_eq!(&modes[i], expected_mode);
-        }
+    #[cfg(not(feature = "_no_usb"))]
+    #[test]
+    fn caret_preserves_held_keys_and_tracks_modifier_changes() {
+        use embassy_futures::join::join;
+        use embassy_futures::select::select;
+        use rmk_types::connection::UsbState;
+
+        use crate::channel::USB_REPORT_CHANNEL;
+        use crate::config::{BehaviorConfig, PositionalConfig};
+        use crate::core_traits::Runnable;
+        use crate::keyboard::Keyboard;
+        use crate::keymap::KeymapData;
+
+        block_on(async {
+            crate::state::set_usb_state(UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+            let mut behavior = BehaviorConfig::default();
+            let positional: PositionalConfig<1, 3> = PositionalConfig::default();
+            let mut data: KeymapData<1, 3, 1, 0> =
+                KeymapData::new([[[crate::k!(LShift), crate::k!(A), crate::k!(Right)]]]);
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            let mut pointing = PointingProcessor::new(&keymap, PointingProcessorConfig::default());
+            pointing.set_pointing_mode(PointingMode::Caret(CaretConfig::default()));
+            let motion = PointingEvent {
+                device_id: 0,
+                axes: [
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::X,
+                        value: 101,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Y,
+                        value: 0,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Z,
+                        value: 0,
+                    },
+                ],
+            };
+            select(
+                async {
+                    publish_event_async(KeyboardEvent::key(0, 0, true)).await;
+                    expect_keyboard_report(2, &[]).await;
+                    publish_event_async(KeyboardEvent::key(0, 1, true)).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
+                    pointing.on_pointing_event(motion).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
+                    // Releasing the caret's arrow must not release the physical arrow.
+                    publish_event_async(KeyboardEvent::key(0, 2, true)).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                    pointing.on_pointing_event(motion).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                    publish_event_async(KeyboardEvent::key(0, 2, false)).await;
+                    expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
+                    // A modifier released during a tap takes effect before the tap ends.
+                    join(pointing.on_pointing_event(motion), async {
+                        Timer::after_millis(2).await;
+                        publish_event_async(KeyboardEvent::key(0, 0, false)).await;
+                    })
+                    .await;
+                    expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                    expect_keyboard_report(0, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                    expect_keyboard_report(0, &[HidKeyCode::A]).await;
+                    publish_event_async(KeyboardEvent::key(0, 1, false)).await;
+                    expect_keyboard_report(0, &[]).await;
+                    assert!(USB_REPORT_CHANNEL.try_receive().is_err());
+                },
+                keyboard.run(),
+            )
+            .await;
+        });
     }
 
     #[test]
     fn test_pointing_scroll_mode_zero_motion_prevention() {
         let mut acc = MotionAccumulator::default();
         let config = ScrollConfig {
-            multiplier_x: 1,
-            multiplier_y: 1,
-            divisor_x: 8,
-            divisor_y: 8,
-            invert_x: false,
-            invert_y: false,
+            wheel: ScrollAxis {
+                multiplier: 1,
+                divisor: 8,
+                invert: false,
+            },
+            pan: ScrollAxis {
+                multiplier: 1,
+                divisor: 8,
+                invert: false,
+            },
         };
 
         // Small motion that doesn't produce output
         let (sx, sy) = acc.accumulate(
             3,
             3,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_y, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 0);
         assert_eq!(sy, 0);
@@ -4313,8 +4704,8 @@ mod tests {
         let (sx, sy) = acc.accumulate(
             6,
             6,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_y, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 1); // (3+6)/8 = 1 remainder 1
         assert_eq!(sy, 1);
@@ -4367,10 +4758,10 @@ mod tests {
     #[test]
     fn test_pointing_scroll_config_default_values() {
         let config = ScrollConfig::default();
-        assert_eq!(config.divisor_x, 8);
-        assert_eq!(config.divisor_y, 8);
-        assert!(!config.invert_x);
-        assert!(!config.invert_y);
+        assert_eq!(config.pan.divisor, 8);
+        assert_eq!(config.wheel.divisor, 8);
+        assert!(!config.pan.invert);
+        assert!(!config.wheel.invert);
     }
 
     #[test]
@@ -4429,20 +4820,24 @@ mod tests {
     fn test_pointing_scroll_mode_asymmetric_divisors() {
         let mut acc = MotionAccumulator::default();
         let config = ScrollConfig {
-            multiplier_x: 1,
-            multiplier_y: 1,
-            divisor_x: 4,
-            divisor_y: 8,
-            invert_x: false,
-            invert_y: false,
+            wheel: ScrollAxis {
+                multiplier: 1,
+                divisor: 8,
+                invert: false,
+            },
+            pan: ScrollAxis {
+                multiplier: 1,
+                divisor: 4,
+                invert: false,
+            },
         };
 
         // Test asymmetric divisors
         let (sx, sy) = acc.accumulate(
             16,
             16,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_x, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 4); // 16/4 = 4
         assert_eq!(sy, 2); // 16/8 = 2
@@ -4452,18 +4847,22 @@ mod tests {
     fn test_pointing_scroll_multiplier_amplifies_motion() {
         let mut acc = MotionAccumulator::default();
         let config = ScrollConfig {
-            multiplier_x: 3,
-            multiplier_y: 3,
-            divisor_x: 8,
-            divisor_y: 8,
-            invert_x: false,
-            invert_y: false,
+            wheel: ScrollAxis {
+                multiplier: 3,
+                divisor: 8,
+                invert: false,
+            },
+            pan: ScrollAxis {
+                multiplier: 3,
+                divisor: 8,
+                invert: false,
+            },
         };
         let (sx, sy) = acc.accumulate(
             10,
             10,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_y, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 3); // (0+10*3)/8 = 3 r6
         assert_eq!(sy, 3);
@@ -4475,18 +4874,22 @@ mod tests {
     fn test_pointing_scroll_asymmetric_multipliers() {
         let mut acc = MotionAccumulator::default();
         let config = ScrollConfig {
-            multiplier_x: 2,
-            multiplier_y: 3,
-            divisor_x: 8,
-            divisor_y: 8,
-            invert_x: false,
-            invert_y: false,
+            wheel: ScrollAxis {
+                multiplier: 3,
+                divisor: 8,
+                invert: false,
+            },
+            pan: ScrollAxis {
+                multiplier: 2,
+                divisor: 8,
+                invert: false,
+            },
         };
         let (sx, sy) = acc.accumulate(
             10,
             -10,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_y, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 2); // (0+10*2)/8 = 2 r4
         assert_eq!(sy, -3); // (0+(-10)*3)/8 = -3 r-6
@@ -4498,19 +4901,23 @@ mod tests {
     fn test_pointing_scroll_multiplier_accumulates_remainder() {
         let mut acc = MotionAccumulator::default();
         let config = ScrollConfig {
-            multiplier_x: 3,
-            multiplier_y: 3,
-            divisor_x: 8,
-            divisor_y: 8,
-            invert_x: false,
-            invert_y: false,
+            wheel: ScrollAxis {
+                multiplier: 3,
+                divisor: 8,
+                invert: false,
+            },
+            pan: ScrollAxis {
+                multiplier: 3,
+                divisor: 8,
+                invert: false,
+            },
         };
         // First call: sub-threshold, only remainder accumulates
         let (sx, sy) = acc.accumulate(
             2,
             2,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_y, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 0); // (0+2*3)/8 = 0 r6
         assert_eq!(sy, 0);
@@ -4521,8 +4928,8 @@ mod tests {
         let (sx, sy) = acc.accumulate(
             2,
             2,
-            (config.multiplier_x, config.divisor_x),
-            (config.multiplier_y, config.divisor_y),
+            (config.pan.multiplier, config.pan.divisor),
+            (config.wheel.multiplier, config.wheel.divisor),
         );
         assert_eq!(sx, 1); // (6+2*3)/8 = 12/8 = 1 r4
         assert_eq!(sy, 1);
@@ -4570,18 +4977,6 @@ mod tests {
         assert_eq!(sy, 0);
         assert_eq!(acc.remainder_x, -1);
         assert_eq!(acc.remainder_y, 0);
-    }
-
-    #[test]
-    fn test_pointing_layer_mode_bounds_checking() {
-        // Test that modes array is correctly sized
-        let modes: [PointingMode; 8] = [PointingMode::default(); 8];
-        assert_eq!(modes.len(), 8);
-
-        // Verify all default to Cursor
-        for mode in &modes {
-            assert_eq!(*mode, PointingMode::Cursor(CursorConfig::default()));
-        }
     }
 
     #[test]

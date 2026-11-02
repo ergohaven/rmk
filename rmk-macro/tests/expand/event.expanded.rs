@@ -78,8 +78,11 @@ mod mpsc {
             KeyboardEvent,
             { 16 },
         >;
-        fn publisher_async() -> Self::AsyncPublisher {
-            KEYBOARD_EVENT_EVENT_CHANNEL.sender()
+        fn publisher_async() -> Result<
+            Self::AsyncPublisher,
+            ::embassy_sync::pubsub::Error,
+        > {
+            Ok(KEYBOARD_EVENT_EVENT_CHANNEL.sender())
         }
     }
 }
@@ -128,6 +131,12 @@ mod pubsub {
         { 8 },
         { 2 },
     > = ::embassy_sync::pubsub::PubSubChannel::new();
+    impl LedIndicatorEvent {
+        /// Returns `true` when every subscriber has consumed every published message.
+        pub(crate) fn empty() -> bool {
+            LED_INDICATOR_EVENT_EVENT_CHANNEL.is_empty()
+        }
+    }
     impl ::rmk::event::PublishableEvent for LedIndicatorEvent {
         type Publisher = ::embassy_sync::pubsub::ImmediatePublisher<
             'static,
@@ -155,7 +164,7 @@ mod pubsub {
             LED_INDICATOR_EVENT_EVENT_CHANNEL
                 .subscriber()
                 .expect(
-                    "Failed to create subscriber for LedIndicatorEvent. The \'subs\' limit has been exceeded. Increase the \'subs\' parameter in #[event(subs = N)].",
+                    "Failed to create subscriber for LedIndicatorEvent. The \'subs\' limit has been exceeded. Increase \'subs\' for this event in keyboard.toml [event] (or #[event(subs = N)] for custom events).",
                 )
         }
     }
@@ -168,12 +177,11 @@ mod pubsub {
             { 8 },
             { 2 },
         >;
-        fn publisher_async() -> Self::AsyncPublisher {
-            LED_INDICATOR_EVENT_EVENT_CHANNEL
-                .publisher()
-                .expect(
-                    "Failed to create async publisher for LedIndicatorEvent. The \'pubs\' limit has been exceeded. Increase the \'pubs\' parameter in #[event(pubs = N)].",
-                )
+        fn publisher_async() -> Result<
+            Self::AsyncPublisher,
+            ::embassy_sync::pubsub::Error,
+        > {
+            LED_INDICATOR_EVENT_EVENT_CHANNEL.publisher()
         }
     }
 }
@@ -241,8 +249,11 @@ mod tuple_struct {
             BatteryAdcEvent,
             { 8 },
         >;
-        fn publisher_async() -> Self::AsyncPublisher {
-            BATTERY_ADC_EVENT_EVENT_CHANNEL.sender()
+        fn publisher_async() -> Result<
+            Self::AsyncPublisher,
+            ::embassy_sync::pubsub::Error,
+        > {
+            Ok(BATTERY_ADC_EVENT_EVENT_CHANNEL.sender())
         }
     }
 }
@@ -313,8 +324,11 @@ mod default_size {
             LayerChangeEvent,
             { 8 },
         >;
-        fn publisher_async() -> Self::AsyncPublisher {
-            LAYER_CHANGE_EVENT_EVENT_CHANNEL.sender()
+        fn publisher_async() -> Result<
+            Self::AsyncPublisher,
+            ::embassy_sync::pubsub::Error,
+        > {
+            Ok(LAYER_CHANGE_EVENT_EVENT_CHANNEL.sender())
         }
     }
 }

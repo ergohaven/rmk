@@ -29,35 +29,35 @@ use rmk::macros::rmk_central;
 #[rmk_central]
 mod keyboard_central {
     #[cfg(classic_encoder_settings)]
-    #[register_processor(event)]
+    #[register_processor]
     fn encoder_settings_sync() -> crate::encoder_device_settings::EncoderSettingsSync {
         crate::encoder_device_settings::EncoderSettingsSync::new()
     }
 
     add_interrupt! {
-        SPIM3 => ::embassy_nrf::spim::InterruptHandler<::embassy_nrf::peripherals::SPI3>;
+        SPI2 => ::embassy_nrf::spim::InterruptHandler<::embassy_nrf::peripherals::SPI2>;
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn display_processor() -> crate::qube_display::DongleScreen<Irqs> {
         crate::qube_display::create_processor(
-            p.SPI3, p.P1_11, p.P1_10, p.P1_13, p.P0_28, p.P0_03, p.P0_02, Irqs,
+            p.SPI2, p.P1_11, p.P1_10, p.P1_13, p.P0_28, p.P0_03, p.P0_02, Irqs,
         )
     }
 
     #[cfg(velvet_pointing)]
-    #[register_processor(event)]
+    #[register_processor]
     fn pointing_mode() -> crate::velvet_pointing::VelvetPointingMode {
         crate::velvet_pointing::VelvetPointingMode::new()
     }
 
     #[cfg(velvet_pointing)]
-    #[register_processor(event)]
+    #[register_processor]
     fn settings_broadcast() -> crate::velvet_device_settings::VelvetSettingsBroadcast {
         crate::velvet_device_settings::VelvetSettingsBroadcast::new()
     }
 
-    #[register_processor(poll)]
+    #[register_processor]
     fn ergohaven_user_keys() -> ::rmk::processor::builtin::ergohaven::ErgohavenUserKeys {
         ::rmk::processor::builtin::ergohaven::ErgohavenUserKeys::new()
     }

@@ -1,8 +1,6 @@
 //! USB HID keycodes.
 
 use postcard::experimental::max_size::MaxSize;
-#[cfg(feature = "rmk_protocol")]
-use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
 
@@ -13,8 +11,10 @@ use crate::modifier::ModifierCombination;
 // All key codes defined in HID spec
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, FromRepr, MaxSize)]
+#[cfg_attr(feature = "_codegen", derive(strum::EnumIter, strum::VariantNames))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum HidKeyCode {
     /// Reserved, no-key.
     No = 0x0000,
@@ -383,6 +383,12 @@ pub enum HidKeyCode {
 }
 
 impl HidKeyCode {
+    /// Host-only: list all HID keycodes, in declaration order.
+    #[cfg(feature = "_codegen")]
+    pub fn all() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+
     /// Returns `true` if the keycode is a simple keycode defined in HID spec
     pub fn is_simple_key(self) -> bool {
         HidKeyCode::No <= self && self <= HidKeyCode::MouseAccel2
@@ -396,6 +402,12 @@ impl HidKeyCode {
     /// Returns `true` if the keycode is a mouse keycode
     pub fn is_mouse_key(self) -> bool {
         HidKeyCode::MouseUp <= self && self <= HidKeyCode::MouseAccel2
+    }
+
+    /// Returns `true` if the keycode is sent in the keyboard report, rather than
+    /// on the consumer, system control or mouse page
+    pub fn is_keyboard_key(self) -> bool {
+        self.process_as_consumer().is_none() && self.process_as_system_control().is_none() && !self.is_mouse_key()
     }
 
     /// Returns the byte with the bit corresponding to the USB HID

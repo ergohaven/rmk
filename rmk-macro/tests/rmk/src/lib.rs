@@ -8,6 +8,7 @@
 #![allow(async_fn_in_trait)]
 
 // Re-export futures for select_biased! macro usage
+pub use embassy_futures;
 pub use futures;
 
 /// Re-export select_biased! macro from futures crate
@@ -42,6 +43,14 @@ pub mod event {
     pub trait EventSubscriber {
         type Event;
         fn next_event(&mut self) -> impl core::future::Future<Output = Self::Event>;
+    }
+
+    impl EventSubscriber for core::future::Pending<core::convert::Infallible> {
+        type Event = core::convert::Infallible;
+
+        async fn next_event(&mut self) -> Self::Event {
+            self.await
+        }
     }
 
     /// Trait for events that can be published
@@ -150,6 +159,29 @@ pub mod processor {
             loop {
                 // Mock implementation - just loop forever
             }
+        }
+    }
+
+    /// Trait for processors driven by a dynamic deadline in addition to events
+    pub trait DeadlineProcessor: Processor {
+        /// The next moment `on_deadline` should fire, or `None` when nothing is armed
+        fn deadline(&self) -> Option<crate::embassy_time::Instant>;
+
+        /// Called when the deadline elapses without an intervening event
+        fn on_deadline(&mut self) -> impl core::future::Future<Output = ()>;
+
+        /// Loop that interleaves event processing with the deadline
+        async fn deadline_loop(&mut self) -> ! {
+            loop {
+                // Mock implementation - just loop forever
+            }
+        }
+
+        async fn polling_deadline_loop(&mut self) -> !
+        where
+            Self: PollingProcessor,
+        {
+            loop {}
         }
     }
 }

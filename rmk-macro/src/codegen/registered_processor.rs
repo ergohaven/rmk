@@ -5,14 +5,12 @@ use rmk_config::resolved::hardware::{ChipModel, PinConfig};
 use syn::ItemMod;
 
 use super::chip::gpio::convert_gpio_str_to_output_pin;
-use crate::codegen::feature::is_feature_enabled;
 
 /// Expand processor init/exec blocks from keyboard config.
 /// Returns (initializers, executors).
 pub(crate) fn expand_registered_processor_init(
     hardware: &Hardware,
     item_mod: &ItemMod,
-    rmk_features: &Option<Vec<String>>,
 ) -> (TokenStream, Vec<TokenStream>) {
     let mut initializers = TokenStream::new();
     let mut executors = vec![];
@@ -21,7 +19,7 @@ pub(crate) fn expand_registered_processor_init(
     initializers.extend(i);
     executors.extend(e);
 
-    if is_feature_enabled(rmk_features, "dfu_rp") || is_feature_enabled(rmk_features, "dfu_nrf") {
+    if cfg!(feature = "_dfu") {
         create_dfu_led_processor(hardware, &mut initializers, &mut executors);
     }
 
@@ -39,61 +37,13 @@ pub(crate) fn expand_registered_processor_init(
                 continue;
             };
 
-            let (custom_init, custom_exec) = expand_custom_processor(item_fn);
-            let cfg_predicates = processor_cfg_predicates(item_fn);
-            let mut executor_body: Option<TokenStream> = None;
-
-            attr.parse_nested_meta(|meta| {
-                let body = if meta.path.is_ident("event") {
-                    quote! {
-                        use ::rmk::processor::Processor;
-                        #custom_exec.process_loop().await
-                    }
-                } else if meta.path.is_ident("poll") {
-                    quote! {
-                        use ::rmk::processor::PollingProcessor;
-                        #custom_exec.polling_loop().await
-                    }
-                } else if meta.path.is_ident("deadline") {
-                    quote! {
-                        use ::rmk::processor::DeadlineProcessor;
-                        #custom_exec.deadline_loop().await
-                    }
-                } else {
-                    return Err(meta.error("expected `event`, `poll` or `deadline`"));
-                };
-                if executor_body.is_some() {
-                    return Err(meta.error("cannot specify multiple modes"));
+            match expand_custom_processor(item_fn, attr) {
+                Ok((custom_init, executor)) => {
+                    initializers.extend(custom_init);
+                    executors.push(executor);
                 }
-                executor_body = Some(body);
-                Ok(())
-            })
-            .unwrap_or_else(|e| panic!("#[register_processor] {e}"));
-
-            let executor_body = executor_body.unwrap_or_else(|| {
-                panic!("#[register_processor] requires `event`, `poll` or `deadline` argument")
-            });
-            let executor = if cfg_predicates.is_empty() {
-                quote! {
-                    async { #executor_body }
-                }
-            } else {
-                quote! {
-                    async {
-                        #[cfg(all(#(#cfg_predicates),*))]
-                        {
-                            #executor_body
-                        }
-                        #[cfg(not(all(#(#cfg_predicates),*)))]
-                        {
-                            ::core::future::pending::<()>().await
-                        }
-                    }
-                }
-            };
-
-            initializers.extend(custom_init);
-            executors.push(executor);
+                Err(err) => initializers.extend(err.to_compile_error()),
+            }
         }
     }
 
@@ -189,12 +139,17 @@ fn create_dfu_led_processor(
     }
 }
 
-fn expand_custom_processor(fn_item: &syn::ItemFn) -> (TokenStream, &syn::Ident) {
+fn expand_custom_processor(
+    fn_item: &syn::ItemFn,
+    attr: &syn::Attribute,
+) -> syn::Result<(TokenStream, TokenStream)> {
     let task_name = &fn_item.sig.ident;
-    let cfg_attrs = fn_item
-        .attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("cfg"));
+    let mut cfg_attrs = Vec::new();
+    for attr in &fn_item.attrs {
+        if let Some(gate) = cfg_gate(&attr.meta)? {
+            cfg_attrs.push(quote! { #[#gate] });
+        }
+    }
 
     let content = &fn_item.block.stmts;
     let initializer = quote! {
@@ -203,129 +158,199 @@ fn expand_custom_processor(fn_item: &syn::ItemFn) -> (TokenStream, &syn::Ident) 
             #(#content)*
         };
     };
+    let executor = registered_processor_executor(attr, task_name);
+    let executor = if cfg_attrs.is_empty() {
+        executor
+    } else {
+        // The disabled branch must not refer to a processor type or value that may not exist.
+        quote! {{
+            let __rmk_processor_task = ::core::future::pending::<()>();
+            #(#cfg_attrs)*
+            let __rmk_processor_task = #executor;
+            __rmk_processor_task
+        }}
+    };
 
-    (initializer, task_name)
+    Ok((initializer, executor))
 }
 
-fn processor_cfg_predicates(fn_item: &syn::ItemFn) -> Vec<TokenStream> {
-    fn_item
-        .attrs
-        .iter()
-        .filter_map(|attr| {
-            if !attr.path().is_ident("cfg") {
-                return None;
-            }
-            let syn::Meta::List(meta) = &attr.meta else {
-                panic!("#[cfg] on #[register_processor] must contain a predicate");
-            };
-            Some(meta.tokens.clone())
-        })
-        .collect()
+/// Keep conditional-compilation gates without copying function-only attributes onto let bindings.
+fn cfg_gate(meta: &syn::Meta) -> syn::Result<Option<syn::Meta>> {
+    if meta.path().is_ident("cfg") {
+        return Ok(Some(meta.clone()));
+    }
+    if !meta.path().is_ident("cfg_attr") {
+        return Ok(None);
+    }
+    let syn::Meta::List(list) = meta else {
+        return Err(syn::Error::new_spanned(
+            meta,
+            "expected cfg_attr(predicate, attribute)",
+        ));
+    };
+    let args = list.parse_args_with(
+        syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated,
+    )?;
+    if args.len() < 2 {
+        return Err(syn::Error::new_spanned(
+            meta,
+            "expected cfg_attr(predicate, attribute)",
+        ));
+    }
+    let mut args = args.iter();
+    let predicate = args.next().unwrap();
+    let mut gates = Vec::new();
+    for attr in args {
+        if let Some(gate) = cfg_gate(attr)? {
+            gates.push(gate);
+        }
+    }
+    Ok(if gates.is_empty() {
+        None
+    } else {
+        Some(syn::parse_quote!(cfg_attr(#predicate, #(#gates),*)))
+    })
+}
+
+/// Registration always runs the behavior declared by the type.
+fn registered_processor_executor(attr: &syn::Attribute, exec: &syn::Ident) -> TokenStream {
+    if !matches!(&attr.meta, syn::Meta::Path(_))
+        && !matches!(&attr.meta, syn::Meta::List(list) if list.tokens.is_empty())
+    {
+        return syn::Error::new_spanned(
+            attr,
+            "#[register_processor] takes no arguments; set `poll_interval` or `deadline` on #[processor]",
+        )
+        .to_compile_error();
+    }
+
+    quote! {
+        ::rmk::core_traits::Runnable::run(&mut #exec)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::process::Command;
 
-    fn expand_registration(attributes: &str) -> (TokenStream, TokenStream) {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
+    use quote::quote;
+
+    use super::expand_custom_processor;
+
+    #[test]
+    fn conditional_registration_gates_initialization_and_execution() {
+        let module: syn::ItemMod = syn::parse_quote! {
+            mod keyboard {
+                #[cfg(all())]
+                #[register_processor]
+                fn enabled() -> Worker {
+                    initialized.set(initialized.get() + 1);
+                    Worker(&started)
+                }
+
+                #[cfg(any())]
+                #[register_processor]
+                fn disabled() -> Missing { must_not_compile() }
+
+                #[cfg_attr(all(), cfg_attr(all(), cfg(any())), inline)]
+                #[register_processor]
+                fn nested_disabled() -> Missing { must_not_compile() }
+            }
+        };
+        let mut initializers = Vec::new();
+        let mut executors = Vec::new();
+        for item in &module.content.unwrap().1 {
+            let syn::Item::Fn(item) = item else {
+                unreachable!()
+            };
+            let registration = item
+                .attrs
+                .iter()
+                .find(|a| a.path().is_ident("register_processor"))
+                .unwrap();
+            let (init, exec) = expand_custom_processor(item, registration).unwrap();
+            initializers.push(init);
+            executors.push(exec);
+        }
+        let source = quote! {
+            extern crate self as rmk;
+            use std::cell::Cell;
+            mod core_traits {
+                pub(crate) trait Runnable {
+                    async fn run(&mut self) -> !;
+                }
+            }
+            struct Worker<'a>(&'a Cell<u8>);
+            impl core_traits::Runnable for Worker<'_> {
+                async fn run(&mut self) -> ! {
+                    self.0.set(self.0.get() + 1);
+                    core::future::pending().await
+                }
+            }
+            fn main() {
+                let initialized = Cell::new(0);
+                let started = Cell::new(0);
+                #(#initializers)*
+                assert_eq!(initialized.get(), 1);
+                assert_eq!(started.get(), 0);
+                let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+                #({
+                    let mut task = ::std::pin::pin!(#executors);
+                    assert!(::std::future::Future::poll(task.as_mut(), &mut context).is_pending());
+                })*
+                assert_eq!(started.get(), 1);
+            }
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "rmk-processor-cfg-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let input = dir.join("main.rs");
+        let binary = dir.join(format!("probe{}", std::env::consts::EXE_SUFFIX));
+        std::fs::write(&input, source.to_string()).unwrap();
+        let compiled = Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+            .args(["--edition=2024", "--crate-name=cfg_registration"])
+            .arg(&input)
+            .arg("-o")
+            .arg(&binary)
+            .output()
             .unwrap();
-        let config = rmk_config::KeyboardTomlConfig::new_from_toml_path(
-            root.join("keyboards/k04/keyboard.toml"),
+        assert!(
+            compiled.status.success(),
+            "{}",
+            String::from_utf8_lossy(&compiled.stderr)
         );
-        let hardware = config.hardware().unwrap();
-        let module: ItemMod = syn::parse_str(&format!(
-            "mod keyboard {{ {attributes} fn layer_led() -> LayerLed {{ LayerLed::new() }} }}"
-        ))
-        .unwrap();
-        let (init, executions) = expand_registered_processor_init(&hardware, &module, &None);
-        (init, executions.last().unwrap().clone())
+        let executed = Command::new(&binary).output().unwrap();
+        assert!(
+            executed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&executed.stderr)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
+    // The run mode moved to #[processor], so a board still written as
+    // `#[register_processor(deadline)]` must fail to build and say where it went.
     #[test]
-    fn deadline_registration_uses_deadline_loop() {
-        let (init, execution) = expand_registration("#[register_processor(deadline)]");
-        assert_eq!(
-            init.to_string(),
-            quote!(let mut layer_led = { LayerLed::new() };).to_string()
-        );
-        assert_eq!(
-            execution.to_string(),
-            quote!(async {
-                use ::rmk::processor::DeadlineProcessor;
-                layer_led.deadline_loop().await
-            })
-            .to_string()
-        );
-    }
-
-    #[test]
-    fn event_registration_keeps_event_loop() {
-        let (_, execution) = expand_registration("#[register_processor(event)]");
-        assert_eq!(
-            execution.to_string(),
-            quote!(async {
-                use ::rmk::processor::Processor;
-                layer_led.process_loop().await
-            })
-            .to_string()
-        );
-    }
-
-    #[test]
-    fn poll_registration_keeps_polling_loop() {
-        let (_, execution) = expand_registration("#[register_processor(poll)]");
-        assert_eq!(
-            execution.to_string(),
-            quote!(async {
-                use ::rmk::processor::PollingProcessor;
-                layer_led.polling_loop().await
-            })
-            .to_string()
-        );
-    }
-
-    #[test]
-    fn deadline_registration_preserves_cfg_guard() {
-        let (init, execution) =
-            expand_registration("#[cfg(feature = \"led\")] #[register_processor(deadline)]");
-        assert_eq!(
-            init.to_string(),
-            quote!(#[cfg(feature = "led")] let mut layer_led = { LayerLed::new() };).to_string()
-        );
-        assert_eq!(
-            execution.to_string(),
-            quote!(async {
-                #[cfg(all(feature = "led"))]
-                {
-                    use ::rmk::processor::DeadlineProcessor;
-                    layer_led.deadline_loop().await
-                }
-                #[cfg(not(all(feature = "led")))]
-                {
-                    ::core::future::pending::<()>().await
-                }
-            })
-            .to_string()
-        );
-    }
-
-    #[test]
-    #[should_panic(expected = "cannot specify multiple modes")]
-    fn mixed_deadline_modes_are_rejected() {
-        expand_registration("#[register_processor(deadline, poll)]");
-    }
-
-    #[test]
-    #[should_panic(expected = "expected `event`, `poll` or `deadline`")]
-    fn unknown_registration_mode_is_rejected() {
-        expand_registration("#[register_processor(unknown)]");
-    }
-
-    #[test]
-    #[should_panic(expected = "requires `event`, `poll` or `deadline` argument")]
-    fn empty_registration_mode_is_rejected() {
-        expand_registration("#[register_processor()]");
+    fn registration_mode_arguments_are_rejected() {
+        for mode in ["event", "poll", "deadline", "unknown"] {
+            let mode = syn::Ident::new(mode, proc_macro2::Span::call_site());
+            let item: syn::ItemFn = syn::parse_quote! {
+                #[register_processor(#mode)]
+                fn layer_led() -> LayerLed { LayerLed::new() }
+            };
+            let (_, executor) = expand_custom_processor(&item, &item.attrs[0]).unwrap();
+            let executor = executor.to_string();
+            assert!(
+                executor.contains("compile_error")
+                    && executor.contains("set `poll_interval` or `deadline` on #[processor]"),
+                "{mode}: {executor}"
+            );
+        }
     }
 }

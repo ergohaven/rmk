@@ -2,10 +2,32 @@
 
 ## Unreleased
 
+### Breaking changes
+
+- Merged upstream RMK through `f78d138cc` and moved every keyboard from Vial to Rynk with Ergohaven's commands. The storage format and the RMK feature set changed, so the first boot erases the keymap, macros, combos, forks, Morse entries, module settings, host bonds, and the halves' pairing on every part. Export the layout in Entropy before flashing and import it afterwards
+- K:04, K:04 Mini, K:04 Micro, K:03, OP36, Imperial44, Velvet, the classic Qube, and the Phenom Series need an Entropy build with Rynk support and Ergohaven wire revision 2. Vial clients, vial-gui included, no longer configure them
+- Flash both halves and the Qube dongle together, because the split wire format changed, then pair the hosts and the halves again
+- The USB and BLE serial number starts with `rynk:` instead of `vial:f64c2b3c:`; the device ID after it is unchanged
+- K:04 Micro (Qube) is now named `K:04 Micro(Qube)`, because upstream limits BLE names to 16 bytes
+
+### Features
+
+- Doubled the macro pool to 4096 bytes, with a 4128-byte Rynk frame that holds the whole pool
+- Made the Qube screen show up to 64 bytes per media field (32 Cyrillic characters), scrolling long titles in the header
+- Added RMK firmware for the Phenom Series (Phenom, Phenom Mini, and Phenom Micro): a wired RP2040 split on Rynk that runs the K:04 module stack on each half, with Universal Symbols and Layout Sync and the shared limits of 32 combos, 32 forks, 32 Morse entries, and 4096 bytes of macro storage; layers 5–15 compile as `No`
+- Added the Phenom Series layer LED: the WS2812 on each half shows the active layer in its Entropy color, with the K:04 LED brightness and timeout settings in a new `LEDs settings` tab
+
 ### Fixes
 
+- Gave the K:04 Qube trackball link every connection event. The Qube placed the two half links 7.5 ms apart, so every other event of the 7.5 ms trackball link fell on the other half's link and the trackball arrived in pairs every 15 ms. K:04, K:04 Mini, and K:04 Micro through Qube now reserve 3 ms per event and space the links 3.75 ms apart
+- Stopped the K:04 Qube from advertising to a BLE host. It reaches the PC over USB, and the advertising took radio time from the half links every minute
 - Switched all six standalone K:04 Series images to the `production_v30g` profile derived from the field-validated K:04 build: host-first split wake ordering, accepted-anchor low-duty BLE parameters, fixed 15 ms vector-preserving HID pacing, and configured 1M PHY preservation; K:04 Qube and other keyboards retain their existing production profiles
 - Prevented K:04 split LED reconciliation from starting a status phase after the render timestamp, avoiding an `Instant` underflow panic during reconnect
+- Resent the central's state, module settings, and active layer to a wired split peripheral that rebooted on its own, so the Phenom right-half module no longer stays off after flashing only that half
+
+### Notes
+
+- Phenom settings from the QMK firmware do not carry over. After flashing, the board starts with the factory keymap and both module slots set to `None`, as on K:04, so set the modules in Entropy
 
 ## v0.1.10
 

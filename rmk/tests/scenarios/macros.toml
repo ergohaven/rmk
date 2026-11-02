@@ -1,0 +1,553 @@
+# Keyboard macros.
+#
+# On the shared split board MACRO(0) sits at (0,6) and MACRO(1) at (0,7); each
+# test brings its own macro set via `behavior.macro` and drives macro 0. Other
+# keys used below: OSM(LShift)@(0,0), A@(0,2), MT(B, LShift)@(1,1), W@(1,3), and
+# C@(0,2) on layer 1.
+#
+# A macro that ends on a character closes with one report carrying the real
+# modifiers; any other macro ends on its last op's report.
+#
+# The file stem is `macros`, not `macro`, because the generated module name
+# cannot be a Rust keyword.
+
+keyboard = "boards/split.toml"
+
+# A character is two reports whose modifiers are its own shift and nothing else.
+[[test]]
+name = "macro_text"
+behavior.macro = { macros = [{ operations = [{ operation = "text", text = "AbCd123456" }] }] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [
+  ["LShift", "A"], ["LShift"],
+  ["B"], [],
+  ["LShift", "C"], ["LShift"],
+  ["D"], [],
+  ["Kc1"], [], ["Kc2"], [], ["Kc3"], [], ["Kc4"], [], ["Kc5"], [], ["Kc6"], [],
+  [],  # the end of the macro
+]
+
+[[test]]
+name = "macro_multiple_operations"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "LShift" },
+    { operation = "tap", keycode = "A" },
+    { operation = "up", keycode = "LShift" },
+    { operation = "tap", keycode = "B" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [["LShift"], ["LShift", "A"], ["LShift"], [], ["B"], []]
+
+# Each op takes its own report slot, so a macro can hold two keys at once.
+[[test]]
+name = "macro_holds_two_keys_at_once"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "A" },
+    { operation = "down", keycode = "B" },
+    { operation = "up", keycode = "B" },
+    { operation = "up", keycode = "A" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [["A"], ["A", "B"], ["A"], []]
+
+# A delay resumes after `duration`.
+[[test]]
+name = "macro_with_delay"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "delay", duration = "50ms" },
+    { operation = "tap", keycode = "B" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [["A"], [], ["B"], []]
+
+# An op carries any action and dispatches exactly as a physical key would,
+# without the `vial` feature.
+[[test]]
+name = "macro_taps_a_key_with_modifier"
+behavior.macro = { macros = [{ operations = [{ operation = "tap", keycode = "WM(A, LCtrl)" }] }] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [["LCtrl", "A"], []]
+
+# A layer action is a layer key held for the macro: layer 1 stays on from the
+# `down` until the `up` after the pause.
+[[test]]
+name = "macro_layer_action_needs_no_vial"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "MO(1)" },
+    { operation = "pause_for_release" },
+    { operation = "up", keycode = "MO(1)" },
+  ] },
+] }
+steps = [
+  { press = [0, 6] },
+  { tap = { pos = [0, 2], duration = 10 } },
+  { release = [0, 6] },
+  { delay = 30 }, 
+  { tap = { pos = [0, 2], duration = 10 } },
+]
+expect = [["C"], [], ["A"], []]
+
+# Macros fire on key press (matching QMK/ZMK), not release: the macro reports
+# arrive while the macro key is still held, so they precede the W tapped under
+# it. Firing on release would put W first.
+[[test]]
+name = "macro_triggers_on_press"
+behavior.macro = { macros = [
+  { operations = [{ operation = "down", keycode = "A" }, { operation = "up", keycode = "A" }] },
+] }
+steps = [
+  { press = [0, 6] },  # Press macro 0 and keep holding
+  { tap = { pos = [1, 3], duration = 10 } },
+  { delay = 100 },
+  { release = [0, 6] },
+]
+expect = [["A"], [], ["W"], []]
+
+# The keyboard keeps working while a macro waits: a key typed during the delay
+# lands between the macro's two halves, after the tap's 10ms hold.
+[[test]]
+name = "macro_interleaves_with_typing"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "delay", duration = "30ms" },
+    { operation = "tap", keycode = "B" },
+  ] },
+] }
+steps = [
+  { press = [0, 6] },
+  { tap = { pos = [1, 3], duration = 5 } },
+  { delay = 100 },
+  { release = [0, 6] },
+]
+expect = [["A"], [], ["W"], [], ["B"], []]
+
+# A tap-hold pressed during a macro's delay still resolves on its own timeout.
+[[test]]
+name = "macro_delay_keeps_tap_hold_timing"
+behavior.macro = { macros = [
+  { operations = [{ operation = "delay", duration = "500ms" }, { operation = "tap", keycode = "A" }] },
+] }
+steps = [
+  { press = [0, 6] },
+  { press = [1, 1] },
+  { delay = 300 },
+  { release = [1, 1] },
+  { delay = 300 },
+  { release = [0, 6] },
+]
+expect = [["LShift"], [], ["A"], []]
+
+# A `down` holds its key through a delay: W typed during the delay joins A, and
+# A goes up only at the `up`.
+[[test]]
+name = "macro_down_holds_its_key_through_a_delay"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "A" },
+    { operation = "delay", duration = "350ms" },
+    { operation = "up", keycode = "A" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { delay = 100 },
+  { tap = { pos = [1, 3], duration = 10 } },
+]
+expect = [["A"], ["A", "W"], ["A"], []]
+
+# A mouse key held by a macro keeps repeating through the macro's delay: the
+# first repeat 100ms after the `down`, then one every 20ms, speeding up, until
+# the `up` 350ms in. Regression: playback slept through the delay, so the
+# cursor moved once and then stopped until the `up`.
+[[test]]
+name = "macro_delay_keeps_mouse_movement_repeating"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "MouseRight" },
+    { operation = "delay", duration = "350ms" },
+    { operation = "up", keycode = "MouseRight" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+]
+expect = [
+  { mouse = { x = 5 } },
+  # The 13 repeats at +100ms, +120ms, ... +340ms
+  { mouse = { x = 5 } }, { mouse = { x = 6 } }, { mouse = { x = 6 } }, { mouse = { x = 6 } },
+  { mouse = { x = 7 } }, { mouse = { x = 7 } }, { mouse = { x = 7 } },
+  { mouse = { x = 8 } }, { mouse = { x = 8 } }, { mouse = { x = 8 } },
+  { mouse = { x = 9 } }, { mouse = { x = 9 } }, { mouse = { x = 9 } },
+  { mouse = {} },
+]
+
+# The same for a wheel key, which repeats every 80ms.
+[[test]]
+name = "macro_delay_keeps_mouse_wheel_repeating"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "MouseWheelUp" },
+    { operation = "delay", duration = "350ms" },
+    { operation = "up", keycode = "MouseWheelUp" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+]
+expect = [
+  { mouse = { wheel = -1 } },
+  # The 4 repeats at +100ms, +180ms, +260ms and +340ms
+  { mouse = { wheel = -1 } }, { mouse = { wheel = -1 } }, { mouse = { wheel = -1 } }, { mouse = { wheel = -1 } },
+  { mouse = {} },
+]
+
+# Macros run one at a time: a trigger while one runs waits for it to end.
+[[test]]
+name = "macro_trigger_while_running_is_queued"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "delay", duration = "50ms" },
+    { operation = "tap", keycode = "B" },
+  ] },
+  { operations = [{ operation = "tap", keycode = "C" }] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { tap = { pos = [0, 7], duration = 10 } },  # queued: macro 0 is still waiting
+  { delay = 100 },
+]
+expect = [["A"], [], ["B"], [], ["C"], []]
+
+# A queued macro whose key was released before its turn does not wait at
+# `pause_for_release`.
+[[test]]
+name = "macro_queued_and_released_does_not_pause"
+behavior.macro = { macros = [
+  { operations = [{ operation = "delay", duration = "50ms" }] },
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "pause_for_release" },
+    { operation = "tap", keycode = "B" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { tap = { pos = [0, 7], duration = 10 } },  # queued and released while macro 0 waits
+  { delay = 100 },
+]
+expect = [["A"], [], ["B"], []]
+
+# The ops after `pause_for_release` wait 20ms after the key comes up. Sent at
+# once, the first shifted character made a host IME see a lone shift tap and
+# switch input mode.
+[[test]]
+name = "macro_release_half_waits_after_the_key_comes_up"
+behavior.macro = { macros = [
+  { operations = [{ operation = "pause_for_release" }, { operation = "text", text = "A" }] },
+] }
+steps = [
+  { press = [0, 6] },
+  { release = [0, 6] },
+  { delay = 1 },
+  { no_report = 8 },
+]
+expect = [["LShift", "A"], ["LShift"], []]
+
+# A text ends 10ms after its last key comes up, lowercase or not, and only then
+# does the next op run: W, pressed 2ms after `a` comes up, gets in ahead of the
+# tap. Sent at once, the text's end made a host IME switch input mode.
+[[test]]
+name = "macro_text_ends_10ms_after_its_last_key"
+behavior.macro = { macros = [
+  { operations = [{ operation = "text", text = "a" }, { operation = "tap", keycode = "X" }] },
+] }
+steps = [
+  { press = [0, 6] },
+  { delay = 12 },
+  { press = [1, 3] },
+  { release = [1, 3] },
+  { release = [0, 6] },
+]
+expect = [["A"], [], [], ["W"], ["W", "X"], ["W"], []]
+
+# A macro step that triggers a macro queues it behind the rest of the current
+# macro, so its A comes after the B that follows the step.
+[[test]]
+name = "macro_triggered_by_a_macro_runs_after_it"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "Macro(1)" },
+    { operation = "tap", keycode = "B" },
+  ] },
+  { operations = [{ operation = "tap", keycode = "A" }] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { delay = 100 },
+]
+expect = [["B"], [], ["A"], []]
+
+# A macro that triggered itself ran forever: every run queued the next one, and
+# the keyboard typed until it lost power. It now runs once.
+[[test]]
+name = "macro_triggering_itself_runs_once"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "tap", keycode = "Macro(0)" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { delay = 600 },
+]
+expect = [["A"], []]
+
+# Two macros that trigger each other looped the same way. The chain stops where
+# it would come back to a macro already in it.
+[[test]]
+name = "macros_triggering_each_other_stop"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "tap", keycode = "Macro(1)" },
+  ] },
+  { operations = [
+    { operation = "tap", keycode = "B" },
+    { operation = "tap", keycode = "Macro(0)" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { delay = 700 },
+]
+expect = [["A"], [], ["B"], []]
+
+# A chain of macros runs three macros deep below the key's macro; the fifth in
+# line is dropped.
+[[test]]
+name = "macro_chain_stops_past_the_nesting_limit"
+behavior.macro = { macros = [
+  { operations = [{ operation = "tap", keycode = "A" }, { operation = "tap", keycode = "Macro(1)" }] },
+  { operations = [{ operation = "tap", keycode = "B" }, { operation = "tap", keycode = "Macro(2)" }] },
+  { operations = [{ operation = "tap", keycode = "C" }, { operation = "tap", keycode = "Macro(3)" }] },
+  { operations = [{ operation = "tap", keycode = "D" }, { operation = "tap", keycode = "Macro(4)" }] },
+  { operations = [{ operation = "tap", keycode = "E" }] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { delay = 800 },
+]
+expect = [["A"], [], ["B"], [], ["C"], [], ["D"], []]
+
+# `pause_for_release` splits a macro: the ops before it run on the macro key's
+# press, the ops after it on its release.
+[[test]]
+name = "macro_pauses_until_the_key_is_released"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "A" },
+    { operation = "pause_for_release" },
+    { operation = "tap", keycode = "B" },
+  ] },
+] }
+steps = [
+  { press = [0, 6] },
+  { delay = 100 },
+  { release = [0, 6] },
+]
+expect = [["A"], [], ["B"], []]
+
+# A key released before the pause is reached does not wait there: the second
+# half follows the first.
+[[test]]
+name = "macro_released_early_runs_through_the_pause"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "delay", duration = "50ms" },
+    { operation = "pause_for_release" },
+    { operation = "tap", keycode = "B" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+]
+expect = [["B"], []]
+
+# Without a pause, releasing the macro key changes nothing.
+[[test]]
+name = "macro_without_pause_ignores_release"
+behavior.macro = { macros = [{ operations = [{ operation = "tap", keycode = "A" }] }] }
+steps = [
+  { press = [0, 6] },
+  { delay = 100 },
+  { release = [0, 6] },
+]
+expect = [["A"], []]
+
+# A character does not consume a one-shot modifier; the next physical key does.
+[[test]]
+name = "one_shot_is_not_consumed_by_text"
+behavior.macro = { macros = [{ operations = [{ operation = "text", text = "a" }] }] }
+steps = [
+  { tap = { pos = [0, 0], duration = 10 } },
+  { tap = { pos = [0, 6], duration = 10 } },
+  { tap = { pos = [0, 2], duration = 10 } },
+]
+expect = [["A"], [], [], ["LShift", "A"], []]
+
+# A macro key reports on the HID page of each key it taps, not the keyboard page.
+[[test]]
+name = "macro_routes_consumer_and_system_keys"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "AudioVolUp" },
+    { operation = "tap", keycode = "SystemSleep" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [{ consumer = ["AudioVolUp"] }, { consumer = [] }, { system = ["SystemSleep"] }, { system = [] }]
+
+# A `down` holds a consumer or system key on its own page until the `up`, so
+# both are down at once here.
+[[test]]
+name = "macro_holds_consumer_and_system_keys_until_up"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "AudioVolUp" },
+    { operation = "down", keycode = "SystemSleep" },
+    { operation = "up", keycode = "AudioVolUp" },
+    { operation = "up", keycode = "SystemSleep" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [{ consumer = ["AudioVolUp"] }, { system = ["SystemSleep"] }, { consumer = [] }, { system = [] }]
+
+# A mouse button clicks on the mouse page: `tap` and `down` press it, `tap`
+# and `up` release it.
+[[test]]
+name = "macro_routes_mouse_button_presses_and_releases"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "MouseBtn1" },
+    { operation = "down", keycode = "MouseBtn1" },
+    { operation = "up", keycode = "MouseBtn1" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [{ mouse = { buttons = 1 } }, { mouse = {} }, { mouse = { buttons = 1 } }, { mouse = {} }]
+
+[[test]]
+name = "macro_clicks_every_mouse_button"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "MouseBtn1" },
+    { operation = "tap", keycode = "MouseBtn2" },
+    { operation = "tap", keycode = "MouseBtn3" },
+    { operation = "tap", keycode = "MouseBtn4" },
+    { operation = "tap", keycode = "MouseBtn5" },
+    { operation = "tap", keycode = "MouseBtn6" },
+    { operation = "tap", keycode = "MouseBtn7" },
+    { operation = "tap", keycode = "MouseBtn8" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [
+  { mouse = { buttons = 1 } }, { mouse = {} },
+  { mouse = { buttons = 2 } }, { mouse = {} },
+  { mouse = { buttons = 4 } }, { mouse = {} },
+  { mouse = { buttons = 8 } }, { mouse = {} },
+  { mouse = { buttons = 16 } }, { mouse = {} },
+  { mouse = { buttons = 32 } }, { mouse = {} },
+  { mouse = { buttons = 64 } }, { mouse = {} },
+  { mouse = { buttons = 128 } }, { mouse = {} },
+]
+
+# A tapped movement key moves 5 and a tapped wheel key scrolls 1, each on its
+# own axis.
+[[test]]
+name = "macro_moves_and_scrolls_in_every_direction"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "tap", keycode = "MouseUp" },
+    { operation = "tap", keycode = "MouseDown" },
+    { operation = "tap", keycode = "MouseLeft" },
+    { operation = "tap", keycode = "MouseRight" },
+    { operation = "tap", keycode = "MouseWheelUp" },
+    { operation = "tap", keycode = "MouseWheelDown" },
+    { operation = "tap", keycode = "MouseWheelLeft" },
+    { operation = "tap", keycode = "MouseWheelRight" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [
+  { mouse = { y = -5 } }, { mouse = {} },
+  { mouse = { y = 5 } }, { mouse = {} },
+  { mouse = { x = -5 } }, { mouse = {} },
+  { mouse = { x = 5 } }, { mouse = {} },
+  { mouse = { wheel = -1 } }, { mouse = {} },
+  { mouse = { wheel = 1 } }, { mouse = {} },
+  { mouse = { pan = -1 } }, { mouse = {} },
+  { mouse = { pan = 1 } }, { mouse = {} },
+]
+
+# `MouseAccel0` held by the macro slows its movement to a quarter of 5, rounded
+# up, until the `up`; the accel key sends no report of its own.
+[[test]]
+name = "macro_mouse_accel_scales_movement_until_up"
+behavior.macro = { macros = [
+  { operations = [
+    { operation = "down", keycode = "MouseAccel0" },
+    { operation = "tap", keycode = "MouseRight" },
+    { operation = "up", keycode = "MouseAccel0" },
+    { operation = "tap", keycode = "MouseRight" },
+  ] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 100 } },
+]
+expect = [{ mouse = { x = 2 } }, { mouse = {} }, { mouse = { x = 5 } }, { mouse = {} }]
+
+# A one-key combo with no output swallows its macro key; the other macro still runs.
+[[test]]
+name = "single_key_combo_without_output_swallows_its_macro"
+behavior.combo = { combos = [{ actions = ["MACRO(0)"], output = "No" }] }
+behavior.macro = { macros = [
+  { operations = [{ operation = "tap", keycode = "A" }] },
+  { operations = [{ operation = "tap", keycode = "B" }] },
+] }
+steps = [
+  { tap = { pos = [0, 6], duration = 10 } },
+  { tap = { pos = [0, 7], duration = 10 } },
+]
+expect = [["B"], []]

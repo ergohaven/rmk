@@ -6,7 +6,6 @@
 use crate::core_traits::Runnable;
 
 pub mod adc;
-#[cfg(feature = "_ble")]
 pub mod battery;
 pub mod encoder_settings;
 pub mod iqs5xx;
@@ -59,14 +58,16 @@ pub trait InputDevice: Runnable {
     /// The event type produced by this input device
     type Event;
 
-    /// Read the raw input event
+    /// Read the raw input event.
+    /// Internal loops must yield or return, including on spurious readiness and I/O errors.
     async fn read_event(&mut self) -> Self::Event;
 }
 
-/// Macro to run multiple Runnable instances concurrently.
+/// Run multiple tasks concurrently by calling each task's `run` method.
 ///
-/// This macro simplifies running multiple input devices and processors
-/// that implement the `Runnable` trait.
+/// The `Runnable` trait is brought into scope for input devices and
+/// processors. Types with an inherent `run` method, such as `BleTransport`,
+/// can be included without implementing `Runnable`.
 ///
 /// # Example
 /// ```rust
@@ -80,11 +81,34 @@ pub trait InputDevice: Runnable {
 #[macro_export]
 macro_rules! run_all {
     ($( $dev:ident ),* $(,)*) => {{
-        use $crate::core_traits::Runnable;
+        use $crate::core_traits::Runnable as _;
         $crate::join_all!(
             $(
                 $dev.run()
             ),*
         )
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::KeyboardEvent;
+
+    #[rmk_macro::input_device(publish = KeyboardEvent)]
+    struct ReadyInput(u8);
+    impl ReadyInput {
+        async fn read_keyboard_event(&mut self) -> KeyboardEvent {
+            self.0 += 1;
+            assert!(self.0 <= 2, "input loop did not yield");
+            KeyboardEvent::key(0, 0, true)
+        }
+    }
+
+    #[test]
+    fn ready_input_yields_without_subscribers() {
+        let mut input = ReadyInput(0);
+        assert!(embassy_futures::poll_once(input.run()).is_pending());
+        assert_eq!(input.0, 1);
+    }
 }

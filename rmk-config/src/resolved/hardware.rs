@@ -3,15 +3,16 @@
 //! Leaf types are re-exported directly from the TOML configuration types
 //! Only types with genuine structural transformation are defined here.
 
-// Re-export leaf types from TOML config (now properly named and `pub`)
 pub use crate::board::{BoardConfig, UniBodyConfig};
 pub use crate::chip::{ChipModel, ChipSeries};
 pub use crate::communication::{CommunicationConfig, UsbInfo};
+use crate::validate_unlock_keys;
 pub use crate::{
-    BleConfig, ChipConfig, CommunicationProtocol, DependencyConfig, DisplayConfig, DisplayDriver, EncoderConfig,
-    EncoderResolution, I2cConfig, InputDeviceConfig, Iqs5xxConfig, Iqs5xxI2cConfig, JoystickConfig, KeyInfo,
-    LightConfig, MatrixConfig, MatrixType, OutputConfig, PinConfig, Pmw33xxConfig, Pmw33xxType, Pmw3610Config,
-    PointingDeviceConfig, SerialConfig, SpiConfig, SplitBoardConfig, SplitConfig,
+    BleConfig, ChipConfig, CommunicationProtocol, DependencyConfig, DfuTomlConfig, DisplayConfig, DisplayDriver,
+    EncoderConfig, EncoderResolution, ExternalFlashDriver, ExternalFlashTomlConfig, I2cConfig, InputDeviceConfig,
+    Iqs5xxConfig, Iqs5xxI2cConfig, JoystickConfig, KeyInfo, LightConfig, MatrixConfig, MatrixType, OutputConfig,
+    PinConfig, Pmw33xxConfig, Pmw33xxType, Pmw3610Config, PointingDeviceConfig, SerialConfig, SpiConfig,
+    SplitBoardConfig, SplitConfig,
 };
 
 /// Resolved storage hardware config
@@ -25,13 +26,19 @@ pub struct Storage {
 
 /// Resolved DFU partition config
 pub struct DfuConfig {
-    pub state_offset: u32,
-    pub state_size: u32,
-    pub dfu_offset: u32,
-    pub dfu_size: u32,
-    pub page_size: u32,
     pub led: Option<PinConfig>,
     pub unlock_keys: Vec<[u8; 2]>,
+    pub external_flash: Option<ExternalFlashConfig>,
+}
+
+/// Resolved config for external SPI flash used as DFU partition.
+pub struct ExternalFlashConfig {
+    pub driver: ExternalFlashDriver,
+    pub flash_size: u32,
+    /// Size of the DFU download partition; defaults to `flash_size` when unset.
+    pub dfu_partition_size: u32,
+    pub init_fn: Option<String>,
+    pub spi: SpiConfig,
 }
 
 /// Complete hardware configuration for init code generation.
@@ -46,6 +53,60 @@ pub struct Hardware {
     pub display: Option<DisplayConfig>,
     pub output: Vec<OutputConfig>,
     pub dependency: DependencyConfig,
+    pub battery: BatteryConfig,
+    pub peripheral_batteries: Vec<BatteryConfig>,
+}
+
+/// Battery inputs and indicator resolved for a single board.
+#[derive(Clone, Debug, Default)]
+pub struct BatteryConfig {
+    pub adc: Option<BatteryAdcConfig>,
+    pub charge_state: Option<PinConfig>,
+    pub charge_led: Option<PinConfig>,
+}
+
+/// ADC input and effective divider, including the fixed 1:5 VDDH divider.
+#[derive(Clone, Debug)]
+pub struct BatteryAdcConfig {
+    pub pin: String,
+    pub divider_measured: u32,
+    pub divider_total: u32,
+}
+
+impl BatteryConfig {
+    fn resolve(config: crate::BatteryTomlConfig, chip: &ChipModel) -> Result<Self, String> {
+        let adc = if let Some(pin) = config.battery_adc_pin {
+            if pin == "vddh" && !matches!(chip.chip.as_str(), "nrf52840" | "nrf52833") {
+                return Err("battery_adc_pin = vddh requires a chip with a VDDH ADC input".into());
+            }
+            if chip.chip == "nrf52820" {
+                return Err("nrf52820 has no ADC for battery_adc_pin".into());
+            }
+            if chip.series == ChipSeries::Stm32 {
+                return Err("Automatic battery ADC setup is unavailable for STM32; use a custom Rust reader".into());
+            }
+            let (divider_measured, divider_total) = if pin == "vddh" {
+                (1, 5)
+            } else {
+                (
+                    config.adc_divider_measured.unwrap_or(1),
+                    config.adc_divider_total.unwrap_or(1),
+                )
+            };
+            Some(BatteryAdcConfig {
+                pin,
+                divider_measured,
+                divider_total,
+            })
+        } else {
+            None
+        };
+        Ok(Self {
+            adc,
+            charge_state: config.charge_state,
+            charge_led: config.charge_led,
+        })
+    }
 }
 
 impl crate::KeyboardTomlConfig {
@@ -55,95 +116,39 @@ impl crate::KeyboardTomlConfig {
         let chip_config = self.get_chip_config();
         let communication = self.get_communication_config()?;
         let board = self.get_board_config()?;
-        let storage_toml = self.get_storage_config();
+        board.validate_pointing_ids()?;
+        let storage_toml = self.storage.unwrap_or_default();
         let storage = if storage_toml.enabled {
             Some(Storage {
                 start_addr: storage_toml.start_addr.unwrap_or(0),
-                num_sectors: storage_toml.num_sectors.unwrap_or(2),
+                num_sectors: if self.dfu.is_some() {
+                    if self.storage_user_set {
+                        storage_toml.num_sectors.unwrap_or(8)
+                    } else {
+                        8
+                    }
+                } else {
+                    storage_toml.num_sectors.unwrap_or(2)
+                },
                 clear_storage: storage_toml.clear_storage.unwrap_or(false),
                 clear_layout: storage_toml.clear_layout.unwrap_or(false),
-                no_action_layer_start: self.layout.as_ref().and_then(|layout| layout.no_action_layer_start),
+                no_action_layer_start: self.keymap.as_ref().and_then(|keymap| keymap.no_action_layer_start),
             })
         } else {
             None
         };
-        let (dfu, dfu_auto_calc) = match self.get_dfu_config() {
-            Some(d) => {
-                let vals = [d.state_offset, d.state_size, d.dfu_offset, d.dfu_size];
-                let any_set = vals.iter().any(|v| v.is_some());
-                let all_set = vals.iter().all(|v| v.is_some());
-
-                if any_set && !all_set {
-                    return Err(
-                        "If you set one of state_offset/state_size/dfu_offset/dfu_size, you must set all four"
-                            .to_string(),
-                    );
-                }
-
-                if all_set {
-                    (
-                        Some(DfuConfig {
-                            state_offset: d.state_offset.unwrap(),
-                            state_size: d.state_size.unwrap(),
-                            dfu_offset: d.dfu_offset.unwrap(),
-                            dfu_size: d.dfu_size.unwrap(),
-                            page_size: d.page_size.unwrap_or(4096),
-                            led: d.led.clone().map(|pin| PinConfig { pin, low_active: false }),
-                            unlock_keys: d.unlock_keys.clone().unwrap_or_default(),
-                        }),
-                        false,
-                    )
-                } else {
-                    // Auto-calculate: use ALL remaining flash for ACTIVE+DFU+storage
-                    // layout: [28K bootloader+state][ACTIVE][DFU(ACTIVE+1page)][storage]
-                    let flash_size = d.flash_size.unwrap_or(2 * 1024 * 1024);
-                    let page_size = d.page_size.unwrap_or(4096);
-                    let bootloader_state_end = 0x7000u32; // 28K
-                    // Reserve 128 KB for storage behind DFU, DFU auto-calc always assumes this
-                    let storage_size = 32u32 * page_size;
-                    let remaining = flash_size - bootloader_state_end - storage_size;
-                    let active_size = (remaining - page_size) / 2;
-                    (
-                        Some(DfuConfig {
-                            state_offset: 0x6000,
-                            state_size: 0x1000,
-                            dfu_offset: bootloader_state_end + active_size,
-                            dfu_size: active_size + page_size,
-                            page_size,
-                            led: d.led.clone().map(|pin| PinConfig { pin, low_active: false }),
-                            unlock_keys: d.unlock_keys.clone().unwrap_or_default(),
-                        }),
-                        true,
-                    )
-                }
-            }
-            None => (None, false),
-        };
-        if self.storage_user_set
-            && dfu_auto_calc
-            && let Some(storage_cfg) = &self.storage
-        {
-            if let Some(num_sectors) = storage_cfg.num_sectors
-                && num_sectors != 32
-            {
-                eprintln!(
-                    "warning: `[storage].num_sectors = {}` is ignored with DFU auto-calculation. The DFU layout always reserves 128 KB (32 sectors) at the end of flash. Values < 32 waste reserved space, values > 32 risk flash overflow.",
-                    num_sectors
-                );
-            }
-            if let Some(start_addr) = storage_cfg.start_addr
-                && start_addr != 0
-            {
-                eprintln!(
-                    "warning: `[storage].start_addr = {:#x}` has no effect with DFU. The storage partition is automatically placed after the DFU partition.",
-                    start_addr
-                );
-            }
-        }
-        let light = self.get_light_config();
-        let display = self.get_display_config();
+        let dfu = self.split_side_dfu(None)?;
+        let light = self.light.clone().unwrap_or_default();
+        let display = self.display.clone();
         let output = self.get_output_config()?;
         let dependency = self.get_dependency_config();
+        let battery = BatteryConfig::resolve(self.resolve_battery_config(None)?, &chip)?;
+        let peripheral_batteries = match &board {
+            BoardConfig::Split(split) => (0..split.peripheral.len())
+                .map(|id| BatteryConfig::resolve(self.resolve_battery_config(Some(id))?, &chip))
+                .collect::<Result<Vec<_>, _>>()?,
+            _ => Vec::new(),
+        };
         Ok(Hardware {
             chip,
             chip_config,
@@ -155,6 +160,175 @@ impl crate::KeyboardTomlConfig {
             display,
             output,
             dependency,
+            battery,
+            peripheral_batteries,
         })
+    }
+
+    /// Resolve a raw TOML DFU section into the resolved [`DfuConfig`].
+    ///
+    /// `section` names the source for error messages (e.g. `"[dfu]"` or
+    /// `"[split.peripheral[0].dfu]"`).
+    fn resolve_dfu(&self, dfu: Option<&DfuTomlConfig>, section: &str) -> Result<Option<DfuConfig>, String> {
+        match dfu {
+            Some(d) => {
+                let unlock_keys = d.unlock_keys.clone().unwrap_or_default();
+                validate_unlock_keys(section, &unlock_keys, self.layout.as_ref())?;
+                let external_flash = if let Some(ef) = &d.external_flash {
+                    let init_fn = if matches!(ef.driver, ExternalFlashDriver::Custom) {
+                        let path = ef
+                            .init_fn
+                            .as_ref()
+                            .ok_or("[dfu.external_flash] init_fn is required when driver = \"custom\"")?;
+                        Some(path.clone())
+                    } else {
+                        ef.init_fn.clone()
+                    };
+                    let dfu_partition_size = ef.dfu_partition_size.unwrap_or(ef.flash_size);
+                    validate_dfu_partition_size(ef.flash_size, dfu_partition_size)?;
+                    Some(ExternalFlashConfig {
+                        driver: ef.driver.clone(),
+                        flash_size: ef.flash_size,
+                        dfu_partition_size,
+                        init_fn,
+                        spi: ef.spi.clone(),
+                    })
+                } else {
+                    None
+                };
+                Ok(Some(DfuConfig {
+                    led: d.led.clone().map(|pin| PinConfig { pin, low_active: false }),
+                    unlock_keys,
+                    external_flash,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Resolve the effective DFU config for a split side.
+    ///
+    /// `None` (the central side) uses `[split.central.dfu]` when present,
+    /// otherwise the global `[dfu]` section. A peripheral's own
+    /// `[split.peripheral[i].dfu]` section, when present, **completely
+    /// replaces** the global one; otherwise the peripheral falls back to the
+    /// global section too. A side's own section never merges with the global
+    /// one.
+    pub fn split_side_dfu(&self, side: Option<usize>) -> Result<Option<DfuConfig>, String> {
+        match side {
+            Some(id) => match self
+                .split
+                .as_ref()
+                .and_then(|s| s.peripheral.get(id))
+                .and_then(|p| p.dfu.as_ref())
+            {
+                Some(d) => self.resolve_dfu(Some(d), &format!("[split.peripheral[{id}].dfu]")),
+                None => self.resolve_dfu(self.dfu.as_ref(), "[dfu]"),
+            },
+            None => match self.split.as_ref().and_then(|s| s.central.dfu.as_ref()) {
+                Some(d) => self.resolve_dfu(Some(d), "[split.central.dfu]"),
+                None => self.resolve_dfu(self.dfu.as_ref(), "[dfu]"),
+            },
+        }
+    }
+}
+
+/// The DFU download partition must fit the flash and respect the sector erase
+/// granularity, matching what [`crate::resolved`] hands to codegen and what
+/// the W25Q driver can actually erase.
+fn validate_dfu_partition_size(flash_size: u32, dfu_partition_size: u32) -> Result<(), String> {
+    if dfu_partition_size == 0 || dfu_partition_size > flash_size {
+        return Err(format!(
+            "[dfu.external_flash] dfu_partition_size ({dfu_partition_size}) must be between 1 and flash_size ({flash_size})"
+        ));
+    }
+    if !dfu_partition_size.is_multiple_of(4096) {
+        return Err(format!(
+            "[dfu.external_flash] dfu_partition_size ({dfu_partition_size}) must be a multiple of 4096 (sector erase size)"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crate::KeyboardTomlConfig;
+
+    fn config_from_toml(toml: &str) -> KeyboardTomlConfig {
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("rmk-config-hw-{}-{}.toml", std::process::id(), unique));
+        fs::write(&path, toml).unwrap();
+        let config = KeyboardTomlConfig::new_from_toml_path_with_event_defaults(&path);
+        let _ = fs::remove_file(&path);
+        config
+    }
+
+    fn external_flash_toml(dfu_partition_size: Option<u32>) -> String {
+        format!(
+            r#"
+[keyboard]
+name = "test"
+product_name = "test"
+vendor_id = 0x4c4b
+product_id = 0x4643
+manufacturer = "RMK"
+chip = "rp2040"
+usb_enable = true
+
+[dfu.external_flash]
+driver = "w25q"
+flash_size = 8388608
+{partition_line}
+[dfu.external_flash.spi]
+instance = "SPI0"
+sck = "PIN_18"
+mosi = "PIN_19"
+miso = "PIN_16"
+
+[layout]
+rows = 1
+cols = 1
+
+[matrix]
+row_pins = ["PIN_9"]
+col_pins = ["PIN_10"]
+"#,
+            partition_line = dfu_partition_size
+                .map(|s| format!("dfu_partition_size = {s}\n"))
+                .unwrap_or_default(),
+        )
+    }
+
+    #[test]
+    fn dfu_partition_size_defaults_to_full_flash() {
+        let config = config_from_toml(&external_flash_toml(None));
+        let dfu = config.hardware().unwrap().dfu.unwrap();
+        assert_eq!(dfu.external_flash.unwrap().dfu_partition_size, 8388608);
+    }
+
+    #[test]
+    fn dfu_partition_size_accepts_sector_aligned_subset() {
+        let config = config_from_toml(&external_flash_toml(Some(2097152)));
+        let dfu = config.hardware().unwrap().dfu.unwrap();
+        assert_eq!(dfu.external_flash.unwrap().dfu_partition_size, 2097152);
+    }
+
+    #[test]
+    fn dfu_partition_size_rejects_unaligned_size() {
+        let config = config_from_toml(&external_flash_toml(Some(12345)));
+        let err = config.hardware().err().expect("expected validation error");
+        assert!(err.contains("multiple of 4096"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn dfu_partition_size_rejects_size_beyond_flash() {
+        for size in [0, 8388609, u32::MAX] {
+            let config = config_from_toml(&external_flash_toml(Some(size)));
+            let err = config.hardware().err().expect("expected validation error");
+            assert!(err.contains("between 1 and"), "unexpected error for {size}: {err}");
+        }
     }
 }

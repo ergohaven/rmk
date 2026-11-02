@@ -37,13 +37,17 @@ const K04_USER_USB_OUTPUT: u8 = 38;
 const K04_USER_BATTERY_LEVEL: u8 = 39;
 const K04_USER_BT_CLEAR_PEER: u8 = 40;
 
-const CLEAR_PEER_HOLD: Duration = Duration::from_secs(5);
+const USER_KEY_HOLD: Duration = Duration::from_secs(5);
 
 /// Processes Ergohaven's historical UserN assignments.
+///
+/// Holding a profile key for 5 s forgets that slot's bond, switches to it and
+/// re-pairs; holding the clear-peer key resets the split peer. Any other key
+/// event disarms the hold.
 #[processor(subscribe = [ActionEvent, KeyboardEvent], poll_interval = 50)]
 pub struct ErgohavenUserKeys {
-    clear_peer_deadline: Option<Instant>,
-    clear_peer_key: Option<KeyboardEvent>,
+    /// Deadline, the physical press that armed it, and the normalized BLE id.
+    hold: Option<(Instant, KeyboardEvent, u8)>,
 }
 
 impl Default for ErgohavenUserKeys {
@@ -54,10 +58,7 @@ impl Default for ErgohavenUserKeys {
 
 impl ErgohavenUserKeys {
     pub const fn new() -> Self {
-        Self {
-            clear_peer_deadline: None,
-            clear_peer_key: None,
-        }
+        Self { hold: None }
     }
 
     async fn on_action_event(&mut self, event: ActionEvent) {
@@ -67,11 +68,14 @@ impl ErgohavenUserKeys {
 
         let ble_id = k04_common_ble_id(id).unwrap_or(id);
         if event.keyboard_event.pressed {
-            if ble_id == USER_BT_CLEAR_PEER {
-                self.arm_clear_peer(event.keyboard_event);
+            let holdable = ble_id < NUM_BLE_PROFILE as u8 || (cfg!(feature = "split") && ble_id == USER_BT_CLEAR_PEER);
+            if holdable {
+                self.hold = Some((Instant::now() + USER_KEY_HOLD, event.keyboard_event, ble_id));
             }
             return;
         }
+        // A tap sends press and release back to back, so cancel what the press started.
+        self.hold = None;
 
         match id {
             K04_USER_BT_OUTPUT => {
@@ -113,40 +117,25 @@ impl ErgohavenUserKeys {
     }
 
     async fn on_keyboard_event(&mut self, event: KeyboardEvent) {
-        if self.clear_peer_deadline.is_some() && Some(event) != self.clear_peer_key {
-            self.clear_peer_deadline = None;
-            self.clear_peer_key = None;
+        if self.hold.is_some_and(|(_, key, _)| key != event) {
+            self.hold = None;
         }
     }
 
     async fn poll(&mut self) {
-        let Some(deadline) = self.clear_peer_deadline else {
+        let Some((_, _, ble_id)) = self.hold.take_if(|(deadline, _, _)| *deadline <= Instant::now()) else {
             return;
         };
-        if Instant::now() < deadline {
-            return;
+
+        if ble_id < NUM_BLE_PROFILE as u8 {
+            info!("Profile key held: clearing bond on profile {}", ble_id);
+            BLE_PROFILE_CHANNEL.send(BleProfileAction::ClearSlot(ble_id)).await;
+            BLE_PROFILE_CHANNEL.send(BleProfileAction::Switch(ble_id)).await;
         }
-
-        self.clear_peer_deadline = None;
-        self.clear_peer_key = None;
-
         #[cfg(feature = "split")]
-        {
+        if ble_id == USER_BT_CLEAR_PEER {
             publish_event(ClearPeerEvent);
             info!("Clear peer");
-        }
-    }
-
-    fn arm_clear_peer(&mut self, event: KeyboardEvent) {
-        #[cfg(feature = "split")]
-        {
-            self.clear_peer_deadline = Some(Instant::now() + CLEAR_PEER_HOLD);
-            self.clear_peer_key = Some(event);
-        }
-
-        #[cfg(not(feature = "split"))]
-        {
-            let _ = event;
         }
     }
 }

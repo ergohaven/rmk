@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -7,25 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Add Azoteq IQS5xx (IQS550 / IQS572 / IQS525) trackpad driver, used by Azoteq's TPS43/TPS65 modules. Supports operation with or without an `RDY` pin and is configurable via `keyboard.toml` on nRF52 / RP2040; currently publishes single-finger relative cursor movement only ([#29](https://github.com/HaoboGu/rmk/issues/29))
-- Add PMW3360 / PMW3389 optical mouse sensor support
-- Add `report_hz` option for Pmw3610Device
-- Add `bootmagic` config: hold a designated key during boot to drop into the chip bootloader. Works on unibody and on each half of a split independently. Particularly useful for split peripherals whose BOOTSEL button is physically inaccessible ([#457](https://github.com/HaoboGu/rmk/issues/457)).
-- Make `rmk::boot` module public so user code can call `boot::jump_to_bootloader()` directly
-- Add auto mouse layer behavior: automatically activate a configured layer when X/Y cursor motion from a pointing device is detected, and deactivate it after a `timeout` of inactivity ([#781](https://github.com/HaoboGu/rmk/issues/781)) with `deactivate_on_key` (with `extra_mouse_keys`) and `reset_timeout_on_key` options; entry capacity is auto-derived from `keyboard.toml`, overridable via `[rmk].auto_mouse_layer_max_num`
-- Add Vial Key Override support backed by RMK Fork: eight editable entries by default, immediate application, flash persistence, layer masks, modifier suppression, QMK AND/OR matching, enable state, and activation/deactivation option bits
-
 ### Changed
 
-- Increase Trouble packet and event queues for split BLE builds, leaving single-link targets at their existing memory footprint
-- **BREAKING**: the Rust `Fork` API replaces `kept_modifiers` with its inverse, `suppressed_modifiers`, and adds `layers` plus Vial-compatible `options`; `keyboard.toml` keeps the existing `kept_modifiers` field and behavior
-- **BREAKING**: `CompositeReportType` discriminants are renumbered (`Keyboard=1`, `Mouse=2`, `Media=3`, `System=4`): the BLE report map carries the keyboard report as id 1, and the mouse/media/system report ids shift to 2/3/4 on both BLE and USB. USB hosts re-read report ids on every enumeration so nothing changes for them; BLE hosts bonded to an older firmware must forget and re-pair the keyboard
-- **BREAKING**: `PollingController::INTERVAL` constant is now `PollingController::interval()` method, allowing dynamic interval configuration at runtime
-- **BREAKING**: PointingDevice and PointingProcessor replace Pmw3610Device and Pmw3610Processor. For the Pmw3610 the calls of ::new() for these stay the same, only the name changes. If using Rust to configure the keyboard change the calls, if using Toml nothing needs to be done.
-- **BREAKING**: `MouseKeyConfig` fields renamed: `time_to_max` → `ticks_to_max`, `wheel_time_to_max` → `wheel_ticks_to_max`, `wheel_max_speed_multiplier` → `wheel_max_speed`
-- Refactor mouse key state machine into a dedicated module with per-direction press counts, independent movement/wheel repeat scheduling, and configurable acceleration curves
-- Optimize the timing for motion read and sending reports on the PMW3610
-- Correct the delay length of PMW3610 to the precise value
+- Increase Trouble event queues for split BLE builds (`connection-event-queue-size-8`, shared with `dongle` because Trouble rejects two values for the same queue)
+- **BREAKING**: the Rust `Fork` API replaces `kept_modifiers` with its inverse, `suppressed_modifiers`, and adds Vial-compatible `options`; `keyboard.toml` keeps the existing `kept_modifiers` field and behavior
+- **BREAKING**: Rename `KeyboardEventPos` to `KeyboardEventSource` and `KeyboardEvent::pos` to `source`.
+- **BREAKING**: Use bare `#[register_processor]` to run the type's `Runnable`. See [processor migration](https://rmk.rs/docs/migration/v09_v10#processors).
+- **BREAKING**: Keyboard macros are reworked around `MacroOp` lists.
+- **BREAKING**: Bump Rynk protocol version to 0.2: now `GetMacro`/`SetMacro` read and write a whole macro by index, `BleStatus` gained a `bonded` field, changing its wire format and that of `ConnectionStatus`, and `Fork` gained a `layers` field.
+- **BREAKING**: Serial numbers no longer contain the RMK version, so they stay the same across upgrades. USB, BLE, and Rynk report a protocol marker followed by a configured device serial ID or one derived from the hardware UID. `DeviceConfig.serial_number` now owns the complete string built by `build_serial_number`; `DeviceConfig` is `Clone` rather than `Copy`. `RMK_BUILD_INFO` is removed. See [serial number migration](https://rmk.rs/docs/migration/v09_v10#serial-numbers).
+
+### Added
+
+- Add Vial Key Override support backed by RMK Fork: eight editable entries by default, immediate application, flash persistence, layer masks, modifier suppression, QMK AND/OR matching, enable state, and activation/deactivation option bits
+- `KeyboardEvent::keycode` executes a direct keycode without keymap, combo or fork lookup; `Virtual(u8)` remains a software keymap position.
+- Pointer acceleration in `PointingProcessor` for every pointing device: motion faster than a threshold is scaled up in proportion to its speed, up to a maximum, in cursor mode (`acceleration = { from, max }` in `keyboard.toml`) and scroll mode (`scroll_acceleration`). Off by default.
+- Fractional cursor speed: `CursorConfig::divisor_x`/`divisor_y` divide cursor motion, carrying the remainder between motions, so a cursor slower than the sensor loses no movement and still accelerates.
+- `TouchEvent`: raw multi-touch scans from touchpads, where up to five contacts are, by slot. They stay on the board the touchpad is on. `Iqs5xxMode::RawTouch` publishes them in place of cursor motion.
+- Touchpad gestures as keymap positions: a `KeyboardEvent` at `KeyboardEventSource::Touch` presses a `TouchGesture` of a touchpad, whose action comes from the keymap's touch map (`KeymapData::with_touch`), per layer like encoders. A gesture a layer leaves transparent takes its action from the layer below.
+- `PointingProcessor` turns a pointing device's own `H`/`V` axes into wheel and pan in every mode, scaled by `PointingProcessorConfig::device_scroll`. `ScrollConfig` is now `{ wheel, pan }`, one `ScrollAxis` each, so the same type serves scroll mode and device scrolling.
+- Add timer-only processors and combine polling with resettable deadlines through `#[processor]`. Both TOML and Rust projects implement `DeadlineProcessor::deadline()` and `on_deadline()` directly.
+- Macro operations accept any single action (`WM`, `MO`, `OSM`, ...) without the `vial` feature, and a new `pause_for_release` operation (`MacroOp::PauseForRelease`) runs the rest of the macro when the macro key is released
+- PMW3610 `force_awake` now follows the keyboard's sleep state, ZMK style: the sensor is held in RUN while the keyboard is awake and released to its REST modes when the idle sleep starts. `PointingDriver` gained a default-implemented `set_low_power` hint and `PointingDevice` subscribes to `SleepStateEvent`; each sensor in `keyboard.toml` reserves its subscriber slot automatically.
+- Make Trouble BLE roles explicit, document environment-variable memory tuning, update the nRF52832 examples to peripheral-only SDC, and derive split notification capacity from Trouble's configured packet-pool MTU.
+- Give dongles a USB DFU runtime interface: a DETACH in the 30 s after plug-in reboots into the bootloader (`jump_to_bootloader`), so a dongle can be updated with `dfu-util` or rmk-gui although its host protocol is relayed to the keyboard.
+- Publish the dongle's state.
+- Add `dfu_ext` feature for DFU writes to external SPI flash (e.g. W25Q64), so boards with limited internal flash can store the new firmware image externally.
+- Expose whether the active BLE profile is bonded via `BleStatus::bonded`, so LEDs and displays can tell a paired-but-disconnected profile from an empty slot.
+- Make `rmk::state::current_ble_status()` and `current_connection_status()` public, so user code can read the current status without subscribing to `ConnectionStatusChangeEvent`.
+- Forks accept a `layers` filter, so they only fire for keys from those layers.
+- Forks accept a list of triggers, and their outputs are optional: an omitted `positive_output` is the trigger, and an omitted `negative_output` leaves the key alone.
 
 ### Fixed
 
@@ -36,14 +51,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep BLE split keyboards with a 125 Hz pointing device on one fixed 7.5 ms cadence across every link, changing parameters only for deep sleep
 - Serialize BLE PHY/connection-parameter procedures with bounded collision retries so adding a split link cannot monopolize the executor
 - Send only the serialized split-message prefix over BLE, remove per-frame pointing logs, and preserve PMW motion that exceeds one HID report
+- Caret taps preserve held keys and modifiers by executing through Keyboard.
+- Re-pairing a cleared BLE profile with the same host no longer leaves the profile marked as removed.
+- Apply processor registration conditions to both construction and execution.
+- Reject zero processor polling intervals at compile time.
+- `[chip.nrf52833] dcdc_reg0_voltage` was ignored; it now sets the REG0 output voltage.
+- Keep other physically held one-shot modifiers active when one is released
+- Preserve unresolved keys from unrelated combos when another combo triggers, instead of silently discarding their press events
+- Identify the keyboard's HID report characteristics on the dongle by their Report Reference descriptor instead of `HidService`'s declaration order.
+- Fix the ESP32 display I2C initialization generated by `#[rmk_keyboard]`.
+- Fix UTF-8 panics when non-ASCII names are used in `keyboard.toml` aliases, and accept Unicode whitespace between keymap actions
+- Honour `SET_PROTOCOL` on the boot-subclass keyboard interface. The keyboard interface now accepts both modes and reports the selected one
+- Reboot instead of re-running trouble's host runner after it stops, and when a split link the host still holds is unknown to the controller.
+
+## [0.9.0] - 2026-08-27
+
+### Added
+
+#### Connectivity
+
+- Add BLE dongle support (`dongle` Cargo feature). A dongle is a USB-attached nRF board that relays a wireless keyboard's HID reports to the host, so the keyboard works on machines with no usable Bluetooth. The keyboard reserves a bond slot of its own for the dongle — profile cycling never reaches it — and `User(N+5)` (`SwitchToDongle`) switches to it; holding that key for 5 seconds clears the bond and goes looking for another dongle. The dongle also relays the host protocol, so Vial and Rynk keep working through it ([#1028](https://github.com/rmk-rs/rmk/pull/1028), [#1047](https://github.com/rmk-rs/rmk/pull/1047)). See [examples/use_rust/nrf_dongle](https://github.com/rmk-rs/rmk/tree/main/examples/use_rust/nrf_dongle)
+- Add nRF54 support (nRF54L15 and nRF54LM20)
+- Add ESP32-H2 support
+- Add an `nrf52820_ble` chip feature ([#1049](https://github.com/rmk-rs/rmk/pull/1049))
+- Add SiFli SF32LB52x BLE support
+- Hold a BLE profile key for 5 seconds to forget that profile's bond and re-pair, so you can move a profile to a different host without wiping storage ([#1045](https://github.com/rmk-rs/rmk/pull/1045))
+- Add BLE passkey handling on the initial connection, for hosts that require pairing confirmation ([#756](https://github.com/rmk-rs/rmk/issues/756))
+- Add an option to disable the BLE battery service
+- Report the split peripheral's battery level to the central, and configure the peripheral's battery ADC from `keyboard.toml`
+- Expose battery levels from configured split peripherals through standard Battery Service instances on the central's BLE GATT server, including host-readable and notifiable levels for each peripheral
+- Add configurable `battery_user_description` values for the central and split peripheral Battery Level characteristics through `[ble]`, `[split.central]`, and `[[split.peripheral]]`, with descriptive defaults for each battery service
+- Advertise the boot keyboard protocol on the primary HID interface, so the keyboard works in BIOS/UEFI and other boot-protocol-only hosts
+- Add USB logging support for split peripherals ([#1000](https://github.com/rmk-rs/rmk/pull/1000))
+- Add BLE connection subrating for the split link (`subrating` feature), see [low power](https://rmk.rs/docs/features/low_power) ([#1008](https://github.com/rmk-rs/rmk/pull/1008), [#1077](https://github.com/rmk-rs/rmk/pull/1077))
+- Stream keyboard state to the dongle over GATT: keys, modifiers, layer, WPM, sleep and battery ([#1086](https://github.com/rmk-rs/rmk/pull/1086))
+- Add a builder for the USB transport
+
+#### Displays and other outputs
+
+- Add OLED display support (`display` Cargo feature) with a `[display]` section in `keyboard.toml`. Ships `oled_async` drivers for SH1106, SH1107, SH1108 and SSD1309, plus `lcd-async` for color panels. Default renderers show layer, connection, and battery state, blank while the keyboard sleeps, and honour configurable render/poll intervals. Custom renderers are supported — see [examples/use_rust/custom_renderer](https://github.com/rmk-rs/rmk/tree/main/examples/use_rust/custom_renderer). On splits, the central forwards display state events to peripherals so both halves can show the same status
+- Add Plover HID stenography support (`steno` Cargo feature): a steno HID descriptor and USB endpoint, an `Action::Steno` keycode with `STN(key)` syntax in `keyboard.toml`, and a live-state reporter
+- Flush only the dirty rectangle in `LcdAsyncDisplay` ([#1070](https://github.com/rmk-rs/rmk/pull/1070))
+
+#### Behaviors
+
+- Add `bootmagic` config: hold a designated key during boot to drop into the chip bootloader. Works on unibody and on each half of a split independently. Particularly useful for split peripherals whose BOOTSEL button is physically inaccessible ([#457](https://github.com/rmk-rs/rmk/issues/457)).
+- Make `rmk::boot` module public so user code can call `boot::jump_to_bootloader()` directly
+- Add auto mouse layer behavior: automatically activate a configured layer when X/Y cursor motion from a pointing device is detected, and deactivate it after a `timeout` of inactivity ([#781](https://github.com/rmk-rs/rmk/issues/781)) with `deactivate_on_key` (with `extra_mouse_keys`) and `reset_timeout_on_key` options; entry capacity is auto-derived from `keyboard.toml`, overridable via `[rmk].auto_mouse_layer_max_num`
+- Add `quick_tap_timeout` morse profile option: re-pressing a morse/tap-hold key within the window after its last release fires the tap action immediately and keeps it held, so the OS auto-repeats the tap instead of triggering the hold action
+- Add one-shot sticky modifiers, with a `quick_release` option under `[behavior.one_shot_modifiers]`
+- Add a `prior_idle_time` cooldown for combos: a combo won't fire if another key was pressed within the window, which keeps fast rolls from triggering combos accidentally
+- Support nested actions in tap-hold / morse configuration
+- Add `PDF(n)` (set default layer) to `keyboard.toml` keymaps
+- Add a bilateral marker to `[layout].map`, so same-hand modifiers still work when `unilateral_tap` is enabled
+- Allow overriding `flow_tap` per morse profile
+- Expose held modifier combinations in config ([#999](https://github.com/rmk-rs/rmk/pull/999))
+- Add conversion for space cadet keys
+- Support the full extended Vial macro format ([#989](https://github.com/rmk-rs/rmk/pull/989))
+- Add `[host].insecure` (renamed from `vial_insecure`, which still parses) to start the host configurator unlocked
+- Embed a version stamp in the USB serial number, so a host can tell which firmware build it is talking to
+- Shrink the in-RAM keymap by storing each tap-hold's timing profile as a `u8` index into a small deduplicated morse profile table (`MorsesConfig::profiles`) instead of an inline 8-byte `MorseProfile`. `KeyAction::TapHold` drops from 16 to 7 bytes, which also removes the profile's 8-byte alignment padding across every `KeyAction`-sized buffer — roughly a 3 KB RAM saving on a 5×14×5 board at no flash cost. An index with no table entry falls back to the default profile. Table capacity is configurable via `[rmk] morse_profile_max_num` (default 16, max 255); `keyboard.toml` users keep referencing profiles by name (the macro interns them automatically)
+
+#### Input devices
+
+- Add Azoteq IQS5xx (IQS550 / IQS572 / IQS525) trackpad driver, used by Azoteq's TPS43/TPS65 modules. Supports operation with or without an `RDY` pin and is configurable via `keyboard.toml` on nRF52 / RP2040; currently publishes single-finger relative cursor movement only ([#29](https://github.com/rmk-rs/rmk/issues/29))
+- Add PMW3360 / PMW3389 optical mouse sensor support
+- Add `report_hz` option for Pmw3610Device
+- Add per-layer pointing device modes (Cursor / Scroll / Sniper / Caret), so the same trackball scrolls on one layer and moves the cursor on another
+- Add opt-in debounce support for rotary encoders
+
+#### Experimental
+
+- Add [Rynk](https://rmk.rs/docs/features/rynk), RMK's native host protocol for on-the-fly configuration over USB and BLE — an alternative to Vial that covers every RMK feature (keymap, layers, encoders, combos, forks, tap-dance/morse, macros, and behavior config), plus live status (current layer, matrix tester, WPM, HID indicators, battery, connection/BLE profile) and device management (reboot, bootloader, storage reset). Enable with the `rynk` Cargo feature and `[host] rynk_enabled = true`; it is mutually exclusive with Vial. Dangerous operations (bootloader, storage reset, matrix tester, clearing a BLE bond) are gated behind a physical-presence unlock (`[host].unlock_keys`). Host client crates live in the new `rynk/` workspace ([#962](https://github.com/rmk-rs/rmk/pull/962)). **Experimental**: the wire protocol and host crates can change in any release, the host crates are not published to crates.io, and there is no ready-made desktop app yet. Vial stays the default
+- Rynk `GetBehaviorConfig`/`SetBehaviorConfig` now carry the default morse profile and the flow-tap prior-idle window, so a Rynk host can read and edit the same behavior settings Vial exposes; flow-tap now resolves per-key profile → default profile → `[behavior.morse] enable_flow_tap` ([#1054](https://github.com/rmk-rs/rmk/pull/1054))
+- Add DFU firmware update over USB, so a board with a compatible bootloader can be reflashed without pressing BOOTSEL. `dfu_rp` (RP2040) and `dfu_nrf` (nRF52840) pair RMK with the [rmk-boot](https://github.com/rmk-rs/rmk-boot) embassy-boot bootloader, which splits flash into ACTIVE and DFU slots with automatic rollback; `dfu_split` forwards firmware to peripherals over a wired split link; `dfu_lock` gates downloads behind a physical key press. Partition offsets come from the linker symbols in the `rmk-memory.x` that rmk-boot generates (rename it to `memory.x`) — `init_flash_from_linkerscript` reads them at runtime, so no address is ever hardcoded ([#1018](https://github.com/rmk-rs/rmk/pull/1018)). **Experimental**: enabling it repartitions flash and the layout can change in any release. `dfu_split` is wired-split only; combining it with a BLE build is rejected at compile time
+- Add `zsa_voyager_bl` for the ZSA Voyager's ignition DFU bootloader
+
+#### Development
+
+- Add a TOML scenario test framework: keyboard behavior cases are written as TOML under `rmk/tests/scenarios/` and expanded into ordinary Rust tests by `run_tests!`, including rotary encoder input. See [the scenario README](https://github.com/rmk-rs/rmk/blob/main/rmk/tests/scenarios/README.md)
+
+### Changed
+
+- **BREAKING**: `run_rmk` is replaced by explicit transports plus `run_all!`. Every component — matrix, storage, input devices, processors, the keyboard, transports, the watchdog — is a runnable handed to a single `run_all!` invocation, instead of being wired through `join`/`run_devices!`/`EVENT_CHANNEL`. Build a `HostService` once, then attach it to a `UsbTransport` and/or `BleTransport` with `.with_host_service(&host_service)`
+- **BREAKING**: input devices, input processors, and controllers are unified into one event/processor model. The `Controller`, `EventController`, and `InputProcessor` traits, `run_processor_chain!`, and the central `Event` enum are gone; define events with `#[event]` / `#[derive(Event)]`, input devices with `#[input_device(publish = ...)]`, and handlers with `#[processor(subscribe = [...])]`. `Runnable` moves from `rmk::input_device` to `rmk::core_traits`, and its `run` returns `!`
+- **BREAKING**: the BLE transport now owns the BLE stack. `build_ble_stack` and `HostResources` are gone from user code — pass the controller and address to `BleTransport::new(controller, address, rmk_config)` and to `run_rmk_split_peripheral(id, controller, address)`, which no longer takes storage. The ChaCha RNG dependencies (`rand_core` / `rand_chacha`) are no longer needed
+- **BREAKING**: the `controller` and `col2row` Cargo features are removed, and `vial_lock` is renamed to `host_lock`
+- **BREAKING**: `watchdog` is now a default Cargo feature. It is supported on RP2040, nRF52, and ESP32 and is a no-op elsewhere; `keyboard.toml` users get it automatically, Rust API users pass a watchdog runner to `run_all!`. Disable it by listing your features without `watchdog` under `default-features = false`
+- **BREAKING**: the global channel knobs in `[rmk]` (`event_channel_size`, `controller_channel_size`, `controller_channel_pubs`, `controller_channel_subs`) are replaced by per-event settings under `[event.<name>]` (`channel_size`, `pubs`, `subs`)
+- **BREAKING**: `keyboard.toml` layout is restructured to separate the electrical matrix, physical layout, and logical keymap. `[layout].matrix_map` becomes `[layout].map`; per-layer key actions move out of `[layout]` (the old `[[layer]]` tables, `keymap`, and `encoder_map`) into a new `[keymap]` table — `[keymap].layers` plus one `[[keymap.layer]]` per layer with `keys` and optional `encoders`. `[layout].rows` and `[layout].cols` are unchanged. Unknown `keyboard.toml` keys are now rejected instead of silently ignored. See the [v0.8 → v0.9 migration guide](https://rmk.rs/docs/migration/v08_v09)
+- **BREAKING**: `MorseProfile` (rmk-types) is now packed into a `u64` instead of a `u32` to make room for `quick_tap_timeout`
+- **BREAKING**: `behavior.morse.hold_timeout`/`gap_timeout`/`quick_tap_timeout` values above the 13-bit maximum of 8191ms now fail the build with an explicit error
+- **BREAKING**: `CompositeReportType` discriminants are renumbered (`Keyboard=1`, `Mouse=2`, `Media=3`, `System=4`): the BLE report map carries the keyboard report as id 1, and the mouse/media/system report ids shift to 2/3/4 on both BLE and USB. USB hosts re-read report ids on every enumeration so nothing changes for them; BLE hosts bonded to an older firmware must forget and re-pair the keyboard
+- **BREAKING**: `KeyAction::TapHold` now carries a `u8` profile-table index instead of an inline `MorseProfile`. Pure-Rust keymaps using the custom-profile macros (`thp!`/`mtp!`/`ltp!`/`ttp!`) must populate `behavior.morse.profiles` and pass the 0-based index of the wanted entry; an index with no entry falls back to the default profile. The default-profile macros (`th!`/`mt!`/`lt!`/`tt!`) are unchanged. `keyboard.toml` configs need no changes
+- **BREAKING**: `PollingController::INTERVAL` constant is now `PollingProcessor::interval()` method, allowing dynamic interval configuration at runtime
+- **BREAKING**: PointingDevice and PointingProcessor replace Pmw3610Device and Pmw3610Processor. For the Pmw3610 the calls of ::new() for these stay the same, only the name changes. If using Rust to configure the keyboard change the calls, if using Toml nothing needs to be done.
+- **BREAKING**: `MouseKeyConfig` fields renamed: `time_to_max` → `ticks_to_max`, `wheel_time_to_max` → `wheel_ticks_to_max`, `wheel_max_speed_multiplier` → `wheel_max_speed`
+- Update the dependency baseline: `embassy-executor` 0.10 (`platform-cortex-m`), `embassy-nrf` 0.11, `embassy-rp` 0.10, `embassy-stm32` 0.6, `bt-hci` 0.10, `trouble-host` 0.8, `cyw43` 0.7 / `cyw43-pio` 0.10, `esp-hal` 1.2.0-rc.0 / `esp-radio` 1.0.0-beta.0 / `esp-rtos` 0.3, and `nrf-sdc` 0.4. `trouble-host` and `nrf-sdc` are now crates.io releases instead of git pins. The migration guide lists the matching code changes
+- Rynk moves from a CDC ACM interface to its own raw USB vendor interface, so it no longer occupies a serial port and host tools find it by interface class ([#1023](https://github.com/rmk-rs/rmk/pull/1023))
+- Refactor mouse key state machine into a dedicated module with per-direction press counts, independent movement/wheel repeat scheduling, and configurable acceleration curves
+- Optimize the timing for motion read and sending reports on the PMW3610
+- Correct the delay length of PMW3610 to the precise value
+- Update `sequential-storage` to v8.0. The on-flash format is unchanged, so existing storage is read back as-is
+- Apply connection subrating to the split link only, not to the host link ([#1088](https://github.com/rmk-rs/rmk/pull/1088))
+- Enable trouble's `security-p256-cortex-m4` on nRF for hardware-accelerated pairing ([#1076](https://github.com/rmk-rs/rmk/pull/1076))
+
+### Fixed
+
 - Fix mouse keys (`KC_MS_*`), media keys and system control keys doing nothing on Android over BLE: Android's HID host only attaches to the first HID service instance (AOSP `bta_hh_le.cc`, b/286413526), so reports served from the separate composite HID service were never subscribed. All HID reports now live in a single HID service, distinguished by report id via the Report Reference descriptor
-- Fix `ClearEeprom` keycode being defined but not functional: pressing the key now resets the storage on release (same operation as `ViaCommand::EepromReset`, requires the `storage` feature), and the keycode round-trips through Vial as `0x7C03` (QMK's `QK_CLEAR_EEPROM`) instead of being rendered as a raw hex literal ([#929](https://github.com/HaoboGu/rmk/issues/929))
-- Fix Vial keycode conversion truncating user keycodes to 4 bits: `User16`–`User31` silently aliased to `User0`–`User15` on the Vial side (assign, view, and save-back). Widen the mask and accepted range to 5 bits (`0x7E00..=0x7E1F`, matching QMK's `QK_KB_0..QK_KB_31`) ([#918](https://github.com/HaoboGu/rmk/issues/918))
-- Fix BLE output stopping while the keyboard is on charge-only USB power (charge-only cable, wall charger, power bank). A never-enumerated device's bus-idle suspend was published as `Suspended`, which `usb_ready()` treats as routable, so reports were routed to USB endpoints that were never configured and silently dropped ([#910](https://github.com/HaoboGu/rmk/issues/910))
+- Fix `ClearEeprom` keycode being defined but not functional: pressing the key now resets the storage on release (same operation as `ViaCommand::EepromReset`, requires the `storage` feature), and the keycode round-trips through Vial as `0x7C03` (QMK's `QK_CLEAR_EEPROM`) instead of being rendered as a raw hex literal ([#929](https://github.com/rmk-rs/rmk/issues/929))
+- Fix Vial keycode conversion truncating user keycodes to 4 bits: `User16`–`User31` silently aliased to `User0`–`User15` on the Vial side (assign, view, and save-back). Widen the mask and accepted range to 5 bits (`0x7E00..=0x7E1F`, matching QMK's `QK_KB_0..QK_KB_31`) ([#918](https://github.com/rmk-rs/rmk/issues/918))
+- Fix BLE output stopping while the keyboard is on charge-only USB power (charge-only cable, wall charger, power bank). A never-enumerated device's bus-idle suspend was published as `Suspended`, which `usb_ready()` treats as routable, so reports were routed to USB endpoints that were never configured and silently dropped ([#910](https://github.com/rmk-rs/rmk/issues/910))
 - Fix stuck key when a combo key is re-pressed while the combo is still held. Previously the re-press overwrote the combo output's HID slot, and on combo release the output couldn't be unregistered, leaving the re-pressed key stuck on the host.
 - Fix stuck combo output when overlapping triggered combos share a key (e.g. `M+,` and `,+.` both containing Comma). Releasing the shared key now dispatches the release of every fully-unwound combo output, not just the first.
 - Fix `unregister_keycode` choosing the wrong HID slot when a combo output and another pressed key share a position. Slot lookup now prefers a `(pos, keycode)` match and falls back to keycode-only.
 - Fix spurious "Timer buffer full" warns after 16 distinct key positions are pressed. The per-position timer `LinearMap` is gone; press time is now threaded as a parameter through the morse-press dispatch.
+- Fix override attributes (`#[Override(...)]` / `#[Overwritten(...)]`) silently falling back to the generated default: an unknown or miscased variant (e.g. `Entry` instead of `entry`) is now a compile error carrying darling's diagnostic, and an extra attribute on the function (doc comments included) no longer disables a valid override ([#966](https://github.com/rmk-rs/rmk/issues/966))
+- Fix `#[Override(bind_interrupt)]` (the form the stm32h7 example documents) never taking effect: the custom interrupt binding is now selected through the shared override matcher instead of being silently dropped in favor of the generated default. The legacy bare `#[bind_interrupt]` marker keeps working unchanged
+- Fix non-`defmt` DFU builds (e.g. `dfu_rp` with `usb_log`) failing with a borrow-of-moved-value error on `central_attrs`: embassy-usb's `DfuAttributes` is `Copy` only under `defmt`, so the DFU descriptor now reads the attribute bits before handing the attributes to `DfuState` ([#973](https://github.com/rmk-rs/rmk/issues/973))
+- Fix a dropped keypress when two keys resolve to the same HID keycode with different modifiers (a plain bracket and its `SHIFTED()` neighbor). Rolling them quickly sent the same usage in two report slots, which some hosts read as a release of the held key and dropped the second key. Keyboard reports now deduplicate keycodes so the shared usage stays down until the last holder releases it
+- Fix the whole input pipeline freezing while the USB host is asleep. On nRF an IN-endpoint write during suspend pends until the host resumes, which parked the report writer and backed up every bounded queue upstream — keyboard task, key event channel, split peripheral manager, GATT notifications — then flushed the backlog at once on resume. RMK now signals remote wakeup and drops the report instead, and keeps retrying the wakeup rather than parking in `wait_resume()` ([#1035](https://github.com/rmk-rs/rmk/pull/1035))
+- Fix a one-shot modifier applying to one key too many: a key rolled over before the first shifted key was released still saw the one-shot as active. The modifier is now consumed on the next key press instead of its release, and a held `OSL` consumes a pending one-shot modifier at its own press ([#1036](https://github.com/rmk-rs/rmk/pull/1036))
+- Fix a panic in the split central's scan handler when an advertising report carried exactly 25 bytes: the peripheral id is read from byte 25, so the length check let an out-of-bounds index through. Also shorten the central's link supervision timeout from 10s to 5s so a dead peripheral link is detected and reconnected sooner ([#1034](https://github.com/rmk-rs/rmk/pull/1034))
+- Drop a BLE connection immediately when the bond info doesn't match the profile, instead of letting the wrong host hold the link ([#1024](https://github.com/rmk-rs/rmk/pull/1024))
+- Fix a bonded dongle hijacking the keyboard's BLE host profiles: it connected on the keyboard's bare address, so it also answered the plain HID advertising of a host profile and bonded itself into that slot. The dongle now connects only when the keyboard asks for a dongle, and the keyboard refuses the bonded dongle on every host profile ([#1056](https://github.com/rmk-rs/rmk/pull/1056))
+- Fix the nRF SoftDevice Controller memory pool size calculation ([#1002](https://github.com/rmk-rs/rmk/pull/1002))
+- Fix spurious sleep, and fix the split peripheral's connection parameters
+- Fix one-shot expiry blocking the keyboard task ([#1083](https://github.com/rmk-rs/rmk/pull/1083))
+- Fix a dropped split link staying down until the sleeping central wakes ([#1081](https://github.com/rmk-rs/rmk/pull/1081))
+- Declare the nRF52 LFRC at its specified 500 ppm ([#1080](https://github.com/rmk-rs/rmk/pull/1080))
+- Fix an out-of-bounds panic on key positions outside the matrix ([#1078](https://github.com/rmk-rs/rmk/pull/1078))
+- Reject misspelled modifier and fork state names in `keyboard.toml` ([#1089](https://github.com/rmk-rs/rmk/pull/1089))
+- Seed the default morse profile's flow-tap bit from `keyboard.toml` ([#1067](https://github.com/rmk-rs/rmk/pull/1067), [#1068](https://github.com/rmk-rs/rmk/pull/1068))
+- Stop a pointing device spinning after its sensor init failed ([#1066](https://github.com/rmk-rs/rmk/pull/1066), [#1087](https://github.com/rmk-rs/rmk/pull/1087))
+- Keep the dongle link at 2M PHY under `use_1m_phy` ([#1065](https://github.com/rmk-rs/rmk/pull/1065))
+- Return the persisted layout option from Vial's `GetKeyboardValue` ([#1060](https://github.com/rmk-rs/rmk/pull/1060))
+- Give the display processor its own event-subscriber slot
 
 ## [0.8.2] - 2025-12-18
 
@@ -84,7 +227,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add dongle support back, checkout [this example](https://github.com/HaoboGu/rmk/tree/main/examples/use_rust/nrf52840_ble_split_dongle)
+- Add dongle support back, checkout [this example](https://github.com/rmk-rs/rmk/tree/main/examples/use_rust/nrf52840_ble_split_dongle)
 - Add `detent` and `pulse` settings to encoder config
 - Add `Controller` support for peripheral #584
 - Add Fn1(Fn3) + Fn2(Fn3) tri-layer support in Vial
@@ -255,7 +398,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- BLE and wireless split support for Pi Pico W, check out [this example](https://github.com/HaoboGu/rmk/tree/main/examples/use_config/pi_pico_w_ble)
+- BLE and wireless split support for Pi Pico W, check out [this example](https://github.com/rmk-rs/rmk/tree/main/examples/use_config/pi_pico_w_ble)
 - Introduce matrix_map for [nicer keyboard matrix configs](https://rmk.rs/docs/features/configuration/layout.html)
 - BLE + USB dual-mode support for esp32s3
 - Automatically pair between central and peripheral
@@ -341,14 +484,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add new [cloud-based project template](https://github.com/haobogu/rmk-project-template)
+- Add new [cloud-based project template](https://github.com/rmk-rs/rmk-project-template)
 - Connection state sync between central and peripheral
 - Use 2M PHY by default
 - `mt!` for modifier tap-hold and `th!` for tap-hold action
 
 ### Changed
 
-- Use [`rmkit`](https://github.com/HaoboGu/rmkit) as the default project generator
+- Use [`rmkit`](https://github.com/rmk-rs/rmkit) as the default project generator
 - Update `sequential-storage` to v4.0.0
 - Improve CI speed
 - Use `cargo-hex-to-uf2` instead of python script for uf2 firmware generation

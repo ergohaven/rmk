@@ -6,13 +6,23 @@ profiles share this software contract:
 - 16 layers
 - 32 combos, up to 4 keys each
 - 32 Morse / Tap Dance entries, up to 8 patterns each
-- 2048 bytes of macro storage
+- 2048 bytes of macro storage over Vial; 4096 over Rynk, whose encoding takes
+  up to twice the bytes, with a 4128-byte Rynk frame that holds the whole pool
 - 32 forks / Vial Key Override slots
 - 5 Bluetooth profiles
-- protocol bulk size 8 and macro chunk size 64 bytes
 - Bluetooth reconnect and pairing windows of 60 seconds
 - persistent layer names at QSID 200–215, up to 12 UTF-8 bytes each
-- firmware version 0.1.5 and manufacturer `Ergohaven`
+- Universal Symbols, the `universal_symbols` RMK feature
+- firmware version 0.2.0 and manufacturer `Ergohaven`
+
+Phenom Series is wired and has no batteries, so the Bluetooth and battery
+parts of the contract do not apply to it.
+
+Every profile speaks Rynk with Ergohaven's commands (rmk feature
+`ergohaven_rynk`, `[host] rynk_enabled = true`). Over Rynk the same QSIDs,
+layer names, board definition and host data are served, writes need no unlock,
+as over Vial, and keymap and macro writes reach flash after a quiet period or a
+host commit.
 
 Standard keyboard profiles expose the factory layer names `Base`,
 `Navigation`, `Symbols`, and `Adjust`. Layer 4 is `Mouse` only on keyboards
@@ -27,13 +37,15 @@ while an optional PMW3610 occupies that position on the pointing variant.
 Layers 5 and 6 can still select Scroll and Sniper pointing modes, but their
 factory keymaps contain only `No`.
 
-Saved key and encoder actions on layers 0–4 remain in the established V2
-storage namespace. Legacy V2 records for layers 5–15 are ignored so the new
-factory `No` actions take effect without a settings reset. New edits on layers
-5–15 use a separate V3 tail namespace and continue to persist normally.
+Saved key and encoder actions on layers 0–4 use the main keymap records, and
+layers 5–15 a separate tail namespace (`KeymapTailV3`, `EncoderTailV3`).
 
 Split pairing uses a 30-second window. Standalone split centrals sleep after
 120 seconds; powered Qube centrals use 900 seconds, K:04 Qube centrals 300.
+K:04 Qube centrals reserve 3 ms per connection event and space the two half
+links 3.75 ms apart, so the 7.5 ms trackball link keeps every event next to
+the 15 ms link of the other half. They do not advertise to a BLE host: the PC
+connects over USB.
 Entropy capability metadata advertises separate half batteries on all split
 devices and time/media live features only where Qube supplies them.
 
@@ -57,13 +69,19 @@ All production nRF52840 profiles reserve the same 128 KiB settings partition
 at `0xCC000–0xEC000`. Application linkers stop at `0xCC000`, preventing
 firmware and settings from overlapping.
 
+The first boot after upgrading from firmware before RMK 0.9 (Ergohaven v0.2.0
+and earlier) erases the settings partition: the record format changed. The
+stored schema hash covers the RMK version, its feature set and the configured
+sizes, so a later change to any of them erases the settings again. Export the
+layout in Entropy before flashing and import it afterwards.
+
 Use `settings_reset.uf2` for keyboard halves and `settings_reset_qube.uf2` for
 a Qube dongle. Both erase only the unified partition; separate files are
 required because the application origins differ.
 
-Profiles upgrading from the legacy `0xA0000–0xC0000` partition can preserve
-their raw settings by running the matching one-time storage migration utility
-before flashing the new firmware.
+The one-time storage migration utility for the legacy `0xA0000–0xC0000`
+partition applies only to firmware before RMK 0.9; newer firmware erases those
+settings on first boot anyway.
 
 The former Velvet UI profile used a separate USB identity (`0x00BF`) and a
 different saved-keymap shape. Before its first upgrade to the unified Velvet

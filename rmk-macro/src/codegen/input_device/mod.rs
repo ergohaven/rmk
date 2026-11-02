@@ -1,16 +1,17 @@
 use adc::expand_adc_device;
+use battery::expand_battery_devices;
 use encoder::expand_encoder_device;
 use iqs5xx::expand_iqs5xx_device;
 use pmw33xx::expand_pmw33xx_device;
 use pmw3610::expand_pmw3610_device;
 use proc_macro2::{Ident, TokenStream};
 use quote::quote;
+use rmk_config::PointingAccelerationConfig;
 use rmk_config::resolved::Hardware;
-use rmk_config::resolved::hardware::{
-    BleConfig, BoardConfig, CommunicationConfig, InputDeviceConfig, UniBodyConfig,
-};
+use rmk_config::resolved::hardware::{BoardConfig, InputDeviceConfig, UniBodyConfig};
 
 pub(crate) mod adc;
+pub(crate) mod battery;
 pub(crate) mod encoder;
 pub(crate) mod iqs5xx;
 pub(crate) mod pmw33xx;
@@ -22,6 +23,21 @@ pub(crate) struct Initializer {
     pub(crate) var_name: Ident,
 }
 
+/// Expands an `acceleration` or `scroll_acceleration` table from `keyboard.toml` into a `PointerAcceleration`.
+pub(crate) fn expand_pointing_acceleration(
+    acceleration: &Option<PointingAccelerationConfig>,
+) -> TokenStream {
+    match acceleration {
+        Some(PointingAccelerationConfig { from, max }) => quote! {
+            Some(::rmk::input_device::pointing::PointerAcceleration {
+                from_counts_per_s: #from,
+                max_percent: #max,
+            })
+        },
+        None => quote! { None },
+    }
+}
+
 /// Expands the input device configuration.
 /// Returns a tuple containing: (device_and_processors_initialization, devices, processors)
 pub(crate) fn expand_input_device_config(
@@ -31,80 +47,27 @@ pub(crate) fn expand_input_device_config(
     let mut devices = Vec::new();
     let mut processors = Vec::new();
 
-    // generate ADC configuration
-    let communication = &hardware.communication;
-    let ble_config = match communication {
-        CommunicationConfig::Ble(ble_config) | CommunicationConfig::Both(_, ble_config) => {
-            Some(ble_config.clone())
-        }
-        _ => None,
-    };
     let board = &hardware.board;
     let chip = &hardware.chip;
-    let (adc_initializers, adc_processors) = match board {
-        BoardConfig::UniBody(UniBodyConfig { input_device, .. }) => expand_adc_device(
-            input_device.clone().joystick.unwrap_or(Vec::new()),
-            ble_config,
-            chip.series.clone(),
-        ),
-        BoardConfig::Split(split_config) => {
-            // For split central, read battery config from split.central instead of [ble]
-            // This provides better consistency with peripheral configuration
-            let central_ble_config = if split_config.central.battery_adc_pin.is_some() {
-                // Validate: warn if both [ble] and [split.central] have different battery configs
-                if let Some(ref ble_cfg) = ble_config
-                    && ble_cfg.battery_adc_pin.is_some()
-                {
-                    let ble_matches = ble_cfg.battery_adc_pin
-                        == split_config.central.battery_adc_pin
-                        && ble_cfg.adc_divider_measured
-                            == split_config.central.adc_divider_measured
-                        && ble_cfg.adc_divider_total == split_config.central.adc_divider_total;
-
-                    if !ble_matches {
-                        eprintln!(
-                            "warning: Battery configuration found in both [ble] and [split.central] sections with different values"
-                        );
-                        eprintln!(
-                            "help: [split.central] configuration will be used. Remove [ble] battery config to avoid confusion."
-                        );
-                    }
-                }
-
-                // Central has its own battery config in [split.central]
-                Some(BleConfig {
-                    enabled: ble_config.as_ref().map(|c| c.enabled).unwrap_or(false),
-                    battery_adc_pin: split_config.central.battery_adc_pin.clone(),
-                    adc_divider_measured: split_config.central.adc_divider_measured,
-                    adc_divider_total: split_config.central.adc_divider_total,
-                    ..Default::default()
-                })
-            } else {
-                // Fall back to [ble] section for backward compatibility
-                ble_config
-            };
-
-            expand_adc_device(
-                split_config
-                    .central
-                    .input_device
-                    .clone()
-                    .unwrap_or(InputDeviceConfig::default())
-                    .joystick
-                    .unwrap_or(Vec::new()),
-                central_ble_config,
-                chip.series.clone(),
-            )
-        }
+    let battery = &hardware.battery;
+    let input_device = match board {
+        BoardConfig::UniBody(board) => board.input_device.clone(),
+        BoardConfig::Split(split) => split.central.input_device.clone().unwrap_or_default(),
     };
+    let (adc_initializers, adc_processors) = expand_adc_device(
+        input_device.joystick.unwrap_or_default(),
+        battery.adc.as_ref(),
+        chip.series.clone(),
+    );
+    let (battery_devices, battery_processors) = expand_battery_devices(chip, battery);
 
-    for initializer in adc_initializers {
+    for initializer in adc_initializers.into_iter().chain(battery_devices) {
         initialization.extend(initializer.initializer);
         let device_name = initializer.var_name;
         devices.push(quote! { #device_name });
     }
 
-    for initializer in adc_processors {
+    for initializer in adc_processors.into_iter().chain(battery_processors) {
         initialization.extend(initializer.initializer);
         let processor_name = initializer.var_name;
         processors.push(quote! { #processor_name });

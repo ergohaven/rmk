@@ -109,6 +109,18 @@ build_classic_qube_profile() {
         cargo build --release --bin left --bin right
 }
 
+build_phenom_profile() {
+    local profile="$1"
+    local keyboard_toml="$2"
+    local vial_json="$3"
+
+    run "keyboards/phenom" env \
+        "CARGO_TARGET_DIR=target/$profile" \
+        "KEYBOARD_TOML_PATH=$repo_root/keyboards/phenom/$keyboard_toml" \
+        "VIAL_JSON_PATH=$repo_root/keyboards/phenom/$vial_json" \
+        cargo build --release --bin central --bin peripheral
+}
+
 build_k04_qube_profile() {
     local profile="$1"
     local keyboard_toml="$2"
@@ -138,6 +150,9 @@ build_split op36
 build_split k03
 build_split imperial44
 build_split velvet
+build_phenom_profile phenom keyboard.toml vial.json
+build_phenom_profile mini keyboard_mini.toml vial_mini.json
+build_phenom_profile micro keyboard_micro.toml vial_micro.json
 build_classic_qube_profile op36 keyboard.toml keyboards/classic_qube/vial.json
 build_classic_qube_profile k03 keyboard_k03.toml keyboards/k03/vial.json
 build_classic_qube_profile velvet keyboard_velvet.toml keyboards/velvet/vial.json

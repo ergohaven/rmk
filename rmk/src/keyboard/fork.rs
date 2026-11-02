@@ -9,7 +9,7 @@ pub struct ActiveFork {
     pub(crate) replacement: KeyAction, // the final replacement decision of the full fork chain
     pub(crate) suppress: ModifierCombination, // aggregate the chain's match_any modifiers here
     pub(crate) positive: bool,         // whether the current decision is the positive branch
-    pub(crate) event: KeyboardEvent,   // the trigger's press event, used for mid-hold output swaps
+    pub(crate) event: KeyboardEvent, // the trigger's press event: its pos matches the release, also used for mid-hold swaps
 }
 
 /// A planned mid-hold output swap for a held fork trigger.

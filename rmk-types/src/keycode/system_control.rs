@@ -1,8 +1,6 @@
 //! System control keycodes.
 
 use postcard::experimental::max_size::MaxSize;
-#[cfg(feature = "rmk_protocol")]
-use postcard_schema::Schema;
 use serde::{Deserialize, Serialize};
 
 use super::hid::HidKeyCode;
@@ -12,8 +10,10 @@ use super::hid::HidKeyCode;
 #[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, MaxSize)]
+#[cfg_attr(feature = "_codegen", derive(strum::EnumIter))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum SystemControlKey {
     No = 0x00,
     PowerDown = 0x81,
@@ -23,6 +23,12 @@ pub enum SystemControlKey {
 }
 
 impl SystemControlKey {
+    /// Host-only: list all system-control keys, in declaration order.
+    #[cfg(feature = "_codegen")]
+    pub fn all() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+
     /// Convert SystemControlKey to the corresponding HidKeyCode
     pub fn to_hid_keycode(&self) -> Option<HidKeyCode> {
         match self {

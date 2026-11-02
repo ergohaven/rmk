@@ -14,12 +14,12 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         workflow = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())
         entries = workflow['jobs']['build']['strategy']['matrix']['include']
         expected = {
-            'k03': ['universal_mac_iso'],
-            'k04_series_k04': ['production_v30g', 'universal_mac_iso'],
-            'k04_series_micro': ['production_v30g', 'universal_mac_iso'],
-            'imperial44': ['universal_mac_iso'],
-            'op36': ['universal_mac_iso'],
-            'velvet': ['universal_mac_iso'],
+            'k03': [],
+            'k04_series_k04': ['production_v30g'],
+            'k04_series_micro': ['production_v30g'],
+            'imperial44': [],
+            'op36': [],
+            'velvet': [],
             # Mini is not approved for the ANSI/ISO selector.
             'k04_series_mini': ['production_v30g'],
         }
@@ -29,7 +29,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                             if entry['output_name'] == output_name]
                 self.assertEqual(len(matching), 1)
                 arguments = shlex.split(matching[0].get('build_features', ''))
-                self.assertEqual(arguments, ['--features', ','.join(features)])
+                self.assertEqual(arguments, ['--features', ','.join(features)] if features else [])
         mini = next(entry for entry in entries
                     if entry['output_name'] == 'k04_series_mini')
         self.assertEqual(mini, {

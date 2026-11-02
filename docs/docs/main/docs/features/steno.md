@@ -20,7 +20,7 @@ options also work because the firmware reports every state change.
 Add the `steno` feature to your `Cargo.toml`:
 
 ```toml
-rmk = { version = "...", features = ["steno"] }
+rmk = { version = "0.9", features = ["steno"] }
 ```
 
 ### 2. Map steno keys in your layout
@@ -30,7 +30,7 @@ rmk = { version = "...", features = ["steno"] }
 Use `STN(key)` in your layer keys:
 
 ```toml
-[[layer]]
+[[keymap.layer]]
 keys = [
     "STN(NUM1)",  "STN(NUM1)",  "STN(NUM1)",  "STN(NUM1)",  "STN(NUM1)",   "STN(NUM1)",  "STN(NUM1)",  "STN(NUM1)",  "STN(NUM1)",  "STN(NUM1)",
     "STN(S1)",    "STN(T)",     "STN(P)",     "STN(H)",     "STN(STAR1)",  "STN(STAR1)", "STN(RF)",    "STN(RP)",    "STN(RL)",    "STN(RT)",
@@ -53,6 +53,19 @@ let keymap = [
     steno!(A),    steno!(O),    a!(No),       a!(No),       a!(No),        a!(No),       a!(No),       a!(No),       steno!(RE),   steno!(RU),
 ];
 ```
+
+#### Key names
+
+`STN(key)` and `steno!(key)` accept any `StenoKey` name (case-insensitive in `keyboard.toml`), each mapped to its position in the Plover HID key chart:
+
+| Group                                              | Keys                                                                      |
+| -------------------------------------------------- | ------------------------------------------------------------------------- |
+| Standard (left hand, vowels, asterisk, number bar) | `S1`, `T`, `K`, `P`, `W`, `H`, `R`, `A`, `O`, `STAR1`, `NUM1`             |
+| Standard (right hand, prefixed `R`)                | `RE`, `RU`, `RF`, `RR`, `RP`, `RB`, `RL`, `RG`, `RT`, `RS`, `RD`, `RZ`    |
+| Extended                                           | `S2`, `STAR2`, `STAR3`, `STAR4`, `NUM2` to `NUM9`, `NUMA`, `NUMB`, `NUMC` |
+| Extra (vendor-defined)                             | `X1` to `X26`                                                             |
+
+`STAR` is an alias for `STAR1`.
 
 ## Connecting Plover
 

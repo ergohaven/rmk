@@ -2,14 +2,17 @@
 //!
 use std::collections::HashMap;
 
-use quote::quote;
+use quote::{format_ident, quote};
 use rmk_config::resolved::Behavior;
 use rmk_config::resolved::behavior::{
     AutoMouseLayer, Combos, Forks, MacroOperation, Macros, Morse, MorseActionPair, MorseKey,
     MorseProfile, OneShot,
 };
 
-use super::action_parser::{expand_profile, expand_profile_name, get_key_with_alias, parse_key};
+use super::action_parser::{
+    SetterTable, expand_profile, expand_profile_name, get_key_with_alias, parse_action, parse_key,
+    parse_name_list, sorted_profile_names,
+};
 
 fn expand_tri_layer(tri_layer: &Option<[u8; 3]>) -> proc_macro2::TokenStream {
     match tri_layer {
@@ -118,11 +121,35 @@ fn expand_morse(morse: &Option<Morse>) -> proc_macro2::TokenStream {
         };
         let morses = expand_morses(&config.morses, &profiles_ref);
 
+        // Interned morse profile table, in the same sorted-name order used by
+        // `morse_profile` when it emits per-key indices. The pushes can't overflow:
+        // the profile count is validated against the capacity in `behavior()`.
+        let profile_names = sorted_profile_names(&profiles_ref);
+        let profiles_token = if profile_names.is_empty() {
+            quote! {}
+        } else {
+            let profile_tokens = profile_names.into_iter().map(|name| {
+                let profile = profiles_ref
+                    .as_ref()
+                    .and_then(|m| m.get(&name))
+                    .expect("name from same map");
+                expand_profile(profile)
+            });
+            quote! {
+                profiles: {
+                    let mut v = ::rmk::heapless::Vec::new();
+                    #( let _ = v.push(#profile_tokens); )*
+                    v
+                },
+            }
+        };
+
         quote! {
             ::rmk::config::MorsesConfig {
                 #enable_flow_tap_token
                 #prior_idle_time_token
                 default_profile: #default_profile,
+                #profiles_token
                 #morses
                 ..Default::default()
             }
@@ -153,40 +180,22 @@ fn expand_combos(
                 None => quote! {},
             };
 
-            // When no combos are defined the `let v = [#(#combos_def),*]` expression
-            // collapses to `let v = []`, which Rust can't type-infer. Emit an
-            // all-`None` array directly in that case.
-            let combos_field = if combos.combos.is_empty() {
-                quote! {
-                    combos: core::array::from_fn(|_| ::core::option::Option::None),
-                }
-            } else {
-                let combos_def = combos.combos.iter().map(|combo| {
-                    let actions = combo.actions.iter().map(|a| parse_key(a.to_owned(), profiles));
-                    let output = parse_key(combo.output.to_owned(), profiles);
-                    let layer = match combo.layer {
-                        Some(layer) => quote! { ::core::option::Option::Some(#layer) },
-                        None => quote! { ::core::option::Option::None },
-                    };
-                    quote! { ::rmk::keyboard::combo::Combo::new(::rmk::keyboard::combo::ComboConfig::new([#(#actions),*], #output, #layer)) }
-                });
-                quote! {
-                    combos: {
-                        let v = [#(#combos_def),*];
-                        core::array::from_fn(|i| {
-                            if i < v.len() {
-                                Some(v[i].clone())
-                            } else {
-                                None
-                            }
-                        })
-                    },
-                }
-            };
+            let combos_def = combos.combos.iter().map(|combo| {
+                let actions = combo.actions.iter().map(|a| parse_key(a.to_owned(), profiles));
+                let output = parse_key(combo.output.to_owned(), profiles);
+                let layer = match combo.layer {
+                    Some(layer) => quote! { ::core::option::Option::Some(#layer) },
+                    None => quote! { ::core::option::Option::None },
+                };
+                quote! { ::rmk::keyboard::combo::Combo::new(::rmk::keyboard::combo::ComboConfig::new([#(#actions),*], #output, #layer)) }
+            });
 
             quote! {
                 ::rmk::config::CombosConfig {
-                    #combos_field
+                    combos: {
+                        let v: &[::rmk::keyboard::combo::Combo] = &[#(#combos_def),*];
+                        core::array::from_fn(|i| v.get(i).cloned())
+                    },
                     #timeout
                     #prior_idle_time
                     ..Default::default()
@@ -197,44 +206,47 @@ fn expand_combos(
     }
 }
 
+/// The default macro table, a `&[&[MacroOp]]` in rodata, checked by the same
+/// `validate_default_macros` const assert a Rust-defined table uses.
 fn expand_macros(macros: &Option<Macros>) -> proc_macro2::TokenStream {
-    let default = quote! { ::core::default::Default::default() };
-
-    match macros {
-        Some(macros) => {
-            let macros_def = macros.macros.iter().map(|m| {
-                if m.operations.is_empty() {
-                    // `[].into_iter().flatten().collect()` cannot infer the element type.
-                    return quote! { ::rmk::heapless::Vec::new() };
-                }
-                let operations = m.operations.iter().map(|op| match op {
-                    MacroOperation::Tap { keycode } => {
-                        let key = get_key_with_alias(keycode.trim().to_owned());
-                        quote! { ::rmk::keyboard_macros::MacroOperation::Tap(::rmk::types::keycode::HidKeyCode::#key).into_iter() }
-                    }
-                    MacroOperation::Down { keycode } => {
-                        let key = get_key_with_alias(keycode.trim().to_owned());
-                        quote! { ::rmk::keyboard_macros::MacroOperation::Press(::rmk::types::keycode::HidKeyCode::#key).into_iter() }
-                    }
-                    MacroOperation::Up { keycode } => {
-                        let key = get_key_with_alias(keycode.trim().to_owned());
-                        quote! { ::rmk::keyboard_macros::MacroOperation::Release(::rmk::types::keycode::HidKeyCode::#key).into_iter() }
-                    }
-                    MacroOperation::Delay { duration_ms } => {
-                        let millis = *duration_ms as u16;
-                        quote! { ::rmk::keyboard_macros::MacroOperation::Delay(#millis).into_iter() }
-                    }
-                    MacroOperation::Text { text } => {
-                        quote! { ::rmk::keyboard_macros::to_macro_sequence(#text).into_iter() }
-                    }
+    let Some(macros) = macros else {
+        return quote! { &[] };
+    };
+    let op = |variant: &str, key: &str| {
+        let variant = format_ident!("{variant}");
+        let action = parse_action(key.trim());
+        quote! { ::rmk::types::keyboard_macros::MacroOp::#variant(#action) }
+    };
+    let macros_def = macros.macros.iter().map(|m| {
+        let ops = m.operations.iter().flat_map(|operation| match operation {
+            MacroOperation::Tap { keycode } => vec![op("Tap", keycode)],
+            MacroOperation::Down { keycode } => vec![op("Press", keycode)],
+            MacroOperation::Up { keycode } => vec![op("Release", keycode)],
+            MacroOperation::Delay { duration_ms } => {
+                let millis = u16::try_from(*duration_ms).unwrap_or_else(|_| {
+                    panic!("\n\u{274c} keyboard.toml: macro delay {duration_ms}ms exceeds 65535ms")
                 });
-
-                quote! { [#(#operations),*].into_iter().flatten().collect() }
-            });
-
-            quote! { ::rmk::config::KeyboardMacrosConfig::new(::rmk::keyboard_macros::define_macro_sequences(&[#(#macros_def),*])) }
+                vec![quote! { ::rmk::types::keyboard_macros::MacroOp::Delay(#millis) }]
+            }
+            MacroOperation::Text { text } => text
+                .bytes()
+                .map(|c| quote! { ::rmk::types::keyboard_macros::MacroOp::Char(#c) })
+                .collect(),
+            MacroOperation::PauseForRelease => {
+                vec![quote! { ::rmk::types::keyboard_macros::MacroOp::PauseForRelease }]
+            }
+        });
+        quote! { &[#(#ops),*] }
+    });
+    quote! {
+        {
+            const MACROS: &[&[::rmk::types::keyboard_macros::MacroOp]] = &[#(#macros_def),*];
+            const _: () = ::core::assert!(
+                ::rmk::types::keyboard_macros::validate_default_macros(MACROS),
+                "keyboard.toml: invalid [behavior.macro]: use at most `macro_max_num` macros that together fit `macro_space_size` bytes, each with at most one `pause_for_release`; `text` must be ASCII"
+            );
+            MACROS
         }
-        None => default,
     }
 }
 
@@ -255,7 +267,7 @@ fn expand_morses(
 
         if let Some(morse_actions) = &morse.morse_actions {
             if morse.tap.is_some() || morse.hold.is_some() || morse.hold_after_tap.is_some() || morse.double_tap.is_some() || morse.tap_actions.is_some() || morse.hold_actions.is_some() {
-                panic!("\n❌ keyboard.toml: `morse_actions` cannot be used together with `tap_actions`, `hold_actions`, `tap`, `hold`, `hold_after_tap`, or `double_tap`. Please check the documentation: https://rmk.rs/docs/features/configuration/behavior.html#morse");
+                panic!("\n❌ keyboard.toml: `morse_actions` cannot be used together with `tap_actions`, `hold_actions`, `tap`, `hold`, `hold_after_tap`, or `double_tap`.");
             }
 
             let actions_def = expand_morse_actions(morse_actions, profiles);
@@ -271,7 +283,7 @@ fn expand_morses(
         } else if morse.tap_actions.is_some() || morse.hold_actions.is_some() {
             // Check first
             if morse.tap.is_some() || morse.hold.is_some() || morse.hold_after_tap.is_some() || morse.double_tap.is_some() {
-                panic!("\n❌ keyboard.toml: `tap_actions` and `hold_actions` cannot be used together with `tap`, `hold`, `hold_after_tap`, or `double_tap`. Please check the documentation: https://rmk.rs/docs/features/configuration/behavior.html#morse");
+                panic!("\n❌ keyboard.toml: `tap_actions` and `hold_actions` cannot be used together with `tap`, `hold`, `hold_after_tap`, or `double_tap`.");
             }
 
             let tap_actions_def = match &morse.tap_actions {
@@ -414,39 +426,31 @@ impl quote::ToTokens for StateBitsMacro {
 
 /// Get modifier combination, in types of mod1 | mod2 | ...
 fn parse_state_combination(states_str: &str) -> StateBitsMacro {
-    let mut combination = StateBitsMacro::default();
-    let tokens = states_str.split_terminator("|");
-    tokens.for_each(|w| {
-        let w = w.trim();
-        match w {
-            "LCtrl" => combination.modifiers_left_ctrl = true,
-            "LShift" => combination.modifiers_left_shift = true,
-            "LAlt" => combination.modifiers_left_alt = true,
-            "LGui" => combination.modifiers_left_gui = true,
-            "RCtrl" => combination.modifiers_right_ctrl = true,
-            "RShift" => combination.modifiers_right_shift = true,
-            "RAlt" => combination.modifiers_right_alt = true,
-            "RGui" => combination.modifiers_right_gui = true,
+    const STATES: &SetterTable<StateBitsMacro> = &[
+        ("LCtrl", |c| c.modifiers_left_ctrl = true),
+        ("LShift", |c| c.modifiers_left_shift = true),
+        ("LAlt", |c| c.modifiers_left_alt = true),
+        ("LGui", |c| c.modifiers_left_gui = true),
+        ("RCtrl", |c| c.modifiers_right_ctrl = true),
+        ("RShift", |c| c.modifiers_right_shift = true),
+        ("RAlt", |c| c.modifiers_right_alt = true),
+        ("RGui", |c| c.modifiers_right_gui = true),
+        ("NumLock", |c| c.leds_num_lock = true),
+        ("CapsLock", |c| c.leds_caps_lock = true),
+        ("ScrollLock", |c| c.leds_scroll_lock = true),
+        ("Compose", |c| c.leds_compose = true),
+        ("Kana", |c| c.leds_kana = true),
+        ("MouseBtn1", |c| c.mouse_button1 = true),
+        ("MouseBtn2", |c| c.mouse_button2 = true),
+        ("MouseBtn3", |c| c.mouse_button3 = true),
+        ("MouseBtn4", |c| c.mouse_button4 = true),
+        ("MouseBtn5", |c| c.mouse_button5 = true),
+        ("MouseBtn6", |c| c.mouse_button6 = true),
+        ("MouseBtn7", |c| c.mouse_button7 = true),
+        ("MouseBtn8", |c| c.mouse_button8 = true),
+    ];
 
-            "NumLock" => combination.leds_num_lock = true,
-            "CapsLock" => combination.leds_caps_lock = true,
-            "ScrollLock" => combination.leds_scroll_lock = true,
-            "Compose" => combination.leds_compose = true,
-            "Kana" => combination.leds_kana = true,
-
-            "MouseBtn1" => combination.mouse_button1 = true,
-            "MouseBtn2" => combination.mouse_button2 = true,
-            "MouseBtn3" => combination.mouse_button3 = true,
-            "MouseBtn4" => combination.mouse_button4 = true,
-            "MouseBtn5" => combination.mouse_button5 = true,
-            "MouseBtn6" => combination.mouse_button6 = true,
-            "MouseBtn7" => combination.mouse_button7 = true,
-            "MouseBtn8" => combination.mouse_button8 = true,
-            _ => (),
-        }
-    });
-
-    combination
+    parse_name_list(states_str, "state", "fork state", STATES, |w| w)
 }
 
 fn expand_forks(
@@ -458,22 +462,29 @@ fn expand_forks(
         Some(forks) => {
             let forks_def = forks.forks.iter().map(|fork| {
                 let trigger = parse_key(fork.trigger.to_owned(), profiles);
-                let negative_output = parse_key(fork.negative_output.to_owned(), profiles);
+                let negative_output = fork.negative_output.as_ref().map_or(
+                    quote! { ::rmk::types::action::KeyAction::Transparent },
+                    |k| parse_key(k.to_owned(), profiles),
+                );
                 let positive_output = parse_key(fork.positive_output.to_owned(), profiles);
                 let match_any  = fork.match_any.as_ref().map(|s| parse_state_combination(s)).unwrap_or_default();
                 let match_none = fork.match_none.as_ref().map(|s| parse_state_combination(s)).unwrap_or_default();
                 let kept = fork.kept_modifiers.as_ref().map(|s| parse_state_combination(s)).unwrap_or_default();
                 let bindable = fork.bindable;
+                let layers = fork.layers;
 
                 if match_any.is_empty() && match_none.is_empty() {
-                    panic!("\n❌ keyboard.toml: fork configuration missing match conditions! Please check the documentation: https://rmk.rs/docs/features/configuration/behavior.html#fork");
+                    panic!("\n❌ keyboard.toml: fork configuration missing match conditions!");
                 }
 
                 // The TOML `kept_modifiers` lists the matched modifiers to keep
                 // reported; `Fork` stores the inverse (the suppressed set)
                 quote! {{
                     let match_any = #match_any;
-                    ::rmk::types::fork::Fork::new(#trigger, #negative_output, #positive_output, match_any, #match_none, match_any.modifiers & !(#kept.modifiers), #bindable)
+                    ::rmk::types::fork::Fork {
+                        layers: #layers,
+                        ..::rmk::types::fork::Fork::new(#trigger, #negative_output, #positive_output, match_any, #match_none, match_any.modifiers & !(#kept.modifiers), #bindable)
+                    }
                 }}
             });
 
@@ -560,5 +571,43 @@ pub(crate) fn expand_behavior_config(behavior: &Behavior) -> proc_macro2::TokenS
             auto_mouse_layer: #auto_mouse_layer,
             ..Default::default()
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_state_combination_sets_bits_for_valid_states() {
+        let s = parse_state_combination("LShift|MouseBtn1 |CapsLock");
+        assert!(s.modifiers_left_shift);
+        assert!(s.mouse_button1);
+        assert!(s.leds_caps_lock);
+        assert!(!s.modifiers_right_ctrl);
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown state(s) [NumLok (did you mean NumLock?)]")]
+    fn parse_state_combination_rejects_unknown_state() {
+        let _ = parse_state_combination("NumLok | LShift");
+    }
+
+    #[test]
+    #[should_panic(expected = "unknown state(s) [capslock (did you mean CapsLock?)]")]
+    fn parse_state_combination_suggests_canonical_casing() {
+        let _ = parse_state_combination("capslock | LShift");
+    }
+
+    #[test]
+    #[should_panic(expected = "empty segment")]
+    fn parse_state_combination_rejects_trailing_separator() {
+        let _ = parse_state_combination("LShift|");
+    }
+
+    #[test]
+    #[should_panic(expected = "empty segment")]
+    fn parse_state_combination_rejects_doubled_separator() {
+        let _ = parse_state_combination("CapsLock || MouseBtn1");
     }
 }

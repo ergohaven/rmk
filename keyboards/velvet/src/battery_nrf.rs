@@ -15,7 +15,6 @@ use embassy_time::{with_timeout, Duration, Timer};
 use rmk::core_traits::Runnable;
 use rmk::event::{EventSubscriber, PeripheralBatteryRefreshEvent, SubscribableEvent};
 use rmk::input_device::battery::publish_battery_status;
-use rmk::processor::Processor;
 use rmk::types::battery::{BatteryStatus, ChargeState};
 
 bind_interrupts!(struct SaadcIrqs {
@@ -65,15 +64,6 @@ impl SplitBattery {
     }
 }
 
-struct NeverSub;
-pub struct NeverEvent;
-
-impl EventSubscriber for NeverSub {
-    type Event = NeverEvent;
-    async fn next_event(&mut self) -> NeverEvent {
-        core::future::pending().await
-    }
-}
 
 impl Runnable for SplitBattery {
     async fn run(&mut self) -> ! {
@@ -83,16 +73,5 @@ impl Runnable for SplitBattery {
             self.publish_sample().await;
             let _ = select(Timer::after(Duration::from_secs(2)), refresh_sub.next_event()).await;
         }
-    }
-}
-
-impl Processor for SplitBattery {
-    type Event = NeverEvent;
-    fn subscriber() -> impl EventSubscriber<Event = NeverEvent> {
-        NeverSub
-    }
-    async fn process(&mut self, _: NeverEvent) {}
-    async fn process_loop(&mut self) -> ! {
-        self.run().await
     }
 }

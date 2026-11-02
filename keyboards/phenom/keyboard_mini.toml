@@ -1,0 +1,168 @@
+# Phenom Series — Phenom Mini profile.
+[keyboard]
+name = "Ergohaven Phenom Mini"
+product_name = "Phenom Mini"
+vendor_id = 0xE126
+product_id = 0x0053
+manufacturer = "Ergohaven"
+chip = "rp2040"
+
+[host]
+# Rynk with Ergohaven's commands; Vial is off.
+vial_enabled = false
+rynk_enabled = true
+# Writes need no unlock, as over Vial.
+write_requires_unlock = false
+# Factory D + F, like every Ergohaven RMK profile.
+unlock_keys = [[2, 2], [2, 1]]
+
+[layout]
+rows = 10
+cols = 8
+# Phenom matrix without the number row (rows 0 and 5 keep only thumb keys).
+map = """
+(1,5,L) (1,4,L) (1,3,L) (1,2,L) (1,1,L) (1,0,L)    (6,0,R) (6,1,R) (6,2,R) (6,3,R) (6,4,R) (6,5,R)
+(2,5,L) (2,4,L) (2,3,L) (2,2,L) (2,1,L) (2,0,L)    (7,0,R) (7,1,R) (7,2,R) (7,3,R) (7,4,R) (7,5,R)
+(3,5,L) (3,4,L) (3,3,L) (3,2,L) (3,1,L) (3,0,L)    (8,0,R) (8,1,R) (8,2,R) (8,3,R) (8,4,R) (8,5,R)
+        (4,3,*) (4,2,*) (2,7,*) (1,7,*) (0,7,*)    (5,7,*) (6,7,*) (7,7,*) (9,2,*) (9,3,*)
+                                        (4,7,*)    (9,7,*)
+"""
+
+[keymap]
+layers = 16
+no_action_layer_start = 5
+
+[[keymap.layer]]
+name = "Base"
+keys = """
+Escape  Q     W     E     R     T       Y      U      I      O     P          Backspace
+Tab     A     S     D     F     G       H      J      K      L     Semicolon  Backslash
+LShift  Z     X     C     V     B       N      M      Comma  Dot   Slash      RShift
+        Grave LGui  LCtrl MO(1) Space   Enter  MO(2)  LAlt   LeftBracket RightBracket
+                                AudioMute AudioMute
+"""
+# encoders: [left, right], each [clockwise, counter-clockwise]
+encoders = [["AudioVolUp", "AudioVolDown"], ["AudioVolUp", "AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Lower"
+keys = """
+_       Kc1     Kc2     Kc3     Kc4     Kc5           Kc6  Kc7    Kc8       Kc9       Kc0    _
+_       Home    Insert  Delete  End     Enter         _    Left   Down      Up        Right  _
+_       _       _       _       _       PrintScreen   _    _      _         _         _      _
+        PageUp  PageDown _      _       _             _    MO(3)  _         CapsLock  CapsWordToggle
+                                        _   _
+"""
+# QMK RGB_VAD/RGB_VAI: no RGB support yet.
+encoders = [["_", "_"], ["_", "_"]]
+
+[[keymap.layer]]
+name = "Raise"
+# All shifted chars use SHIFTED() — RMK applies LShift automatically
+keys = """
+_  SHIFTED(Kc2)  SHIFTED(Comma)  Equal               SHIFTED(Dot)  Grave           SHIFTED(Kc6)  SHIFTED(Quote)        SHIFTED(Minus)  Quote                  _             _
+_  Backslash     SHIFTED(Kc9)    Minus               SHIFTED(Kc0)  SHIFTED(Equal)  SHIFTED(Kc5)  SHIFTED(LeftBracket)  Semicolon       SHIFTED(RightBracket)  SHIFTED(Kc1)  _
+_  SHIFTED(Kc3)  SHIFTED(Kc8)    SHIFTED(Semicolon)  Slash         _               _             SHIFTED(Backslash)    SHIFTED(Grave)  SHIFTED(Kc7)           SHIFTED(Kc4)  _
+   _  _  _  MO(3)  _    _  _  _  _  _
+   _  _
+"""
+encoders = [["Right", "Left"], ["Right", "Left"]]
+
+[[keymap.layer]]
+name = "Adjust"
+keys = """
+F1  F2  F3              F4              F5              F6    F7  F8            F9         F10         F11  F12
+_   _   MediaPrevTrack  MediaPlayPause  MediaNextTrack  _     _   AudioVolDown  AudioMute  AudioVolUp  _    _
+_   _   _               _               _               _     _   _             _          _           _    _
+    _  _  _  _  _    _  _  _  _  _
+    _  _
+"""
+encoders = [["MouseWheelUp", "MouseWheelDown"], ["MouseWheelUp", "MouseWheelDown"]]
+
+[[keymap.layer]]
+name = "Pointing"
+# User28 = Sniper, User29 = Scroll, User30 = Text (EH_SNP/EH_SCR/EH_TXT).
+keys = """
+_  _       _          _          _          _         _       _          _          _          _       _
+_  User29  MouseBtn3  MouseBtn2  MouseBtn1  User28    User28  MouseBtn1  MouseBtn2  MouseBtn3  User29  _
+_  _       _          _          _          User30    User30  _          _          _          _       _
+   _  _  _  _  _    _  _  _  _  _
+   _  _
+"""
+encoders = [["MouseWheelUp", "MouseWheelDown"], ["MouseWheelUp", "MouseWheelDown"]]
+
+[rmk]
+combo_max_num = 32
+fork_max_num = 32
+morse_max_num = 32
+# Rynk's encoding takes up to twice Vial's bytes, and a frame holds the whole pool.
+macro_space_size = 4096
+rynk_buffer_size = 4128
+
+[storage]
+# RP2040 default: the settings area starts at 1 MiB of the 2 MiB flash.
+# 128 KiB, as on K:04, holds a full 16-layer keymap at the limits above.
+num_sectors = 32
+
+[event]
+# Sized like keyboards/k04: the Qube pointing processor subscribes to
+# actions, keys, layer changes and peripheral settings.
+action.channel_size = 16
+action.subs = 1
+keyboard.subs = 4
+# One settings update publishes base, profile and encoder packets together.
+peripheral_settings.channel_size = 3
+# ModuleSettingsBroadcast answers the re-sync request raised on peripheral link-up.
+peripheral_settings_refresh.subs = 1
+layer_change.channel_size = 4
+layer_change.subs = 6
+modifier.channel_size = 8
+modifier.subs = 6
+sleep_state.subs = 4
+
+[split]
+connection = "serial"
+
+[split.central]
+rows = 5
+cols = 8
+row_offset = 0
+col_offset = 0
+# Full-duplex USART, the cable crosses TX and RX.
+serial = [{ instance = "UART0", tx_pin = "PIN_0", rx_pin = "PIN_1" }]
+
+[split.central.matrix]
+matrix_type = "normal"
+row_pins = ["PIN_6", "PIN_5", "PIN_4", "PIN_3", "PIN_2"]
+col_pins = ["PIN_7", "PIN_12", "PIN_13", "PIN_14", "PIN_15", "PIN_16", "PIN_17", "PIN_18"]
+bootmagic = [1, 5]
+
+[[split.central.input_device.encoder]]
+# Swapped against the QMK order (A GP24, B GP23), which turns the other way in RMK.
+pin_a = "PIN_23"
+pin_b = "PIN_24"
+phase = "resolution"
+resolution = 4
+internal_pullup = true
+
+[[split.peripheral]]
+rows = 5
+cols = 8
+row_offset = 5
+col_offset = 0
+serial = [{ instance = "UART0", tx_pin = "PIN_0", rx_pin = "PIN_1" }]
+
+[split.peripheral.matrix]
+matrix_type = "normal"
+row_pins = ["PIN_6", "PIN_5", "PIN_4", "PIN_3", "PIN_2"]
+col_pins = ["PIN_7", "PIN_12", "PIN_13", "PIN_14", "PIN_15", "PIN_16", "PIN_17", "PIN_18"]
+bootmagic = [1, 5]
+
+[[split.peripheral.input_device.encoder]]
+# Swapped against the QMK order (A GP24, B GP23), which turns the other way in RMK.
+pin_a = "PIN_23"
+pin_b = "PIN_24"
+phase = "resolution"
+resolution = 4
+internal_pullup = true
+

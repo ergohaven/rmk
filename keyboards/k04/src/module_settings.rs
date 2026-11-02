@@ -3,7 +3,6 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use embassy_sync::watch::Watch;
 use rmk::event::{PeripheralSettingsEvent, SleepStateEvent};
 use rmk::macros::processor;
-use rmk::split::ble::central::{set_split_link_profile, SplitLinkProfile};
 
 const VERSION: u8 = if cfg!(feature = "standalone") { 10 } else { 9 };
 const SETTINGS_LEN: usize = 45;
@@ -305,26 +304,19 @@ fn apply_module_selection_runtime() {
         }
     });
 
-    rmk::input_device::rotary_encoder::set_encoder_enabled(0, selections[0] == ModuleSelection::Encoder);
-    rmk::input_device::rotary_encoder::set_encoder_enabled(1, selections[1] == ModuleSelection::Encoder);
+    let park = crate::board::PARK_UNSELECTED_ENCODERS;
+    rmk::input_device::rotary_encoder::set_encoder_enabled(0, !park || selections[0] == ModuleSelection::Encoder);
+    rmk::input_device::rotary_encoder::set_encoder_enabled(1, !park || selections[1] == ModuleSelection::Encoder);
 
     #[cfg(feature = "qube")]
     {
-        let _ = set_split_link_profile(0, link_profile(selections[0]));
-        let _ = set_split_link_profile(1, link_profile(selections[1]));
+        crate::board::set_split_link_pointing(0, selections[0].is_pointing());
+        crate::board::set_split_link_pointing(1, selections[1].is_pointing());
     }
     #[cfg(not(feature = "qube"))]
     {
         // Standalone K:04 has one split peripheral: the right half.
-        let _ = set_split_link_profile(0, link_profile(selections[1]));
-    }
-}
-
-fn link_profile(selection: ModuleSelection) -> SplitLinkProfile {
-    if selection.is_pointing() {
-        SplitLinkProfile::Pointing
-    } else {
-        SplitLinkProfile::Keyboard
+        crate::board::set_split_link_pointing(0, selections[1].is_pointing());
     }
 }
 

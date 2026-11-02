@@ -1,6 +1,3 @@
-/// Config for [vial](https://get.vial.today/).
-///
-/// You can generate automatically using [`build.rs`](https://github.com/HaoboGu/rmk/blob/main/examples/use_rust/stm32h7/build.rs).
 pub const VIAL_DEVICE_SETTINGS_MAX_LEN: usize = 224;
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
@@ -86,13 +83,16 @@ pub struct VialDeviceSettings<'a> {
     pub deserialize: fn(&[u8]),
 }
 
+/// Config for [vial](https://get.vial.today/).
+///
+/// You can generate automatically using [`build.rs`](https://github.com/rmk-rs/rmk/blob/main/examples/use_rust/stm32h7/build.rs).
 #[derive(Clone, Copy, Debug)]
 pub struct VialConfig<'a> {
     pub vial_keyboard_id: &'a [u8],
     pub vial_keyboard_def: &'a [u8],
     pub unlock_keys: &'a [(u8, u8)],
     pub device_settings: Option<VialDeviceSettings<'a>>,
-    pub vial_insecure: bool,
+    pub insecure: bool,
     /// Runtime firmware version returned by VIA `id_firmware_version`.
     pub firmware_version: u32,
 }
@@ -104,7 +104,7 @@ impl Default for VialConfig<'_> {
             vial_keyboard_def: &[],
             unlock_keys: &[],
             device_settings: None,
-            vial_insecure: false,
+            insecure: false,
             firmware_version: rmk_types::protocol::vial::VIA_FIRMWARE_VERSION,
         }
     }
@@ -117,7 +117,7 @@ impl<'a> VialConfig<'a> {
             vial_keyboard_def,
             unlock_keys,
             device_settings: None,
-            vial_insecure: false,
+            insecure: false,
             firmware_version: rmk_types::protocol::vial::VIA_FIRMWARE_VERSION,
         }
     }

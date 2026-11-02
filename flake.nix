@@ -30,6 +30,7 @@
           "thumbv8m.main-none-eabihf"
           "riscv32imc-unknown-none-elf"
           "riscv32imac-unknown-none-elf"
+          "wasm32-unknown-unknown"
         ];
 
         stableToolchain = fenixPkgs.combine (
@@ -144,11 +145,17 @@
           pkgs.cargo-expand
           pkgs.cargo-make
           pkgs.cargo-nextest
+          pkgs.dbus
           pkgs.espflash
           pkgs.espup
           pkgs.flip-link
+          pkgs.gcc-arm-embedded
           pkgs.just
+          pkgs.llvmPackages.libclang
+          pkgs.nodejs
+          pkgs.pkg-config
           pkgs.probe-rs-tools
+          pkgs.wasm-pack
         ];
       in {
         formatter = pkgs.alejandra;
@@ -174,6 +181,10 @@
             # at build-script time. Without this every nRF firmware build fails
             # with "Unable to find libclang".
             LIBCLANG_PATH = "${pkgs.llvmPackages.libclang.lib}/lib";
+            # p256-cortex-m4-sys (pulled in by the nRF BLE stack) compiles C for
+            # the firmware target and needs a bare-metal ARM cross compiler.
+            CC_thumbv7em_none_eabihf = "arm-none-eabi-gcc";
+            AR_thumbv7em_none_eabihf = "arm-none-eabi-ar";
             RUST_MIN_STACK = "67108864";
             RUST_SRC_PATH = "${stableToolchain}/lib/rustlib/src/rust/library";
           };

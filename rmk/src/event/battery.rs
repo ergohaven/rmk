@@ -10,7 +10,7 @@ use rmk_macro::event;
 use rmk_types::battery::BatteryStatus;
 use serde::{Deserialize, Serialize};
 
-/// Battery adc read value
+/// Battery ADC input voltage in millivolts, before applying the battery divider.
 #[event(
     channel_size = crate::BATTERY_ADC_EVENT_CHANNEL_SIZE,
     pubs = crate::BATTERY_ADC_EVENT_PUB_SIZE,

@@ -12,7 +12,10 @@ autobenches = false
 autoexamples = false
 
 [features]
-default = ["standalone"]
+default = ["standalone", "protocol_rynk"]
+protocol_rynk = ["rmk/ergohaven_rynk"]
+protocol_vial = ["rmk/vial", "rmk/host_lock"]
+vial_standalone = ["protocol_vial", "standalone"]
 standalone = ["rmk/defmt", "rmk/k04_standalone_timeout_14"]
 usb_debug = ["rmk/usb_log"]
 usb_debug_force_ble = ["usb_debug"]
@@ -34,6 +37,7 @@ pmw_axes_600_diag = ["mouse_vector_preserve", "pmw_axes_600", "rtt_diag"]
 right_uf2_cleanup = []
 # Qube dongle ST7789 UI (only for --bin qube).
 qube = [
+    "protocol_rynk",
     "rmk/usb_log",
     "rmk/st7789",
     "dep:lcd-async",
@@ -44,13 +48,11 @@ qube = [
 ]
 # Diagnostic Qube halves use RTT/defmt. Enabling usb_log at the same time asks
 # trouble-host for mutually exclusive `log` and `defmt` backends.
-qube-half = ["rmk/defmt"]
+qube-half = ["protocol_rynk", "rmk/defmt"]
 
 [dependencies]
 rmk = { path = "../../rmk", default-features = false, features = [
     "storage",
-    "vial",
-    "vial_lock",
     "universal_symbols",
     "nrf52840_ble",
     "split",
@@ -66,18 +68,20 @@ u8g2-fonts = { version = "0.5.2", features = ["embedded_graphics_textstyle"], op
 heapless = "0.9"
 embassy-futures = "0.1"
 embassy-sync = "0.8"
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", features = [
+embedded-hal-async = "1.0"
+portable-atomic = "1"
+nrf-sdc = { version = "0.4.0", features = [
     "defmt",
     "peripheral",
     "central",
     "nrf52840",
 ] }
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", features = [
+nrf-mpsl = { version = "0.4.0", features = [
     "defmt",
     "critical-section-impl",
     "nrf52840",
 ] }
-bt-hci = { version = "0.9", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.10", default-features = false, features = ["defmt"] }
 
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
@@ -170,3 +174,7 @@ name = "hardreset"
 path = "src/bin/hardreset.rs"
 test = false
 bench = false
+
+# nrf-mpsl 0.4.0 with the flash timeslot lock fix sent upstream. Drop once a release has it.
+[patch.crates-io]
+nrf-mpsl = { path = "../../vendor/nrf-mpsl" }

@@ -1,0 +1,197 @@
+# K:04 Series — full K:04 profile.
+[keyboard]
+name = "Ergohaven K:04"
+product_name = "K:04"
+vendor_id = 0xE126
+product_id = 0x0074
+manufacturer = "Ergohaven"
+chip = "nrf52840"
+
+[host]
+# Selectable Vial standalone profile; hardware and keymap match the Rynk default.
+vial_enabled = true
+rynk_enabled = false
+# Writes need no unlock, as over Vial.
+write_requires_unlock = false
+# Unlock positions for the full K:04 matrix.
+unlock_keys = [[2, 2], [2, 1]]
+
+[layout]
+rows = 10
+cols = 6
+# map: maps physical (row,col) positions to logical matrix positions
+# Left half rows 0-4, right half rows 5-9.
+map = """
+(0,5,L) (0,4,L) (0,3,L) (0,2,L) (0,1,L) (0,0,L)                    (5,0,R) (5,1,R) (5,2,R) (5,3,R) (5,4,R) (5,5,R)
+(1,5,L) (1,4,L) (1,3,L) (1,2,L) (1,1,L) (1,0,L)                    (6,0,R) (6,1,R) (6,2,R) (6,3,R) (6,4,R) (6,5,R)
+(2,5,L) (2,4,L) (2,3,L) (2,2,L) (2,1,L) (2,0,L)                    (7,0,R) (7,1,R) (7,2,R) (7,3,R) (7,4,R) (7,5,R)
+(3,5,L) (3,4,L) (3,3,L) (3,2,L) (3,1,L) (3,0,L) (4,0,*)    (9,0,*) (8,0,R) (8,1,R) (8,2,R) (8,3,R) (8,4,R) (8,5,R)
+             (4,5,*) (4,4,*) (4,3,*) (4,2,*) (4,1,*)    (9,1,*) (9,2,*) (9,3,*) (9,4,*) (9,5,*)
+"""
+
+[keymap]
+layers = 16
+no_action_layer_start = 5
+
+[[keymap.layer]]
+name = "Base"
+# Matches the K04 reference layout image.
+keys = """
+Grave   Kc1   Kc2   Kc3   Kc4   Kc5   Kc6   Kc7   Kc8   Kc9   Kc0   Backspace
+Escape  Q     W     E     R     T     Y     U     I     O     P     Backslash
+Tab     A     S     D     F     G     H     J     K     L     Semicolon  Quote
+LShift  Z     X     C     V     B     _              _             N  M  Comma  Dot  Slash  RShift
+Delete  LGui  LCtrl MO(1) Space Enter MO(2) RAlt LeftBracket RightBracket
+"""
+# encoders: [central_A1/B1, peripheral_A1/B1]
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Nav"
+# Red layer: F keys, media, navigation, and numpad.
+keys = """
+F1            F2              F3    F4    F5     F6      F7  F8   F9   F10  F11  F12
+MediaPrevTrack MediaNextTrack Home  Up    End    Insert  _   Kc7  Kc8  Kc9  _    CapsLock
+AudioMute     MediaPlayPause  Left  Down  Right  Enter   _   Kc4  Kc5  Kc6  _    CapsWordToggle
+AudioVolDown  AudioVolUp      _     _     _      Delete  _   _    PrintScreen Kc1 Kc2 Kc3 _ _
+PageDown      PageUp          _     _     _      _       MO(3) _    Kc0  _
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Symbols"
+# Blue layer: symbols.
+# All shifted chars use SHIFTED() — RMK applies LShift automatically
+keys = """
+_  _              SHIFTED(Kc2) SHIFTED(Kc4)      SHIFTED(Kc3)  _              _            _                   SHIFTED(Kc6)    _             _              _
+_  _              SHIFTED(Comma) Equal           SHIFTED(Dot)  Grave          _            LeftBracket         SHIFTED(Minus)  RightBracket  _              _
+_  Backslash      SHIFTED(Kc9)   Minus           SHIFTED(Kc0)  SHIFTED(Equal) SHIFTED(Kc5) SHIFTED(LeftBracket) Semicolon       SHIFTED(RightBracket) SHIFTED(Kc1) _
+_  _              SHIFTED(Kc8)   SHIFTED(Semicolon) Slash      _              _            _                   _               SHIFTED(Backslash) SHIFTED(Grave) SHIFTED(Kc7) _ _
+_  _              _              MO(3)           _             _              _            _                   _               _
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Adjust"
+# Yellow layer: firmware, User BT profile, and User output controls.
+keys = """
+Bootloader  _      _  _  _  _  User19 User20 User21 User22 User23 User26
+_           _  _  _  _  _  _    _    _    _    _    _
+_           _  _  _  _  _  User37 User39 _ _    _    _
+_           _  _  _  _  _  _    _    User38 _    _    _  _  _
+_   _   _              _               _              _   _   _            _               _
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Pointing"
+# Green layer: pointing controls.
+keys = """
+_  _      _          _          _          _      _      _          _          _          _      _
+_  _      _          _          _          _      _      _          _          _          _      _
+_  User29  MouseBtn3  MouseBtn2  MouseBtn1  User28  User28  MouseBtn1  MouseBtn2  MouseBtn3  User29  _
+_  _      _          _          _          User30  _      _          User30     _          _      _  _  _
+_  _  _          _          _          _   _  _          _          _
+"""
+encoders = [["MouseWheelDown","MouseWheelUp"],["MouseWheelDown","MouseWheelUp"]]
+
+[ble]
+enabled = true
+default_tx_power = 8
+use_2m_phy = false
+
+[chip.nrf52840]
+# E73-2G4M08S1C contains the REG1 LC network. REG0 remains disabled until
+# the K:04 VDDH/DCCH power path has been verified on the main PCB.
+dcdc_reg0 = false
+dcdc_reg1 = true
+dcdc_reg0_voltage = "3V3"
+
+[event]
+action.channel_size = 16
+action.subs = 2
+keyboard.subs = 4
+peripheral_battery.pubs = 2
+peripheral_battery.subs = 4
+# One settings update publishes base, BT profile, and encoder packets together.
+peripheral_settings.channel_size = 3
+# ModuleSettingsBroadcast answers the re-sync request raised on peripheral link-up.
+peripheral_settings_refresh.subs = 1
+layer_change.channel_size = 4
+layer_change.subs = 6
+modifier.channel_size = 8
+modifier.subs = 6
+sleep_state.subs = 4
+
+[split]
+connection = "ble"
+
+[split.central]
+rows = 5
+cols = 6
+row_offset = 0
+col_offset = 0
+# ble_addr removed — RMK manages addresses from storage automatically
+
+[split.central.matrix]
+matrix_type = "normal"
+# K04 schematic, same pinout on both halves
+# R1..R5 = P1.13, P0.28, P0.03, P1.10, P1.11
+# C1..C6 = P1.06, P1.04, P1.02, P1.00, P0.22, P0.20
+row_pins = ["P1_13", "P0_28", "P0_03", "P1_10", "P1_11"]
+col_pins = ["P1_06", "P1_04", "P1_02", "P1_00", "P0_22", "P0_20"]
+
+[[split.central.input_device.encoder]]
+# v0.0.18: swap A/B to fix encoder direction.
+pin_a = "P0_10"
+pin_b = "P0_09"
+phase = "resolution"
+resolution = 4
+internal_pullup = true
+
+[[split.peripheral]]
+rows = 5
+cols = 6
+row_offset = 5
+col_offset = 0
+# ble_addr removed — RMK manages addresses from storage automatically
+
+[split.peripheral.matrix]
+matrix_type = "normal"
+# K04 schematic, same pinout on both halves
+# R1..R5 = P1.13, P0.28, P0.03, P1.10, P1.11
+# C1..C6 = P1.06, P1.04, P1.02, P1.00, P0.22, P0.20
+row_pins = ["P1_13", "P0_28", "P0_03", "P1_10", "P1_11"]
+col_pins = ["P1_06", "P1_04", "P1_02", "P1_00", "P0_22", "P0_20"]
+
+[[split.peripheral.input_device.encoder]]
+# v0.0.18: swap A/B to fix encoder direction.
+pin_a = "P0_10"
+pin_b = "P0_09"
+phase = "resolution"
+resolution = 4
+internal_pullup = true
+
+[rmk]
+split_peripherals_num = 1
+split_pairing_timeout_seconds = 30
+ble_reconnect_timeout_seconds = 60
+ble_pairing_timeout_seconds = 60
+split_central_sleep_timeout_seconds = 120
+combo_max_num = 32
+fork_max_num = 32
+morse_max_num = 32
+# Rynk's encoding takes up to twice Vial's bytes, and a frame holds the whole pool.
+macro_space_size = 4096
+rynk_buffer_size = 4128
+ble_profiles_num = 5
+
+[storage]
+# Keep the 128 KiB RMK settings area outside the linked application image.
+# 0xEC000..0xF4000 remains reserved by the board/bootloader layout.
+start_addr = 0xCC000
+num_sectors = 32
+clear_storage = false
+# Preserve the Vial/Entropy keymap. Enabling this rewrites all 960 key slots
+# before runtime tasks start and adds roughly 40-50 seconds to every boot.
+clear_layout = false

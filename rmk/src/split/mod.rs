@@ -9,10 +9,10 @@ use crate::event::{BatteryStatusEvent, BleAdvertisingMode};
 use crate::event::{KeyboardEvent, PointingEvent};
 
 #[cfg(feature = "_ble")]
-pub(crate) mod battery;
-#[cfg(feature = "_ble")]
 pub mod ble;
 pub mod central;
+#[cfg(feature = "dfu_split")]
+pub(crate) mod dfu;
 /// Common abstraction layer of split driver
 pub(crate) mod driver;
 pub mod peripheral;
@@ -24,15 +24,14 @@ pub mod serial;
 /// Maximum size of a split message
 pub const SPLIT_MESSAGE_MAX_SIZE: usize = SplitMessage::POSTCARD_MAX_SIZE + 4;
 
-/// Serialize one split message into the caller-owned transport buffer and
-/// return only the encoded prefix. BLE notifications and writes must not send
-/// the unused zero-filled tail: high-rate pointing reports otherwise consume
-/// the airtime of the largest possible split message on every sample.
-pub(crate) fn encode_split_message<'a>(
-    message: &SplitMessage,
-    buffer: &'a mut [u8; SPLIT_MESSAGE_MAX_SIZE],
-) -> Result<&'a [u8], postcard::Error> {
-    postcard::to_slice(message, buffer).map(|encoded| &*encoded)
+/// The rectangular region of the central's keymap covered by one split
+/// peripheral: its matrix size, and where it sits.
+#[derive(Debug, Clone, Copy)]
+pub struct PeripheralMatrixConfig {
+    pub rows: u8,
+    pub cols: u8,
+    pub row_offset: u8,
+    pub col_offset: u8,
 }
 
 /// Message used from central & peripheral communication
@@ -57,6 +56,8 @@ pub(crate) enum SplitMessage {
     KeyboardIndicator(u8),
     /// Layer number from central to peripheral
     Layer(u8),
+    /// Sleep state from central to peripheral.
+    SleepState(bool),
     /// Battery status, from peripheral to central.
     ///
     /// Keep this above display-gated variants so postcard enum discriminants do
@@ -110,6 +111,9 @@ pub(crate) enum SplitMessage {
     /// Peripheral → Central: confirm mark_updated succeeded, about to reset.
     #[cfg(feature = "dfu_split")]
     FirmwareUpdateConfirm,
+    /// Central → Peripheral: request system reset.
+    #[cfg(feature = "dfu_split")]
+    SystemReset,
 
     // Keep display-gated variants after every message exchanged with halves
     // built without `display`, so postcard discriminants stay identical.
@@ -119,24 +123,25 @@ pub(crate) enum SplitMessage {
     /// Modifier state from central to peripheral
     #[cfg(feature = "display")]
     Modifier(u8),
-    /// Sleep state from central to peripheral
-    #[cfg(feature = "display")]
-    SleepState(bool),
 }
 
 // -----------------------------------------------------------------------
 // FirmwareChunkData — buffer for dfu_split firmware transfer
 // -----------------------------------------------------------------------
 
+/// Maximum firmware chunk size in bytes for the split link transfer.
+#[cfg(feature = "dfu_split")]
+pub(crate) const SPLIT_CHUNK_SIZE: usize = 256;
+
 /// Fixed-size buffer for firmware chunk transfer over the split link.
 ///
 /// Postcard's COBS encoding stores this as `&[u8]` (varint length prefix
-/// + bytes) rather than a fixed `[u8; 256]` — necessary because serde
+/// + bytes) rather than a fixed array — necessary because serde
 /// does not implement `Deserialize` for arrays larger than 32 elements.
 #[cfg(feature = "dfu_split")]
 #[derive(Debug, Clone, Copy)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct FirmwareChunkData(pub [u8; 256]);
+pub struct FirmwareChunkData(pub [u8; SPLIT_CHUNK_SIZE]);
 
 #[cfg(feature = "dfu_split")]
 impl Serialize for FirmwareChunkData {
@@ -150,10 +155,10 @@ impl<'de> Deserialize<'de> for FirmwareChunkData {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
         let buf: &[u8] = Deserialize::deserialize(deserializer)?;
-        if buf.len() > 256 {
-            return Err(D::Error::custom("firmware chunk exceeds 256 bytes"));
+        if buf.len() > SPLIT_CHUNK_SIZE {
+            return Err(D::Error::custom("firmware chunk exceeds SPLIT_CHUNK_SIZE bytes"));
         }
-        let mut data = [0u8; 256];
+        let mut data = [0u8; SPLIT_CHUNK_SIZE];
         data[..buf.len()].copy_from_slice(buf);
         Ok(FirmwareChunkData(data))
     }
@@ -161,28 +166,13 @@ impl<'de> Deserialize<'de> for FirmwareChunkData {
 
 #[cfg(feature = "dfu_split")]
 impl MaxSize for FirmwareChunkData {
-    const POSTCARD_MAX_SIZE: usize = 258;
+    const POSTCARD_MAX_SIZE: usize = SPLIT_CHUNK_SIZE + 2;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::event::{Axis, AxisEvent, AxisValType};
-
-    #[test]
-    fn split_encoder_returns_only_the_serialized_prefix() {
-        let message = SplitMessage::Key(KeyboardEvent::key(2, 3, true));
-        let mut buffer = [0_u8; SPLIT_MESSAGE_MAX_SIZE];
-        let capacity = buffer.len();
-
-        let encoded = encode_split_message(&message, &mut buffer).unwrap();
-
-        assert!(encoded.len() < capacity);
-        match postcard::from_bytes::<SplitMessage>(encoded).unwrap() {
-            SplitMessage::Key(event) => assert_eq!(event, KeyboardEvent::key(2, 3, true)),
-            _ => panic!("decoded the wrong split-message variant"),
-        }
-    }
 
     #[test]
     fn split_pointing_round_trip_preserves_full_i16_axes() {
@@ -207,7 +197,7 @@ mod tests {
             ],
         });
         let mut buffer = [0_u8; SPLIT_MESSAGE_MAX_SIZE];
-        let encoded = encode_split_message(&message, &mut buffer).unwrap();
+        let encoded = postcard::to_slice(&message, &mut buffer).unwrap();
 
         match postcard::from_bytes::<SplitMessage>(encoded).unwrap() {
             SplitMessage::Pointing(event) => {

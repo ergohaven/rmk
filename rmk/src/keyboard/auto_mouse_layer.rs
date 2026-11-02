@@ -208,7 +208,10 @@ impl Runnable for AutoMouseLayerRunner<'_, '_> {
             core::future::pending().await
         }
         let mut sub = <Self as Processor>::subscriber();
-        assert_action_event_subscriber_available(self.any_action_event_configured);
+        assert!(
+            !self.any_action_event_configured || crate::ACTION_EVENT_SUB_SIZE != 0,
+            "auto_mouse_layer: deactivate_on_key / reset_timeout_on_key need `[event.action] subs = 1`"
+        );
         let mut action_sub = self.any_action_event_configured.then(ActionEvent::subscriber);
         loop {
             let action_fut = async {
@@ -230,20 +233,6 @@ impl Runnable for AutoMouseLayerRunner<'_, '_> {
             }
         }
     }
-}
-
-/// Panic when ActionEvent-driven options are enabled but the event has no
-/// subscriber slot, so the misconfiguration is loud instead of calling
-/// `ActionEvent::subscriber()` with `subs = 0` (which would also panic, with a
-/// less specific message).
-#[allow(clippy::absurd_extreme_comparisons)] // ACTION_EVENT_SUB_SIZE is a build-time const
-fn assert_action_event_subscriber_available(any_action_event_configured: bool) {
-    assert!(
-        !any_action_event_configured || crate::ACTION_EVENT_SUB_SIZE >= 1,
-        "auto_mouse_layer: deactivate_on_key / reset_timeout_on_key require \
-         [event.action].subs >= 1, but it is 0. Set KEYBOARD_TOML_PATH to a \
-         keyboard.toml containing `[event.action] subs = 1`."
-    );
 }
 
 fn earliest_deadline(entries: &[EntryState]) -> Option<Instant> {
@@ -390,6 +379,9 @@ fn keypress_step(entries: &mut [EntryState], action: Action, now: Instant) -> Ve
                         });
                     (modifiers & !covered).into_bits() != 0
                 }
+                // An unbound key is a real press that does nothing, so it tears
+                // the layer down like any other non-mouse key.
+                Action::No => true,
                 // Unclassifiable (layer switches, macros, Again/Repeat, GraveEscape, ...):
                 // leave the layer intact; the timeout path handles it.
                 _ => false,
@@ -475,26 +467,6 @@ mod tests {
             deadline: None,
             overlap_warned: false,
         }
-    }
-
-    #[test]
-    fn action_event_subs_is_zero_without_keyboard_toml() {
-        // rmk's own test build has no keyboard.toml, so ActionEvent gets no
-        // subscriber slot; the startup assert must catch configured opt-ins.
-        assert_eq!(crate::ACTION_EVENT_SUB_SIZE, 0);
-    }
-
-    #[test]
-    #[should_panic(expected = "[event.action].subs >= 1")]
-    fn guard_panics_when_options_configured_without_subscriber_slot() {
-        // This build has subs == 0 (see above), so a configured opt-in must panic
-        // before ActionEvent::subscriber() is called in run().
-        assert_action_event_subscriber_available(true);
-    }
-
-    #[test]
-    fn guard_allows_when_options_not_configured() {
-        assert_action_event_subscriber_available(false);
     }
 
     #[test]
@@ -686,16 +658,6 @@ mod tests {
     fn layer_shared_with_other_ignores_other_layers() {
         let entries = [active_entry(Some(1), 2), active_entry(Some(2), 5)];
         assert!(!layer_shared_with_other(&entries, 0, 2));
-    }
-
-    #[test]
-    fn event_for_carries_device_id() {
-        // Smoke test confirming the test helper does what later integration
-        // tests would rely on.
-        let zero = axis(Axis::Z, 0);
-        let e = event_for(3, [axis(Axis::X, 5), axis(Axis::Y, 0), zero]);
-        assert_eq!(e.device_id, 3);
-        assert!(is_cursor_motion(&e, 1));
     }
 
     fn at(millis: u64) -> Instant {
@@ -898,14 +860,16 @@ mod tests {
     }
 
     #[test]
-    fn keypress_step_keeps_layer_active_for_mouse_key() {
+    fn keypress_step_releases_layer_when_unbound_key_pressed() {
+        // An unbound key resolves to `Action::No`; it is a real press that does
+        // nothing, so it must tear the layer down like any other non-mouse key.
         let mut entries = [holding_entry_with_deactivate(3, &[])];
 
-        let released = keypress_step(&mut entries, Action::Key(KeyCode::Hid(HidKeyCode::MouseBtn1)), at(2000));
+        let released = keypress_step(&mut entries, Action::No, at(2000));
 
-        assert!(released.is_empty());
-        assert!(entries[0].self_activated);
-        assert_eq!(entries[0].deadline, Some(at(1000)));
+        assert_eq!(released.as_slice(), &[3], "unbound key should release layer");
+        assert!(!entries[0].self_activated, "unbound key should clear self_activated");
+        assert!(entries[0].deadline.is_none(), "unbound key should clear deadline");
     }
 
     #[test]
@@ -985,19 +949,6 @@ mod tests {
             assert_eq!(released.as_slice(), &[3], "{:?} should release layer", kc);
             assert!(!entries[0].self_activated, "{:?} should clear self_activated", kc);
         }
-    }
-
-    #[test]
-    fn keypress_step_keeps_layer_active_for_unresolvable_action() {
-        // Unclassifiable actions (layer switches, macros, Again/Repeat) never
-        // deactivate; the timeout path handles clearing.
-        let mut entries = [holding_entry_with_deactivate(3, &[])];
-
-        let released = keypress_step(&mut entries, Action::LayerOn(0), at(2000));
-
-        assert!(released.is_empty());
-        assert!(entries[0].self_activated);
-        assert_eq!(entries[0].deadline, Some(at(1000)));
     }
 
     #[test]

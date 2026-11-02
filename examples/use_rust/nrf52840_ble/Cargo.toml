@@ -3,34 +3,25 @@ name = "rmk-nrf52840"
 version = "0.2.0"
 authors = ["Haobo Gu <haobogu@outlook.com>"]
 description = "Keyboard firmware written in Rust"
-homepage = "https://github.com/haobogu/rmk"
-repository = "https://github.com/haobogu/rmk"
+homepage = "https://github.com/rmk-rs/rmk"
+repository = "https://github.com/rmk-rs/rmk"
 readme = "../../README.md"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
-[dependencies]
-rmk = { path = "../../../rmk", features = [
-    "async_matrix",
-    "nrf52840_ble",
-    "adafruit_bl",
-] }
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", features = [
-    "defmt",
-    "peripheral",
-    "central",
-    "nrf52840",
-] }
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", features = [
-    "defmt",
-    "critical-section-impl",
-    "nrf52840",
-] }
-bt-hci = { version = "0.9", features = ["defmt"] }
+[[bin]]
+name = "rmk-nrf52840"
+test = false
+bench = false
 
-cortex-m = "0.7.7"
-cortex-m-rt = "0.7.5"
-embassy-time = { version = "0.5", features = ["tick-hz-32_768", "defmt"] }
+[dependencies]
+rmk = { path = "../../../rmk", default-features = false, features = ["defmt", "storage", "vial", "watchdog", "async_matrix", "nrf52840_ble", "adafruit_bl"] }
+
+embassy-executor = { version = "0.10", features = [
+    "defmt",
+    "platform-cortex-m",
+    "executor-thread",
+] }
 embassy-nrf = { version = "0.11", features = [
     "defmt",
     "nrf52840",
@@ -40,28 +31,32 @@ embassy-nrf = { version = "0.11", features = [
     "nfc-pins-as-gpio",
     "time",
 ] }
-embassy-executor = { version = "0.10", features = [
+embassy-time = { version = "0.5", features = ["tick-hz-32_768", "defmt"] }
+nrf-mpsl = { version = "0.4.0", features = [
     "defmt",
-    "platform-cortex-m",
-    "executor-thread",
+    "critical-section-impl",
+    "nrf52840",
 ] }
+nrf-sdc = { version = "0.4.0", features = [
+    "defmt",
+    "peripheral",
+    "central",
+    "nrf52840",
+] }
+
+async-trait = "0.1.88"
+bt-hci = { version = "0.10", features = ["defmt"] }
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
 defmt = "1"
 defmt-rtt = "1"
 panic-probe = { version = "1", features = ["print-defmt"] }
 static_cell = "2"
 
-async-trait = "0.1.88"
-
-
 [build-dependencies]
-xz2 = "0.1.7"
-json = "0.12"
 const-gen = "1.6"
-
-[[bin]]
-name = "rmk-nrf52840"
-test = false
-bench = false
+json = "0.12"
+xz2 = "0.1.7"
 
 [profile.dev]
 codegen-units = 1      # better optimizations

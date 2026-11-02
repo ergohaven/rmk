@@ -1,104 +1,57 @@
+use embassy_time::Duration;
 use embedded_storage_async::nor_flash::NorFlash as AsyncNorFlash;
-use serde::de::{Error as DeError, SeqAccess, Visitor};
-use serde::{Deserializer, Serializer};
+use rmk_types::constants::MACRO_CHUNK_SIZE;
 
-use crate::MACRO_SPACE_SIZE;
 use crate::keyboard::combo::Combo;
-use crate::storage::{Storage, StorageData, StorageKey, print_storage_error};
+use crate::storage::{Storage, StorageKey, StorageValue, print_storage_error};
 
-pub(crate) mod macro_bytes_serde {
-    use super::*;
-
-    pub(crate) fn serialize<S>(value: &[u8; MACRO_SPACE_SIZE], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let used = value
-            .iter()
-            .rposition(|byte| *byte != 0)
-            .map(|last| (last + 2).min(MACRO_SPACE_SIZE))
-            .unwrap_or(1);
-        serializer.serialize_bytes(&value[..used])
-    }
-
-    pub(crate) fn deserialize<'de, D>(deserializer: D) -> Result<[u8; MACRO_SPACE_SIZE], D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct MacroBytesVisitor;
-
-        impl<'de> Visitor<'de> for MacroBytesVisitor {
-            type Value = [u8; MACRO_SPACE_SIZE];
-
-            fn expecting(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                write!(formatter, "at most {MACRO_SPACE_SIZE} macro bytes")
-            }
-
-            fn visit_bytes<E>(self, value: &[u8]) -> Result<Self::Value, E>
-            where
-                E: DeError,
-            {
-                if value.len() > MACRO_SPACE_SIZE {
-                    return Err(E::invalid_length(value.len(), &self));
-                }
-
-                let mut bytes = [0u8; MACRO_SPACE_SIZE];
-                bytes[..value.len()].copy_from_slice(value);
-                Ok(bytes)
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut bytes = [0u8; MACRO_SPACE_SIZE];
-                let mut len = 0;
-                while let Some(byte) = seq.next_element()? {
-                    if len == MACRO_SPACE_SIZE {
-                        return Err(A::Error::invalid_length(len + 1, &self));
-                    }
-                    bytes[len] = byte;
-                    len += 1;
-                }
-
-                Ok(bytes)
-            }
-        }
-
-        deserializer.deserialize_bytes(MacroBytesVisitor)
-    }
-}
-
-impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usize, const NUM_ENCODER: usize>
-    Storage<F, ROW, COL, NUM_LAYER, NUM_ENCODER>
-{
-    pub(crate) async fn read_runtime_state(
+impl<F: AsyncNorFlash> Storage<F> {
+    pub(crate) async fn read_layout<
+        const ROW: usize,
+        const COL: usize,
+        const NUM_LAYER: usize,
+        const NUM_ENCODER: usize,
+        const NUM_TOUCHPAD: usize,
+    >(
         &mut self,
-        data: &mut crate::keymap::KeymapData<ROW, COL, NUM_LAYER, NUM_ENCODER>,
+        data: &mut crate::keymap::KeymapData<ROW, COL, NUM_LAYER, NUM_ENCODER, NUM_TOUCHPAD>,
         behavior: &mut crate::config::BehaviorConfig,
     ) -> Result<(), ()> {
-        let no_action_layer_start = self.tail_key_namespace_start();
+        let no_action_layer_start = self.no_action_layer_start;
         let uses_tail_key_namespace = |layer: u8| no_action_layer_start.is_some_and(|start| layer >= start);
 
-        // Restore every host-owned setting in one flash traversal. Calling
-        // fetch_item once per combo/fork/morse repeatedly scanned the complete
-        // sequential-storage map and delayed K04 runtime startup by ~20 s.
+        // Use fetch_all_items to speed up the keymap reading
         let mut key_iterator = self
             .flash
             .fetch_all_items(&mut self.buffer)
             .await
-            .map_err(|e| print_storage_error::<F>(e))?;
+            .map_err(print_storage_error)?;
 
         // Read all keymap keys and encoder configs
-        while let Some((key, item)) = key_iterator
-            .next::<StorageData>(&mut self.buffer)
+        while let Some((key, value)) = key_iterator
+            .next::<StorageValue>(&mut self.buffer)
             .await
-            .map_err(|e| print_storage_error::<F>(e))?
+            .map_err(print_storage_error)?
         {
-            match (key, item) {
-                (StorageKey::KeymapV2 { layer, row, col }, StorageData::KeyAction(action))
-                    if !uses_tail_key_namespace(layer) =>
+            // A layer at or above `no_action_layer_start` reads only the tail namespace, so the
+            // records a firmware without that boundary left for it keep losing to the no-action default.
+            let key = match key {
+                StorageKey::Keymap { layer, .. } | StorageKey::Encoder { layer, .. }
+                    if uses_tail_key_namespace(layer) =>
                 {
+                    continue;
+                }
+                StorageKey::KeymapTailV3 { layer, row, col } if uses_tail_key_namespace(layer) => {
+                    StorageKey::Keymap { layer, row, col }
+                }
+                StorageKey::EncoderTailV3 { layer, idx } if uses_tail_key_namespace(layer) => {
+                    StorageKey::Encoder { layer, idx }
+                }
+                StorageKey::KeymapTailV3 { .. } | StorageKey::EncoderTailV3 { .. } => continue,
+                key => key,
+            };
+            match (key, value) {
+                (StorageKey::Keymap { layer, row, col }, StorageValue::KeyAction(action)) => {
                     let layer = layer as usize;
                     let row = row as usize;
                     let col = col as usize;
@@ -106,63 +59,44 @@ impl<F: AsyncNorFlash, const ROW: usize, const COL: usize, const NUM_LAYER: usiz
                         data.keymap[layer][row][col] = action;
                     }
                 }
-                (StorageKey::KeymapTailV3 { layer, row, col }, StorageData::KeyAction(action))
-                    if uses_tail_key_namespace(layer) =>
-                {
-                    let layer = layer as usize;
-                    let row = row as usize;
-                    let col = col as usize;
-                    if layer < NUM_LAYER && row < ROW && col < COL {
-                        data.keymap[layer][row][col] = action;
-                    }
-                }
-                (StorageKey::EncoderV2 { layer, idx }, StorageData::EncoderAction(action))
-                    if !uses_tail_key_namespace(layer) =>
-                {
+                (StorageKey::Encoder { layer, idx }, StorageValue::EncoderAction(action)) => {
                     let idx = idx as usize;
                     let layer = layer as usize;
                     if layer < NUM_LAYER && idx < NUM_ENCODER {
                         data.encoder_map[layer][idx] = action;
                     }
                 }
-                (StorageKey::EncoderTailV3 { layer, idx }, StorageData::EncoderAction(action))
-                    if uses_tail_key_namespace(layer) =>
-                {
-                    let idx = idx as usize;
-                    let layer = layer as usize;
-                    if layer < NUM_LAYER && idx < NUM_ENCODER {
-                        data.encoder_map[layer][idx] = action;
+                // Restore the default (base) layer set via a `PDF` key
+                (StorageKey::DefaultLayer, StorageValue::DefaultLayer(layer)) => behavior.default_layer = layer,
+                // Restore the VIA/Vial layout options selection
+                (StorageKey::LayoutOption, StorageValue::LayoutOption(option)) => data.layout_option = option,
+                (StorageKey::MacroChunk(idx), StorageValue::MacroChunk(bytes)) => {
+                    if let Some(chunk) = data.macros.as_chunks_mut::<MACRO_CHUNK_SIZE>().0.get_mut(idx as usize) {
+                        *chunk = bytes;
+                        data.macros_stored = true;
                     }
                 }
-                (StorageKey::LayoutConfig, StorageData::LayoutConfig(config)) => {
-                    // Restore the default (base) layer set via a `PDF` key
-                    behavior.default_layer = config.default_layer;
+                (StorageKey::BehaviorConfig, StorageValue::BehaviorConfig(c)) => {
+                    behavior.morse.prior_idle_time = Duration::from_millis(c.prior_idle_time as u64);
+                    behavior.morse.default_profile = c.morse_default_profile;
+                    behavior.combo.timeout = Duration::from_millis(c.combo_timeout as u64);
+                    behavior.one_shot.timeout = Duration::from_millis(c.one_shot_timeout as u64);
+                    behavior.tap.tap_interval = c.tap_interval;
+                    behavior.tap.tap_capslock_interval = c.tap_capslock_interval;
                 }
-                (StorageKey::BehaviorConfig, StorageData::BehaviorConfig(config)) => {
-                    behavior.morse.prior_idle_time = embassy_time::Duration::from_millis(config.prior_idle_time as u64);
-                    behavior.morse.default_profile = config.morse_default_profile;
-                    behavior.combo.timeout = embassy_time::Duration::from_millis(config.combo_timeout as u64);
-                    behavior.one_shot.timeout = embassy_time::Duration::from_millis(config.one_shot_timeout as u64);
-                    behavior.tap.tap_interval = config.tap_interval;
-                    behavior.tap.tap_capslock_interval = config.tap_capslock_interval;
-                }
-                (StorageKey::MacroData, StorageData::MacroData(macro_data)) => {
-                    behavior.keyboard_macros.macro_sequences.copy_from_slice(&macro_data);
-                }
-                (StorageKey::Combo(idx), StorageData::Combo(config)) => {
-                    if let Some(combo) = behavior.combo.combos.get_mut(idx as usize) {
-                        debug!("Read combo config: {:?}", config);
-                        *combo = Some(Combo::new(config));
+                (StorageKey::Combo(idx), StorageValue::Combo(config)) => {
+                    if let Some(slot) = behavior.combo.combos.get_mut(idx as usize) {
+                        *slot = Some(Combo::new(config));
                     }
                 }
-                (StorageKey::Fork(idx), StorageData::Fork(fork)) => {
-                    if let Some(item) = behavior.fork.forks.get_mut(idx as usize) {
-                        *item = fork;
+                (StorageKey::Fork(idx), StorageValue::Fork(fork)) => {
+                    if let Some(slot) = behavior.fork.forks.get_mut(idx as usize) {
+                        *slot = fork;
                     }
                 }
-                (StorageKey::Morse(idx), StorageData::Morse(morse)) => {
-                    if let Some(item) = behavior.morse.morses.get_mut(idx as usize) {
-                        *item = morse;
+                (StorageKey::Morse(idx), StorageValue::Morse(morse)) => {
+                    if let Some(slot) = behavior.morse.morses.get_mut(idx as usize) {
+                        *slot = morse;
                     }
                 }
                 _ => continue,
@@ -182,151 +116,44 @@ mod tests {
 
     use super::*;
 
+    /// Every shape of `Morse` a host can write has to survive the round trip:
+    /// Vial's four fixed actions, a partly filled table, and raw morse patterns.
     #[test]
-    fn macro_storage_compacts_trailing_zeroes_and_restores_the_fixed_buffer() {
-        let mut macro_bytes = [0u8; MACRO_SPACE_SIZE];
-        macro_bytes[..4].copy_from_slice(&[1, 2, 3, 0]);
-        let storage_data = StorageData::MacroData(macro_bytes);
-        let mut buffer = [0u8; MACRO_SPACE_SIZE + 32];
+    fn morse_round_trips_through_a_storage_value() {
+        let key = |k| Action::Key(KeyCode::Hid(k));
 
-        let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
-        assert!(serialized_size < 32);
-
-        let (decoded, consumed) = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
-        assert_eq!(consumed, serialized_size);
-        match decoded {
-            StorageData::MacroData(decoded) => assert_eq!(decoded, macro_bytes),
-            _ => panic!("Expected MacroData"),
-        }
-    }
-
-    #[test]
-    fn empty_macro_storage_keeps_one_terminator() {
-        let storage_data = StorageData::MacroData([0u8; MACRO_SPACE_SIZE]);
-        let mut buffer = [0u8; 64];
-
-        let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
-        let (decoded, _) = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
-
-        match decoded {
-            StorageData::MacroData(decoded) => assert!(decoded.iter().all(|byte| *byte == 0)),
-            _ => panic!("Expected MacroData"),
-        }
-    }
-
-    #[test]
-    fn test_morse_serialization_deserialization() {
-        let morse = Morse::new_from_vial(
-            Action::Key(KeyCode::Hid(HidKeyCode::A)),
-            Action::Key(KeyCode::Hid(HidKeyCode::B)),
-            Action::Key(KeyCode::Hid(HidKeyCode::C)),
-            Action::Key(KeyCode::Hid(HidKeyCode::D)),
-            MorseProfile::new(Some(true), Some(MorseMode::PermissiveHold), Some(190u16), Some(180u16)),
+        let vial = Morse::new_from_vial(
+            key(HidKeyCode::A),
+            key(HidKeyCode::B),
+            key(HidKeyCode::C),
+            key(HidKeyCode::D),
+            MorseProfile::new(Some(true), Some(MorseMode::PermissiveHold), Some(190), Some(180)),
         );
 
-        // Serialization
-        let mut buffer = [0u8; 64];
-        let storage_data = StorageData::Morse(morse.clone());
-        let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
+        let mut partial = Morse::default();
+        _ = partial.put(TAP, key(HidKeyCode::A));
+        _ = partial.put(HOLD, key(HidKeyCode::B));
 
-        // Deserialization
-        let deserialized_data = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
-
-        // Validation
-        match deserialized_data {
-            (StorageData::Morse(deserialized_morse), _) => {
-                // actions
-                assert_eq!(deserialized_morse.actions.len(), morse.actions.len());
-                for (original, deserialized) in morse.actions.iter().zip(deserialized_morse.actions.iter()) {
-                    assert_eq!(original, deserialized);
-                }
-                // profile
-                assert_eq!(deserialized_morse.profile, morse.profile);
-            }
-            _ => panic!("Expected MorseData"),
-        }
-    }
-
-    #[test]
-    fn test_morse_with_partial_actions() {
-        // Create a Morse with partial actions
-        let mut morse = Morse::default();
-        _ = morse.put(TAP, Action::Key(KeyCode::Hid(HidKeyCode::A)));
-        _ = morse.put(HOLD, Action::Key(KeyCode::Hid(HidKeyCode::B)));
-
-        // Serialization
-        let mut buffer = [0u8; 64];
-        let storage_data = StorageData::Morse(morse.clone());
-        let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
-
-        // Deserialization
-        let deserialized_data = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
-
-        // Validation
-        match deserialized_data {
-            (StorageData::Morse(deserialized_morse), _) => {
-                // actions
-                assert_eq!(deserialized_morse.actions.len(), morse.actions.len());
-                for (original, deserialized) in morse.actions.iter().zip(deserialized_morse.actions.iter()) {
-                    assert_eq!(original, deserialized);
-                }
-                // profile
-                assert_eq!(deserialized_morse.profile, morse.profile);
-            }
-            _ => panic!("Expected MorseData"),
-        }
-    }
-
-    #[test]
-    fn test_morse_with_morse_serialization_deserialization() {
-        let mut morse = Morse {
-            profile: MorseProfile::new(
-                Some(false),
-                Some(MorseMode::HoldOnOtherPress),
-                Some(210u16),
-                Some(220u16),
-            ),
+        let mut patterns = Morse {
+            profile: MorseProfile::new(Some(false), Some(MorseMode::HoldOnOtherPress), Some(210), Some(220)),
             actions: heapless::LinearMap::default(),
         };
-        morse
-            .actions
-            .insert(MorsePattern::from_u16(0b1_01), Action::Key(KeyCode::Hid(HidKeyCode::A)))
-            .ok();
-        morse
-            .actions
-            .insert(
-                MorsePattern::from_u16(0b1_1000),
-                Action::Key(KeyCode::Hid(HidKeyCode::B)),
-            )
-            .ok();
-        morse
-            .actions
-            .insert(
-                MorsePattern::from_u16(0b1_1010),
-                Action::Key(KeyCode::Hid(HidKeyCode::C)),
-            )
-            .ok();
+        for (pattern, k) in [
+            (0b1_01, HidKeyCode::A),
+            (0b1_1000, HidKeyCode::B),
+            (0b1_1010, HidKeyCode::C),
+        ] {
+            patterns.actions.insert(MorsePattern::from_u16(pattern), key(k)).ok();
+        }
 
-        // Serialization
-        let mut buffer = [0u8; 64];
-        let storage_data = StorageData::Morse(morse.clone());
-        let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
-
-        // Deserialization
-        let deserialized_data = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
-
-        // Validation
-        match deserialized_data {
-            (StorageData::Morse(deserialized_morse), _) => {
-                // actions
-                assert_eq!(deserialized_morse.actions.len(), morse.actions.len());
-                for (original, deserialized) in morse.actions.iter().zip(deserialized_morse.actions.iter()) {
-                    assert_eq!(original, deserialized);
-                }
-                // profile
-                assert_eq!(deserialized_morse.profile, morse.profile);
-            }
-            _ => panic!("Expected MorseData"),
+        for morse in [vial, partial, patterns] {
+            let mut buffer = [0u8; 64];
+            let size = Value::serialize_into(&StorageValue::Morse(morse.clone()), &mut buffer).unwrap();
+            let StorageValue::Morse(decoded) = StorageValue::deserialize_from(&buffer[..size]).unwrap().0 else {
+                panic!("decoded as another variant");
+            };
+            assert_eq!(decoded.actions, morse.actions);
+            assert_eq!(decoded.profile, morse.profile);
         }
     }
 }

@@ -9,14 +9,18 @@
 //! - Each redraw: for each stripe → clip-draw full UI → SPI that stripe
 //!
 //! Pinout (`qube.overlay`):
-//! SPI3 SCK=P1.11 MOSI=P1.10 · CS=P1.13 · DC=P0.28 · RST=P0.03 · BL=P0.02
+//! SPI2 SCK=P1.11 MOSI=P1.10 · CS=P1.13 · DC=P0.28 · RST=P0.03 · BL=P0.02
+//!
+//! The overlay uses SPI3, but with the nrf-sdc/mpsl 0.4 core SPIM3's ENABLE reads back 0
+//! about 145 ms after boot and the panel stays dark. SPIM2 tops out at 8 MHz, the rate the
+//! panel runs at anyway.
 
 use core::fmt::Write as _;
 
 use defmt::{info, warn};
 use embassy_futures::select::{select, Either};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::peripherals::{P0_02, P0_03, P0_28, P1_10, P1_11, P1_13, SPI3};
+use embassy_nrf::peripherals::{P0_02, P0_03, P0_28, P1_10, P1_11, P1_13, SPI2};
 use embassy_nrf::spim::{self, Spim};
 use embassy_nrf::{interrupt, Peri};
 use embassy_time::{Delay, Duration, Instant, Timer};
@@ -38,10 +42,11 @@ use rmk::event::{
     LayerChangeEvent, LedIndicatorEvent, ModifierEvent, PeripheralBatteryEvent, PeripheralConnectedEvent,
     SleepStateEvent, SubscribableEvent, WpmUpdateEvent,
 };
-use rmk::processor::Processor;
 use rmk_types::battery::BatteryStatus;
 use static_cell::StaticCell;
 use u8g2_fonts::{fonts, U8g2TextStyle};
+
+use crate::media_label::{marquee, media_label, media_scrolls, MEDIA_VISIBLE_CHARS};
 
 // --- Panel geometry ---------------------------------------------------------
 
@@ -61,8 +66,10 @@ const BACKLIGHT_ACTIVE_HIGH: bool = true;
 const UI_X_OFFSET: i32 = 5;
 const SAFE_X: i32 = 18;
 const SAFE_W: u32 = SCREEN_W as u32 - (SAFE_X as u32 * 2);
-const MEDIA_VISIBLE_CHARS: usize = 26;
-const MEDIA_GAP_CHARS: usize = 3;
+// The longest artist and title with the separator between them.
+const MEDIA_LABEL_LEN: usize = 2 * rmk::host_data::HOST_TEXT_LEN + 3;
+// A visible character takes up to four bytes.
+const MEDIA_VISIBLE_LEN: usize = MEDIA_VISIBLE_CHARS * 4;
 const PANEL_RADIUS: u32 = 14;
 const CHIP_RADIUS: u32 = 7;
 const BAR_RADIUS: u32 = 5;
@@ -235,7 +242,7 @@ impl DrawTarget for StripeLcd {
 // --- Lazy init --------------------------------------------------------------
 
 struct PendingPins {
-    spi: Peri<'static, SPI3>,
+    spi: Peri<'static, SPI2>,
     sck: Peri<'static, P1_11>,
     mosi: Peri<'static, P1_10>,
     cs: Peri<'static, P1_13>,
@@ -256,7 +263,7 @@ pub struct LazyQubeLcd<I> {
 
 impl<I> LazyQubeLcd<I>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -317,7 +324,7 @@ impl<I> OriginDimensions for LazyQubeLcd<I> {
 
 async fn try_init_lcd<I>(pins: PendingPins, irq: I) -> Option<StripeLcd>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -357,7 +364,7 @@ where
 
 pub struct DongleScreen<I>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -374,7 +381,7 @@ where
 }
 
 pub fn create_processor<I>(
-    spi: Peri<'static, SPI3>,
+    spi: Peri<'static, SPI2>,
     sck: Peri<'static, P1_11>,
     mosi: Peri<'static, P1_10>,
     cs: Peri<'static, P1_13>,
@@ -384,7 +391,7 @@ pub fn create_processor<I>(
     irq: I,
 ) -> DongleScreen<I>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -420,7 +427,7 @@ where
 
 impl<I> DongleScreen<I>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -476,19 +483,9 @@ where
     }
 }
 
-pub struct NeverEvent;
-struct NeverSub;
-
-impl EventSubscriber for NeverSub {
-    type Event = NeverEvent;
-    async fn next_event(&mut self) -> NeverEvent {
-        core::future::pending().await
-    }
-}
-
 impl<I> Runnable for DongleScreen<I>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -608,7 +605,7 @@ enum UiEv {
 
 impl<I> DongleScreen<I>
 where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
+    I: interrupt::typelevel::Binding<<SPI2 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI2>>
         + Copy
         + 'static,
 {
@@ -755,22 +752,6 @@ where
     }
 }
 
-impl<I> Processor for DongleScreen<I>
-where
-    I: interrupt::typelevel::Binding<<SPI3 as spim::Instance>::Interrupt, spim::InterruptHandler<SPI3>>
-        + Copy
-        + 'static,
-{
-    type Event = NeverEvent;
-    fn subscriber() -> impl EventSubscriber<Event = NeverEvent> {
-        NeverSub
-    }
-    async fn process(&mut self, _: NeverEvent) {}
-    async fn process_loop(&mut self) -> ! {
-        self.run().await
-    }
-}
-
 // Silence unused DisplayDriver import path if needed — keep for future.
 
 // --- Full-screen UI ---------------------------------------------------------
@@ -787,9 +768,7 @@ pub struct QubeStatusRenderer {
 
 impl QubeStatusRenderer {
     fn media_needs_marquee(&self) -> bool {
-        let mut media: heapless::String<72> = heapless::String::new();
-        push_media_label(&mut media, &self.host_data);
-        media.chars().count() > MEDIA_VISIBLE_CHARS
+        media_scrolls(&self.host_data.media_artist, &self.host_data.media_title)
     }
 }
 
@@ -1058,8 +1037,10 @@ fn draw_media_or_fallback<D: DrawTarget<Color = Rgb565>>(
     fallback_style: MonoTextStyle<'_, Rgb565>,
 ) {
     let top = TextStyleBuilder::new().baseline(Baseline::Top).build();
-    let mut media: heapless::String<72> = heapless::String::new();
-    push_media_label(&mut media, host_data);
+    let mut media: heapless::String<MEDIA_LABEL_LEN> = heapless::String::new();
+    for ch in media_label(&host_data.media_artist, &host_data.media_title) {
+        let _ = media.push(ch);
+    }
 
     if media.is_empty() {
         if !host_time_available(host_data) {
@@ -1068,53 +1049,17 @@ fn draw_media_or_fallback<D: DrawTarget<Color = Rgb565>>(
         return;
     }
 
-    let mut visible: heapless::String<64> = heapless::String::new();
+    let mut visible: heapless::String<MEDIA_VISIBLE_LEN> = heapless::String::new();
     if media.chars().count() <= MEDIA_VISIBLE_CHARS {
         let _ = visible.push_str(&media);
     } else {
         let elapsed = Instant::now().duration_since(Instant::from_ticks(0)).as_millis() as usize;
-        let offset = (elapsed / 300) % (media.chars().count() + MEDIA_GAP_CHARS);
-        push_marquee_slice(&mut visible, &media, offset);
+        for ch in marquee(&media, elapsed / 300) {
+            let _ = visible.push(ch);
+        }
     }
 
     let _ = Text::with_text_style(&visible, Point::new(SAFE_X + 22, 22), media_style, top).draw(display);
-}
-
-fn push_media_label(buffer: &mut heapless::String<72>, host_data: &rmk::host_data::HostData) {
-    if !host_data.media_artist.is_empty() {
-        push_display_text(buffer, &host_data.media_artist);
-    }
-    if !host_data.media_title.is_empty() {
-        if !buffer.is_empty() {
-            let _ = buffer.push_str(" - ");
-        }
-        push_display_text(buffer, &host_data.media_title);
-    }
-}
-
-fn push_display_text<const N: usize>(buffer: &mut heapless::String<N>, value: &str) {
-    for ch in value.chars() {
-        if ch.is_control() {
-            continue;
-        }
-        if buffer.push(ch).is_err() {
-            break;
-        }
-    }
-}
-
-fn push_marquee_slice(buffer: &mut heapless::String<64>, text: &str, offset: usize) {
-    let text_len = text.chars().count();
-    let cycle_len = text_len + MEDIA_GAP_CHARS;
-    for i in 0..MEDIA_VISIBLE_CHARS {
-        let idx = (offset + i) % cycle_len;
-        let ch = if idx < text_len {
-            text.chars().nth(idx).unwrap_or(' ')
-        } else {
-            ' '
-        };
-        let _ = buffer.push(ch);
-    }
 }
 
 fn host_time_available(host_data: &rmk::host_data::HostData) -> bool {

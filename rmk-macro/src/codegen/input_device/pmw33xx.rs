@@ -1,7 +1,7 @@
 use quote::{format_ident, quote};
 use rmk_config::resolved::hardware::{ChipModel, ChipSeries, Pmw33xxConfig, Pmw33xxType};
 
-use super::Initializer;
+use super::{Initializer, expand_pointing_acceleration};
 
 /// Expand PMW33xx device configuration.
 /// Returns (device initializers, processor initializers)
@@ -125,6 +125,8 @@ pub(crate) fn expand_pmw33xx_device(
         let proc_invert_x = sensor.proc_invert_x;
         let proc_invert_y = sensor.proc_invert_y;
         let proc_swap_xy = sensor.proc_swap_xy;
+        let acceleration = expand_pointing_acceleration(&sensor.acceleration);
+        let scroll_acceleration = expand_pointing_acceleration(&sensor.scroll_acceleration);
         let report_hz: u16 = sensor.report_hz;
 
         // Generate motion pin initialization (optional)
@@ -269,6 +271,8 @@ pub(crate) fn expand_pmw33xx_device(
                 invert_x: #proc_invert_x,
                 invert_y: #proc_invert_y,
                 swap_xy: #proc_swap_xy,
+                acceleration: #acceleration,
+                scroll_acceleration: #scroll_acceleration,
                 ..Default::default()
             };
 

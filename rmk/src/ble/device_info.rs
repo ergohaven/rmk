@@ -1,3 +1,4 @@
+use rmk_types::DEVICE_INFO_STRING_MAX_LEN;
 use trouble_host::prelude::*;
 
 #[repr(u8)]
@@ -43,12 +44,8 @@ impl Default for PnPID {
 pub(crate) struct DeviceConfigurationService {
     #[characteristic(uuid = "2a50", read)]
     pub(crate) pnp_id: PnPID,
-    #[characteristic(
-        uuid = "2a25",
-        read,
-        value = heapless::String::try_from("vial:f64c2b3c:000001").unwrap()
-    )]
-    pub(crate) serial_number: heapless::String<20>,
+    #[characteristic(uuid = "2a25", read)]
+    pub(crate) serial_number: heapless::String<DEVICE_INFO_STRING_MAX_LEN>,
     #[characteristic(uuid = "2a29", read)]
-    pub(crate) manufacturer_name: heapless::String<20>,
+    pub(crate) manufacturer_name: heapless::String<DEVICE_INFO_STRING_MAX_LEN>,
 }

@@ -1,0 +1,148 @@
+[keyboard]
+name = "Ergohaven Imperial44"
+product_name = "Imperial44"
+vendor_id = 0xE126
+product_id = 0x0044
+manufacturer = "Ergohaven"
+chip = "nrf52840"
+
+[host]
+# Selectable Vial standalone profile; hardware and keymap match the Rynk default.
+vial_enabled = true
+rynk_enabled = false
+# Writes need no unlock, as over Vial.
+write_requires_unlock = false
+unlock_keys = [[1, 2], [1, 1]]
+
+[event]
+action.channel_size = 16
+action.subs = 1
+keyboard.subs = 4
+peripheral_settings_refresh.subs = 1
+
+[layout]
+rows = 8
+cols = 6
+# imperial44: 4 rows split (left: rows 0-3, right: rows 4-7)
+# ZMK transform: RC(r,5..0) left, RC(r,6..11) right
+# In RMK: left half row=0-3 col=0-5, right half row=4-7 col=0-5
+# col[0]=P1_11 → logical col5 (rightmost of left = T side)
+# col[5]=P0_02 → logical col0 (leftmost of left = Esc side)
+map = """
+(0,5,L) (0,4,L) (0,3,L) (0,2,L) (0,1,L) (0,0,L)                    (4,0,R) (4,1,R) (4,2,R) (4,3,R) (4,4,R) (4,5,R)
+(1,5,L) (1,4,L) (1,3,L) (1,2,L) (1,1,L) (1,0,L)                    (5,0,R) (5,1,R) (5,2,R) (5,3,R) (5,4,R) (5,5,R)
+(2,5,L) (2,4,L) (2,3,L) (2,2,L) (2,1,L) (2,0,L) (3,0,*)    (7,0,*) (6,0,R) (6,1,R) (6,2,R) (6,3,R) (6,4,R) (6,5,R)
+                        (3,3,*) (3,2,*) (3,1,*)    (7,1,*) (7,2,*) (7,3,*)
+"""
+
+[keymap]
+layers = 16
+no_action_layer_start = 5
+
+[[keymap.layer]]
+name = "Base"
+# Common factory layers mirror K:04 Mini. Imperial44 omits its four outer
+# thumb positions; hardware-specific pointing actions are not copied.
+keys = """
+Escape  Q     W     E     R     T     Y     U     I     O     P     Backspace
+Tab     A     S     D     F     G     H     J     K     L     Semicolon  RGui
+LShift  Z     X     C     V     B     LeftBracket RightBracket N M Comma Dot Quote RShift
+                          LCtrl MO(1) Space Enter MO(2) LAlt
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Nav"
+keys = """
+_  Kc1   Kc2    Kc3     Kc4  Kc5          Kc6  Kc7  Kc8  Kc9  Kc0    _
+_  Home  Insert  Delete  End  Enter        _    Left Down Up   Right  _
+_  _     _       _       _    PrintScreen  _    _    _    _    _      _      _  _
+                              _    _    _    _    MO(3)  _
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Symbols"
+keys = """
+_  SHIFTED(Kc2)  SHIFTED(Comma)  Equal  SHIFTED(Dot)       Grave           SHIFTED(Kc6)  SHIFTED(Quote)       SHIFTED(Minus)      Quote           _              _
+_  Backslash     SHIFTED(Kc9)    Minus  SHIFTED(Kc0)       SHIFTED(Equal)  SHIFTED(Kc5)  SHIFTED(LeftBracket) Semicolon           SHIFTED(RightBracket) SHIFTED(Kc1) _
+_  SHIFTED(Kc3)  SHIFTED(Kc8)    SHIFTED(Semicolon) Slash  _               _             _                    _                   SHIFTED(Backslash) SHIFTED(Grave) SHIFTED(Kc7) SHIFTED(Kc4) _
+                             _  MO(3)  _  _  _  _
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[[keymap.layer]]
+name = "Adjust"
+# User0..User4=BT profiles 0..4, User5=NEXT BT, User6=PREV BT, User7=CLR BT, User8=BT toggle
+keys = """
+Bootloader  _  F1  F2  F3  F4  User0  User1  User2  User3  User4  User7
+_  _  F5  F6  F7  F8  User37  AudioVolDown  AudioMute  AudioVolUp  _  _
+_  _  F9  F10  F11  F12  _  _  User38  MediaPrevTrack  MediaPlayPause  MediaNextTrack  _  No
+                    _  _  _  _  _  _
+"""
+encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
+
+[ble]
+enabled = true
+default_tx_power = 8
+use_2m_phy = false
+
+[split]
+connection = "ble"
+
+[split.central]
+rows = 4
+cols = 6
+row_offset = 0
+col_offset = 0
+
+[split.central.matrix]
+# ZMK left col order: P1_11, P1_10, P0_03, P0_28, P1_13, P0_02
+row_pins = ["P0_29", "P0_10", "P0_09", "P0_24"]
+col_pins = ["P1_11", "P1_10", "P0_03", "P0_28", "P1_13", "P0_02"]
+
+[[split.central.input_device.encoder]]
+pin_a = "P1_02"
+pin_b = "P1_00"
+phase = "resolution"
+resolution = 2
+internal_pullup = true
+
+[[split.peripheral]]
+rows = 4
+cols = 6
+row_offset = 4
+col_offset = 0
+
+[split.peripheral.matrix]
+# ZMK right col order: P1_13, P0_02, P0_29, P0_10, P0_09, P0_24
+row_pins = ["P0_13", "P0_28", "P0_03", "P1_10"]
+col_pins = ["P1_13", "P0_02", "P0_29", "P0_10", "P0_09", "P0_24"]
+
+[[split.peripheral.input_device.encoder]]
+pin_a = "P1_02"
+pin_b = "P1_00"
+phase = "resolution"
+resolution = 2
+internal_pullup = true
+
+[rmk]
+split_peripherals_num = 1
+split_pairing_timeout_seconds = 30
+ble_reconnect_timeout_seconds = 60
+ble_pairing_timeout_seconds = 60
+split_central_sleep_timeout_seconds = 120
+combo_max_num = 32
+combo_max_length = 4
+fork_max_num = 32
+morse_max_num = 32
+max_patterns_per_key = 8
+# Rynk's encoding takes up to twice Vial's bytes, and a frame holds the whole pool.
+macro_space_size = 4096
+rynk_buffer_size = 4128
+ble_profiles_num = 5
+
+[storage]
+start_addr = 0xCC000
+num_sectors = 32
+clear_storage = false

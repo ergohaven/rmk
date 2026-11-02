@@ -24,44 +24,56 @@ RMK uses an event-driven architecture for communication between components. Even
 
 ## Built-in Events
 
-RMK provides built-in event types organized by category:
+RMK provides built-in event types organized by category. All of them are exported from the `rmk::event` module:
 
-**Input Events** (`rmk::event::input`):
+**Input Events**:
 
 - `KeyboardEvent` - Key press/release event from matrix or encoders
 - `ModifierEvent` - Modifier key combination changes
 - `PointingEvent` - Pointing device events (mouse movement, scroll)
+- `PointingSetCpiEvent` - Request to set the CPI (resolution) of a pointing device by `device_id`
+- `PointingProcessorEvent` - Switch a pointing device's `PointingMode` (cursor, scroll, sniper, caret)
+- `ActionEvent` - The `Action` resolved from a key press/release, published before it is executed. `[event.action].subs` defaults to `0`; raise it in `keyboard.toml` before subscribing
 
-**State Events** (`rmk::event::state`):
+**State Events**:
 
 - `LayerChangeEvent` - Active layer changed
 - `LedIndicatorEvent` - LED indicator state changed (NumLock, CapsLock, ScrollLock)
 - `WpmUpdateEvent` - Words per minute updated
 - `SleepStateEvent` - Sleep state changed
 
-**Battery Events** (`rmk::event::battery`):
+**Battery Events**:
 
 - `BatteryAdcEvent` - Raw battery ADC reading
 - `ChargingStateEvent` - Charging state changed
 - `BatteryStatusEvent` - Battery status changed (includes level and charging status)
 
-**Connection Events** (`rmk::event::connection`):
+**Connection Events**:
 
-- `ConnectionStatusChangeEvent` - Full `ConnectionStatus` snapshot (USB lifecycle, BLE profile/state, preferred transport); fires on every transition
+- `ConnectionStatusChangeEvent` - Full `ConnectionStatus` snapshot (USB lifecycle, BLE profile/state/bond, preferred transport); fires on every transition.
 
-**Split Keyboard Events** (`rmk::event::split`, when split is enabled):
+**Split Keyboard Events** (when split is enabled):
 
 - `PeripheralConnectedEvent` - Peripheral connection state changed
 - `CentralConnectedEvent` - Connected to central state changed
 - `PeripheralBatteryEvent` - Peripheral battery status changed
-- `ClearPeerEvent` - BLE peer clearing event
+- `ClearPeerEvent` - BLE peer clearing event (BLE split builds only)
+
+**Dongle Events** (when the `dongle` feature is enabled):
+
+- `DongleStateEvent` - The dongle's link to its keyboard changed state (`DongleState`: searching, pairing, connected)
+
+**DFU Events** (when a DFU feature like `dfu_rp` or `dfu_nrf` is enabled):
+
+- `DfuStatusEvent` - DFU status changed (`DfuStatus`: idle, started, downloading, finished, error, lock waiting, unlocked)
+- `DfuCmdEvent` - DFU command forwarded from the USB DFU proxy to the async updater task. Internal use only — published by the USB ISR, consumed by `FlashDfuHandler` (central) and `PeripheralManager` (peripheral passthrough). The base subscriber count is 1 for the local flash handler. RMK automatically adds one slot per configured split peripheral when `dfu_split` is enabled and one slot for `DfuLock` when `dfu_lock` is enabled.
 
 ## Defining Custom Events
 
 Use the `#[event]` macro to define custom events:
 
 ```rust
-use rmk_macro::event;
+use rmk::macros::event;
 
 // Channel - each event consumed by ONE subscriber
 #[event(channel_size = 2)]
@@ -93,7 +105,8 @@ pub struct AnotherEvent {
 When a component produces multiple types of events, use `#[derive(Event)]` on an enum:
 
 ```rust
-use rmk_macro::Event;
+use rmk::event::{BatteryAdcEvent, PointingEvent};
+use rmk::macros::Event;
 
 #[derive(Event, Clone, Debug)]
 pub enum NrfAdcEvent {
@@ -117,6 +130,10 @@ publish_event(MyCustomEvent(42));
 // Asynchronous (awaitable, may block if channel is full)
 publish_event_async(MyCustomEvent(42)).await;
 ```
+
+`publish_event` never waits: on a full Channel the event is dropped, and on a full PubSub the oldest unread event is overwritten. Use `publish_event_async` when every event must be delivered.
+
+No event is retained: a subscriber sees nothing until the next publish. To start from the current value, subscribe first, then read the snapshot getter (e.g. `rmk::state::current_connection_status()`).
 
 ## Related Documentation
 

@@ -1,16 +1,17 @@
 use embassy_futures::select::{select, select3, Either, Either3};
-use embassy_nrf::gpio::{Flex, Input, Level, Output, OutputDrive, Pull};
-use embassy_nrf::Peri;
 use embassy_time::{Duration, Instant, Timer};
 use rmk::core_traits::Runnable;
 use rmk::driver::bitbang_spi::BitBangSpiBus;
-use rmk::event::{publish_event, Axis, AxisEvent, AxisValType, EventSubscriber, PointingEvent};
+use rmk::event::{publish_event, Axis, AxisEvent, AxisValType, PointingEvent};
 use rmk::input_device::pmw3610::{Pmw3610, Pmw3610Config, Pmw3610Health};
 use rmk::input_device::pointing::PointingDriver;
-use rmk::processor::Processor;
 
+use crate::board::{TrackballCs, TrackballMotion, TrackballPins, TrackballSck, TrackballSdio};
 use crate::module_settings;
 
+// Spelled out so the module also resolves when keyboards/phenom includes
+// this file through `#[path]`.
+#[path = "trackball/motion_pacing.rs"]
 mod motion_pacing;
 use motion_pacing::{
     take_report_axis, LEGACY_TRANSPORT_REPORT_INTERVAL_US, LOCAL_REPORT_INTERVAL_US, SPLIT_REPORT_INTERVAL_US,
@@ -79,16 +80,11 @@ const DEFAULT_CPI: u16 = 600;
 #[cfg(not(any(feature = "pmw_raw_600_diag", feature = "pmw_axes_600")))]
 const DEFAULT_CPI: u16 = 1000;
 
-pub type K04Trackball = Pmw3610<BitBangSpiBus<Output<'static>, Flex<'static>>, Output<'static>, Input<'static>>;
+pub type K04Trackball = Pmw3610<BitBangSpiBus<TrackballSck, TrackballSdio>, TrackballCs, TrackballMotion>;
 
-pub fn new_trackball(
-    id: u8,
-    sck: Output<'static>,
-    sdio: Flex<'static>,
-    cs: Output<'static>,
-    motion: Input<'static>,
-) -> K04Trackball {
-    let spi = BitBangSpiBus::new(sck, sdio);
+/// Without a MOTION pin (`pins.motion` is `None`) the sensor is polled.
+pub fn new_trackball_from_pins(id: u8, pins: TrackballPins) -> K04Trackball {
+    let spi = BitBangSpiBus::new(pins.sck, pins.sdio);
     let config = Pmw3610Config {
         res_cpi: DEFAULT_CPI as i16,
         swap_xy: !cfg!(feature = "pmw_axes_600"),
@@ -97,7 +93,7 @@ pub fn new_trackball(
         force_awake: cfg!(feature = "pmw_force_awake_diag"),
         smart_mode: !cfg!(feature = "pmw_smart_off_diag"),
     };
-    Pmw3610::new(id, spi, cs, Some(motion), config)
+    Pmw3610::new(id, spi, pins.cs, pins.motion, config)
 }
 
 #[cfg(any(feature = "pmw_raw_600_diag", feature = "pmw_axes_600_diag"))]
@@ -117,22 +113,6 @@ fn configured_ball_cpi(_device_id: u8) -> u16 {
 )))]
 fn configured_ball_cpi(device_id: u8) -> u16 {
     module_settings::ball_cpi(device_id)
-}
-
-pub fn new_trackball_from_pins(
-    id: u8,
-    sck: Peri<'static, embassy_nrf::peripherals::P0_01>,
-    sdio: Peri<'static, embassy_nrf::peripherals::P0_00>,
-    cs: Peri<'static, embassy_nrf::peripherals::P0_05>,
-    motion: Peri<'static, embassy_nrf::peripherals::P1_09>,
-) -> K04Trackball {
-    new_trackball(
-        id,
-        Output::new(sck, Level::High, OutputDrive::Standard),
-        Flex::new(sdio),
-        Output::new(cs, Level::High, OutputDrive::Standard),
-        Input::new(motion, Pull::Up),
-    )
 }
 
 pub struct Trackball {
@@ -285,7 +265,7 @@ impl Trackball {
                     self.last_motion_activity = None;
                     self.next_health_check = now + HEALTH_CHECK_INTERVAL;
                     self.unavailable_since = None;
-                    self.last_vbus_detect = Some(crate::battery_nrf::usb_power_status().0);
+                    self.last_vbus_detect = Some(crate::board::vbus_detected());
                     if self.recovery_pending {
                         #[cfg(feature = "pmw_axes_600_diag")]
                         defmt::info!(
@@ -326,7 +306,11 @@ impl Trackball {
                 )
             };
             let now = Instant::now();
-            let fallback_deadline = if sleeping {
+            // A sensor without a MOTION pin is read on every fallback interval.
+            let polled = self.trackball.motion_gpio().is_none();
+            let fallback_deadline = if polled {
+                Some(now + MOTION_FALLBACK_INTERVAL)
+            } else if sleeping {
                 None
             } else {
                 self.last_motion_activity.and_then(|last_motion| {
@@ -404,7 +388,7 @@ impl Trackball {
                 }
                 let mut reads = 0usize;
                 while reads < MAX_MOTION_READS_PER_WAKE
-                    && (self.trackball.motion_pending() || (fallback_poll && reads == 0))
+                    && ((!polled && self.trackball.motion_pending()) || (fallback_poll && reads == 0))
                 {
                     reads += 1;
                     #[cfg(feature = "rtt_diag")]
@@ -494,7 +478,7 @@ impl Trackball {
     }
 
     async fn verify_sensor_configuration_if_needed(&mut self, now: Instant) -> bool {
-        let vbus_detect = crate::battery_nrf::usb_power_status().0;
+        let vbus_detect = crate::board::vbus_detected();
         let vbus_changed = self.last_vbus_detect.is_some_and(|previous| previous != vbus_detect);
         if !vbus_changed && now < self.next_health_check {
             return true;
@@ -614,7 +598,7 @@ impl Trackball {
 
     fn report_interval(&self) -> Duration {
         if cfg!(any(feature = "production_v22", feature = "pmw_axes_600_diag")) {
-            if self.is_central {
+            if self.is_central || !crate::board::PACE_SPLIT_TRACKBALL {
                 LOCAL_REPORT_INTERVAL
             } else {
                 SPLIT_REPORT_INTERVAL
@@ -706,34 +690,9 @@ impl Trackball {
     }
 }
 
-struct NeverSub;
-pub struct NeverEvent;
-
-impl EventSubscriber for NeverSub {
-    type Event = NeverEvent;
-
-    async fn next_event(&mut self) -> NeverEvent {
-        core::future::pending().await
-    }
-}
-
 impl Runnable for Trackball {
     async fn run(&mut self) -> ! {
         self.run_loop().await
-    }
-}
-
-impl Processor for Trackball {
-    type Event = NeverEvent;
-
-    fn subscriber() -> impl EventSubscriber<Event = NeverEvent> {
-        NeverSub
-    }
-
-    async fn process(&mut self, _: NeverEvent) {}
-
-    async fn process_loop(&mut self) -> ! {
-        self.run().await
     }
 }
 
@@ -794,21 +753,6 @@ impl RttSchedulerProbe {
 impl Runnable for RttSchedulerProbe {
     async fn run(&mut self) -> ! {
         self.run_loop().await
-    }
-}
-
-#[cfg(feature = "rtt_diag")]
-impl Processor for RttSchedulerProbe {
-    type Event = NeverEvent;
-
-    fn subscriber() -> impl EventSubscriber<Event = NeverEvent> {
-        NeverSub
-    }
-
-    async fn process(&mut self, _: NeverEvent) {}
-
-    async fn process_loop(&mut self) -> ! {
-        self.run().await
     }
 }
 

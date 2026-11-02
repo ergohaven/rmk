@@ -33,6 +33,8 @@ pub(super) const fn stroke(platform: Platform, symbol: Symbol) -> ResolvedStroke
         (_, Symbol::Minus) => Some(Stroke::plain(HidKeyCode::Minus)),
         (_, Symbol::Plus) => Some(Stroke::shifted(HidKeyCode::Equal)),
         (Platform::Pc, Symbol::Asterisk) => Some(Stroke::shifted(HidKeyCode::Kc8)),
+        #[cfg(not(feature = "vial"))]
+        (Platform::Mac, Symbol::Asterisk) => Some(Stroke::shifted(HidKeyCode::Kc8)),
         (_, Symbol::Equal) => Some(Stroke::plain(HidKeyCode::Equal)),
         (Platform::Pc, Symbol::Percent) => Some(Stroke::shifted(HidKeyCode::Kc5)),
         (Platform::Mac, Symbol::Percent) => Some(Stroke::shifted(HidKeyCode::Kc4)),

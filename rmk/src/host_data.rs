@@ -6,7 +6,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use crate::RawMutex;
 
 const UNKNOWN: u8 = u8::MAX;
-const HOST_TEXT_LEN: usize = 32;
+/// Bytes kept of each media text, enough for the longest one Rynk carries.
+pub const HOST_TEXT_LEN: usize = 64;
 
 static HOST_HOUR: AtomicU8 = AtomicU8::new(UNKNOWN);
 static HOST_MINUTE: AtomicU8 = AtomicU8::new(UNKNOWN);
@@ -41,6 +42,15 @@ pub fn update_layout(layout: u8) {
 pub fn clear_time() {
     HOST_HOUR.store(UNKNOWN, Ordering::Relaxed);
     HOST_MINUTE.store(UNKNOWN, Ordering::Relaxed);
+}
+
+/// The valid UTF-8 prefix of `bytes`. Hosts cut media text at a byte limit,
+/// which can split a character.
+pub(crate) fn valid_text(bytes: &[u8]) -> &str {
+    match core::str::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(err) => core::str::from_utf8(&bytes[..err.valid_up_to()]).unwrap_or(""),
+    }
 }
 
 pub fn update_media_artist(value: &str) {

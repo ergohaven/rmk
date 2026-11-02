@@ -1,19 +1,19 @@
-use crate::{BehaviorConfig, MacroOperation};
+use crate::BehaviorConfig;
 
 impl crate::KeyboardTomlConfig {
     pub(crate) fn get_behavior_config(&self) -> Result<BehaviorConfig, String> {
         let default = self.behavior.clone().unwrap_or_default();
-        let (layout, _) = self.get_layout_config().unwrap();
+        let num_layers = self.num_layers();
         match self.behavior.clone() {
             Some(mut behavior) => {
                 behavior.tri_layer = match behavior.tri_layer {
                     Some(tri_layer) => {
-                        if tri_layer.upper >= layout.layers {
-                            return Err("keyboard.toml: Tri layer upper is larger than [layout.layers]".to_string());
-                        } else if tri_layer.lower >= layout.layers {
-                            return Err("keyboard.toml: Tri layer lower is larger than [layout.layers]".to_string());
-                        } else if tri_layer.adjust >= layout.layers {
-                            return Err("keyboard.toml: Tri layer adjust is larger than [layout.layers]".to_string());
+                        if tri_layer.upper >= num_layers {
+                            return Err("keyboard.toml: Tri layer upper is larger than [keymap].layers".to_string());
+                        } else if tri_layer.lower >= num_layers {
+                            return Err("keyboard.toml: Tri layer lower is larger than [keymap].layers".to_string());
+                        } else if tri_layer.adjust >= num_layers {
+                            return Err("keyboard.toml: Tri layer adjust is larger than [keymap].layers".to_string());
                         }
                         Some(tri_layer)
                     }
@@ -34,49 +34,40 @@ impl crate::KeyboardTomlConfig {
                             ));
                         }
                         if let Some(layer) = c.layer
-                            && layer >= layout.layers
+                            && layer >= num_layers
                         {
                             return Err(format!(
-                                "keyboard.toml: layer in combo #{} is greater than [layout.layers]",
+                                "keyboard.toml: layer in combo #{} is greater than [keymap].layers",
                                 i
                             ));
                         }
                     }
                 }
+                // Default macros are checked by the const assert the codegen emits.
                 behavior.macros = behavior.macros.or(default.macros);
-                if let Some(macros) = &behavior.macros {
-                    let macros_size = macros
-                        .macros
-                        .iter()
-                        .map(|m| {
-                            m.operations
-                                .iter()
-                                .map(|op| match op {
-                                    MacroOperation::Tap { .. }
-                                    | MacroOperation::Down { .. }
-                                    | MacroOperation::Up { .. } => 3,
-                                    MacroOperation::Delay { .. } => 4,
-                                    MacroOperation::Text { text } => text.len(),
-                                })
-                                .sum::<usize>()
-                        })
-                        .sum::<usize>();
-
-                    if macros_size > self.rmk.macro_space_size {
-                        return Err(format!(
-                            "keyboard.toml: total size of macros ({}) is greater than macro_space_size configured under [rmk] section",
-                            macros_size
-                        ));
-                    }
-                }
                 behavior.fork = behavior.fork.or(default.fork);
-                if let Some(fork) = &behavior.fork
-                    && fork.forks.len() > self.rmk.fork_max_num
-                {
-                    return Err(
-                        "keyboard.toml: number of forks is greater than fork_max_num configured under [rmk] section"
-                            .to_string(),
-                    );
+                if let Some(fork) = &behavior.fork {
+                    let count: usize = fork.forks.iter().map(|f| f.trigger.keys().len()).sum();
+                    if count > self.rmk.fork_max_num {
+                        return Err(
+                            "keyboard.toml: number of forks is greater than fork_max_num configured under [rmk] section"
+                                .to_string(),
+                        );
+                    }
+                    for (i, f) in fork.forks.iter().enumerate() {
+                        if f.trigger.keys().is_empty() {
+                            return Err(format!("keyboard.toml: trigger list in fork #{i} is empty"));
+                        }
+                        let Some(layers) = &f.layers else { continue };
+                        if layers.is_empty() {
+                            return Err(format!("keyboard.toml: layers list in fork #{i} is empty"));
+                        }
+                        if layers.iter().any(|&l| l >= num_layers.min(32)) {
+                            return Err(format!(
+                                "keyboard.toml: layer in fork #{i} must be below [keymap].layers and 32"
+                            ));
+                        }
+                    }
                 }
                 behavior.auto_mouse_layer = behavior.auto_mouse_layer.or(default.auto_mouse_layer);
                 if let Some(entries) = &behavior.auto_mouse_layer {
@@ -93,10 +84,10 @@ impl crate::KeyboardTomlConfig {
                     }
                     let mut seen_device_ids: Vec<Option<u8>> = Vec::new();
                     for entry in entries {
-                        if entry.target_layer >= layout.layers {
+                        if entry.target_layer >= num_layers {
                             return Err(format!(
-                                "keyboard.toml: [[behavior.auto_mouse_layer]].target_layer must be a valid layer index (< [layout.layers] = {}), got {}",
-                                layout.layers, entry.target_layer
+                                "keyboard.toml: [[behavior.auto_mouse_layer]].target_layer must be a valid layer index (< [keymap].layers = {}), got {}",
+                                num_layers, entry.target_layer
                             ));
                         }
                         if entry.threshold == Some(0) {

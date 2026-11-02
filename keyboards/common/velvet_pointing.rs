@@ -5,7 +5,7 @@ use rmk::event::{
     PointingSetCpiEvent, PointingTransformEvent, publish_event_async,
 };
 use rmk::input_device::pointing::{
-    CaretConfig, CursorConfig, PointingMode, PointingModeKeyState, ScrollConfig, SniperConfig,
+    CaretConfig, CursorConfig, PointingMode, PointingModeKeyState, ScrollAxis, ScrollConfig, SniperConfig,
 };
 use rmk::macros::processor;
 use rmk::types::action::Action;
@@ -185,11 +185,16 @@ impl Settings {
                 ..Default::default()
             }),
             Mode::Scroll => PointingMode::Scroll(ScrollConfig {
-                divisor_x: self.scroll_sens,
-                divisor_y: self.scroll_sens,
-                invert_x: self.flag(FLAG_INVERT_SCROLL_X),
-                invert_y: self.flag(FLAG_INVERT_SCROLL_Y),
-                ..Default::default()
+                wheel: ScrollAxis {
+                    divisor: self.scroll_sens,
+                    invert: self.flag(FLAG_INVERT_SCROLL_Y),
+                    ..Default::default()
+                },
+                pan: ScrollAxis {
+                    divisor: self.scroll_sens,
+                    invert: self.flag(FLAG_INVERT_SCROLL_X),
+                    ..Default::default()
+                },
             }),
             Mode::Text => PointingMode::Caret(CaretConfig {
                 invert_x: self.flag(FLAG_INVERT_TEXT_X),

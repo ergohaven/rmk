@@ -1,14 +1,8 @@
 # Storage
 
-RMK's storage system provides persistent data storage for keyboard settings, keymaps, and system
-configuration. It uses your microcontroller's internal flash memory to save changes between power
-cycles.
+RMK's storage system provides persistent data storage for keyboard settings, keymaps, and system configuration. It uses your microcontroller's internal flash memory to save changes between power cycles.
 
-::: tip For most users, the
-[default storage configuration](https://github.com/HaoboGu/rmk/tree/main/rmk-config/src/default_config)
-works perfectly. If there's no default config for your chip, the **last two sectors** will be used.
-In most cases, you only need to modify settings for advanced use cases or when troubleshooting
-storage-related issues. :::
+::: tip For most users, the [default storage configuration](https://github.com/rmk-rs/rmk/tree/main/rmk-config/src/default_config) works perfectly. If there's no default config for your chip, the **last two sectors** will be used. In most cases, you only need to modify settings for advanced use cases or when troubleshooting storage-related issues. :::
 
 The `[storage]` section in `keyboard.toml` configures RMK's storage.
 
@@ -21,11 +15,14 @@ import { Tab, Tabs, Rust, Toml } from '@theme'
 
 ```toml title="keyboard.toml"
 [storage]
-# Enable/disable storage feature (default: true)
+# Enable/disable storage feature (default: true). Must match the `storage` Cargo feature of rmk
 enabled = true
-# Number of flash sectors to allocate (default: 2)
+# Number of flash sectors to allocate. Defaults to 8 when a [dfu] section is present, either here or
+# in the chip default (nRF52840, nice!nano, RP2040 and Pico W ship one); otherwise 2 unless the chip
+# default sets a value
 num_sectors = 2
-# Storage start address (default: 0 = auto-allocate from end)
+# Storage start address (default: 0 = auto-allocate from end; on nRF BLE builds without DFU,
+# 0 means 0x60000)
 start_addr = 0x00000000
 # Clear all storage data on boot, including keymap, BLE bonds, etc
 clear_storage = false
@@ -53,3 +50,20 @@ let rmk_config = RmkConfig {
 
 </Tab>
 </Tabs>
+
+`enabled` must agree with the `storage` Cargo feature of the `rmk` crate in both directions: `enabled = false` requires disabling the feature (for example with `default-features = false`), and a build without the feature requires `enabled = false`. The build fails otherwise.
+
+## Storage and DFU
+
+When using DFU (`dfu_rp` / `dfu_nrf`), the storage partition is placed **after the DFU download slot**, determined by the `rmk-memory.x` linker script. In this mode:
+
+- `start_addr` is **ignored** — RMK automatically places storage at the address defined in `rmk-memory.x` (`__bootloader_storage_start`).
+- The default `num_sectors` is **8** (32 KB, matching rmk-boot's default storage area). You can override `num_sectors` to use fewer sectors, but cannot exceed the allocated area.
+
+If you change the storage size in rmk-boot's `build.rs`, rebuild the bootloader and regenerate `rmk-memory.x`. All partition addresses recalculate automatically.
+
+::: info Flashing a new firmware can erase stored data
+
+Changing the RMK version, commit or features erases everything, BLE pairings included. Changing only your layout preserves stored values and pairings. Set `clear_layout = true` to replace the stored layout with the firmware's defaults while keeping pairings. See [Storage](/docs/features/storage) for the full table.
+
+:::

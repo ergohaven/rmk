@@ -21,7 +21,7 @@ use embassy_rp::usb::{self, Driver};
 use embassy_time as _;
 use keymap::{COL, ROW};
 use panic_probe as _;
-use rmk::ble::{BleTransport, build_ble_stack};
+use rmk::ble::BleTransport;
 use rmk::config::{BehaviorConfig, DeviceConfig, PositionalConfig, RmkConfig, StorageConfig, VialConfig};
 use rmk::debounce::default_debouncer::DefaultDebouncer;
 use rmk::host::HostService;
@@ -30,7 +30,7 @@ use rmk::matrix::Matrix;
 use rmk::processor::builtin::wpm::WpmProcessor;
 use rmk::usb::UsbTransport;
 use rmk::watchdog::Rp2040Watchdog;
-use rmk::{HostResources, KeymapData, initialize_keymap_and_storage, run_all};
+use rmk::{KeymapData, initialize_keymap_and_storage, run_all};
 use static_cell::StaticCell;
 use vial::{VIAL_KEYBOARD_DEF, VIAL_KEYBOARD_ID};
 
@@ -51,7 +51,8 @@ const FLASH_SIZE: usize = 2 * 1024 * 1024;
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
-    let p = embassy_rp::init(Default::default());
+    let mut p = embassy_rp::init(Default::default());
+    let serial_number = rmk::config::rp2040_serial_number(p.FLASH.reborrow());
 
     #[cfg(feature = "skip-cyw43-firmware")]
     let (fw, clm, btfw, nvram) = {
@@ -111,6 +112,7 @@ async fn main(spawner: Spawner) {
     let flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH1, Irqs);
 
     let keyboard_device_config = DeviceConfig {
+        serial_number,
         vid: 0x4c4c,
         pid: 0x464c,
         manufacturer: "Haobo",
@@ -150,17 +152,13 @@ async fn main(spawner: Spawner) {
     let debouncer = DefaultDebouncer::new();
     let mut matrix = Matrix::<_, _, _, ROW, COL, true>::new(row_pins, col_pins, debouncer);
     let mut keyboard = Keyboard::new(&keymap);
-    let host_ctx = rmk::host::KeyboardContext::new(&keymap);
-    let mut host_service = HostService::new(&host_ctx, &rmk_config);
+    let host_service = HostService::new(&keymap, &rmk_config);
 
     let ble_addr = [0x18, 0xe2, 0x21, 0x88, 0xc0, 0xc7];
 
-    let mut host_resources = HostResources::new();
-
-    let stack = build_ble_stack(controller, ble_addr, &mut host_resources).await;
-
-    let mut usb_transport = UsbTransport::new(driver, rmk_config.device_config);
-    let mut ble_transport = BleTransport::new(&stack, rmk_config).await;
+    let mut usb_transport =
+        UsbTransport::new(driver, rmk_config.device_config.clone()).with_host_service(&host_service);
+    let mut ble_transport = BleTransport::new(controller, ble_addr, rmk_config).with_host_service(&host_service);
     let mut wpm_processor = WpmProcessor::new();
     let mut watchdog_runner = Rp2040Watchdog::default_runner(embassy_rp::watchdog::Watchdog::new(p.WATCHDOG));
 
@@ -172,7 +170,6 @@ async fn main(spawner: Spawner) {
         ble_transport,
         wpm_processor,
         keyboard,
-        host_service,
         watchdog_runner
     )
     .await;

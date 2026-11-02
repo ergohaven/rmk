@@ -21,7 +21,8 @@ internal_pullup = false
 # Working mode of the encoder
 # Available modes:
 # - default: resolution = 1
-# - resolution: custom resolution, requires specifying resolution and reverse parameters
+# - e8h7: phase table tuned for E8H7 encoders
+# - resolution: custom resolution, requires specifying the resolution parameter
 phase = "resolution"
 
 # `resolution` represents the number of steps generated per detent.
@@ -39,10 +40,14 @@ phase = "resolution"
 resolution = 2
 
 # Or you can specify detent and pulse to calculate resolution automatically
-resolution = { detent = 30, pulse = 15 }
+# resolution = { detent = 30, pulse = 15 }
 
 # Whether the direction of the rotary encoder is reversed.
 reverse = false
+
+# Debounce interval in milliseconds. Suppresses spurious events from
+# mechanical contact bounce. Defaults to 0 (disabled).
+debounce_ms = 5
 ```
 
 Multiple encoders can be added directly. Encoder indices are determined by the order they are defined.
@@ -62,32 +67,21 @@ phase = "default"
 
 ### Define Encoder Actions
 
-To define the actions triggered by encoder rotation, add a `encoders` field under each `[[layer]]` section, or add a `encoder_map` field under the `[layout]` section. The former method is preferred and the latter will be deprecated in the future.
+To define the actions triggered by encoder rotation, add an `encoders` field under each `[[keymap.layer]]` section.
 
-A `encoders` field under `[[layer]]` is a 2D array where each entry corresponds to an encoder in the same order they are defined. Each entry is a 2-element array `[CW_action, CCW_action]`, representing the actions for clockwise and counter-clockwise rotations respectively for that encoder on that layer.
-
-The `encoder_map` under `[layout]` is a 3D array where each entry is a 2D array as described above, representing the encoder actions for that layer.
+An `encoders` field is a 2D array where each entry corresponds to an encoder in the same order they are defined. Each entry is a 2-element array `[CW_action, CCW_action]`, representing the actions for clockwise and counter-clockwise rotations respectively for that encoder on that layer.
 
 **Structure**:
 
 ```toml
-[[layer]]  # Layer 0
+[[keymap.layer]]  # Layer 0
 encoders = [[CW, CCW], [CW, CCW], ...]  # Encoder 0, encoder 1, ...
 
-[[layer]]  # Layer 1
+[[keymap.layer]]  # Layer 1
 encoders = [[CW, CCW], [CW, CCW], ...]  # Encoder 0, encoder 1, ...
 
-[[layer]]  # More layers...
+[[keymap.layer]]  # More layers...
 encoders = [...]
-
-# Alternatively, use encoder_map:
-
-[layout]
-encoder_map = [
-  [ [CW, CCW], [CW, CCW], ... ],  # Layer 0: encoder 0, encoder 1, ...
-  [ [CW, CCW], [CW, CCW], ... ],  # Layer 1: encoder 0, encoder 1, ...
-  ...
-]
 ```
 
 **Example:**
@@ -99,34 +93,24 @@ encoder_map = [
 #   - Encoder 0: CW -> AudioVolUp, CCW -> AudioVolDown
 #   - Encoder 1: CW -> PageDown, CCW -> PageUp
 # Layer 1:
-#   - Encoder 0: No action ("_")
+#   - Encoder 0: No action ("No")
 #   - Encoder 1: CW -> BrightnessUp, CCW -> BrightnessDown
 
-[[layer]]  # Layer 0
+[[keymap.layer]]  # Layer 0
 # ... keys ...
 encoders = [["AudioVolUp", "AudioVolDown"], ["PageDown", "PageUp"]]
 
-[[layer]]  # Layer 1
+[[keymap.layer]]  # Layer 1
 # ... keys ...
-encoders = [["_", "_"], ["BrightnessUp", "BrightnessDown"]]
-
-# Alternatively, use encoder_map:
-
-[layout]
-rows = 5
-cols = 4
-layers = 2
-# ... matrix_map ...
-encoder_map = [
-  [["AudioVolUp", "AudioVolDown"], ["PageDown", "PageUp"]],
-  [["_", "_"], ["BrightnessUp", "BrightnessDown"]]
-]
+encoders = [["No", "No"], ["BrightnessUp", "BrightnessDown"]]
 ```
 
 **Notes:**
 
-- If the actions for an encoder are not specified in `encoders` or `encoder_map`, they will default to no action.
-- The number of encoder entries should match the number of physical encoders defined in `[[input_device.encoder]]`.
+- A layer must list actions for **every** encoder, or omit the `encoders` field entirely. Listing only some of the board's encoders is rejected, because the unlisted ones would silently stop working on that layer.
+- Use `["No", "No"]` to keep an encoder inactive on a given layer, as shown for encoder 0 on layer 1 above. Use `["_", "_"]` (transparent) to inherit actions from lower active layers.
+- When `encoders` is omitted from a layer, every encoder defaults to no action on that layer.
+- The number of encoder entries must match the number of physical encoders defined in `[[input_device.encoder]]`. On split keyboards this is the total across all halves, in the order they are defined (central first, then each peripheral).
 
 ## Rust configuration
 
@@ -150,13 +134,21 @@ You can also use the resolution based phase:
     let mut encoder = RotaryEncoder::with_resolution(pin_a, pin_b, 2, false, encoder_id)
 ```
 
+To debounce the encoder (the `debounce_ms` field in `keyboard.toml`), chain `with_debounce`:
+
+```rust
+    // Suppress events arriving within 5 ms of the last one
+    let mut encoder = RotaryEncoder::with_resolution(pin_a, pin_b, 2, false, encoder_id).with_debounce(5);
+```
+
 Then add the encoder to `run_all!` macro.
 
 ```rust
-    join3(
-        run_all!(matrix, encoder),
-        keyboard.run(),
-        run_rmk(&keymap, driver, storage, rmk_config, sd),
+    run_all!(
+        matrix,
+        encoder,
+        keyboard,
+        // ... other devices, processors and runners
     )
     .await;
 ```

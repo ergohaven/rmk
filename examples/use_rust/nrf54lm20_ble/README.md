@@ -1,7 +1,6 @@
 # nRF54LM20A BLE example
 
-This example targets the nRF54LM20A DK and uses the local `embassy`, `nrf-sdc`, and `trouble`
-trees from the sibling `../../../../../rust/` directory for nRF54 support.
+This example targets the nRF54LM20A DK.
 
 It uses the DK's four onboard buttons as a 2x2 direct-pin keyboard matrix:
 
@@ -11,6 +10,14 @@ It uses the DK's four onboard buttons as a 2x2 direct-pin keyboard matrix:
 - Button 4 (`P0.05`) -> row 1 / col 1
 
 Storage is backed by the internal flash via `nrf-mpsl`, so keymap/profile changes persist.
+
+## Physical layout
+
+rynk serves the physical layout over `GetLayout` so hosts can render the keyboard. Even a `use_rust`
+keyboard keeps that layout in `keyboard.toml`, found through `KEYBOARD_TOML_PATH` in
+`.cargo/config.toml`: RMK bakes the `[layout]` section into the firmware and `RmkConfig::default()`
+picks it up, so `main.rs` wires up nothing. The same file also feeds the `[rmk]` / `[event]` build
+constants — everything else stays in Rust.
 
 ## Running
 

@@ -10,6 +10,7 @@ mod vial;
 use defmt::info;
 use defmt_rtt as _;
 use embassy_executor::Spawner;
+use embassy_rp::flash::Flash;
 use embassy_rp::gpio::{Input, Level, Output};
 use embassy_rp::peripherals::{UART0, USB};
 use embassy_rp::uart::{self, BufferedUart};
@@ -18,6 +19,7 @@ use embassy_rp::{bind_interrupts, dma};
 use panic_probe as _;
 use rmk::config::{BehaviorConfig, DeviceConfig, PositionalConfig, RmkConfig, StorageConfig, VialConfig};
 use rmk::debounce::default_debouncer::DefaultDebouncer;
+use rmk::dfu::{partitions_from_linkerscript, FlashDfuHandler, FlashMutex};
 use rmk::futures::future::join;
 use rmk::host::HostService;
 use rmk::keyboard::Keyboard;
@@ -25,8 +27,7 @@ use rmk::matrix::Matrix;
 use rmk::processor::builtin::dfu_led::DfuLedProcessor;
 use rmk::processor::builtin::wpm::WpmProcessor;
 use rmk::split::central::run_peripheral_manager;
-use rmk::split::SPLIT_MESSAGE_MAX_SIZE;
-use rmk::storage::async_flash_wrapper;
+use rmk::split::{PeripheralMatrixConfig, SPLIT_MESSAGE_MAX_SIZE};
 use rmk::usb::UsbTransport;
 use rmk::watchdog::Rp2040Watchdog;
 use rmk::{initialize_keymap_and_storage, run_all, KeymapData};
@@ -47,69 +48,27 @@ const PERIPHERAL1_BIN: &[u8] = include_bytes!(concat!(
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     info!("RMK start!");
-    let p = embassy_rp::init(Default::default());
+    let mut p = embassy_rp::init(Default::default());
+    let serial_number = rmk::config::rp2040_serial_number(p.FLASH.reborrow());
 
     let driver = Driver::new(p.USB, Irqs);
 
     let (row_pins, col_pins) = config_matrix_pins_rp!(peripherals: p, input: [PIN_6, PIN_7], output: [PIN_19, PIN_20]);
 
-    // Flash layout using the bootymcbootface formula:
-    //   state at 0x6000 (4K), active from 0x7000 (size: (flash_size - 28K (= BOOT2 size + embassy-boot + embassy-boot state) - STORAGE_SIZE (= 128K) - page_size (= 4K)) / 2),
-    //   dfu follows active (active_size + page_size (= 4K))
-    //
-    // All offsets (DFU_OFFSET, DFU_SIZE, STORAGE_OFFSET, etc.) are derived
-    // automatically from FLASH_SIZE below --- change only that constant when using
-    // bootymcbootface.
-    //
-    // ⚠  You can define your own FLASH_SIZE and addresses, but then you must build and
-    //    flash a custom embassy-boot bootloader with a matching memory.x!
-    const FLASH_SIZE: u32 = 2 * 1024 * 1024; // 2 MB (default)
-                                             // const FLASH_SIZE: u32 = 4 * 1024 * 1024;    // 4 MB
-                                             // const FLASH_SIZE: u32 = 8 * 1024 * 1024;    // 8 MB
-                                             // const FLASH_SIZE: u32 = 16 * 1024 * 1024;   // 16 MB
-    const PAGE_SIZE: u32 = 4 * 1024;
-    const STORAGE_SIZE: u32 = 128 * 1024; // 32 sectors × 4K after ACTIVE+DFU
-    const STATE_OFFSET: u32 = 0x6000;
-    const STATE_SIZE: u32 = 0x1000;
-    const ACTIVE_OFFSET: u32 = 0x7000; // after 28K bootloader + state
-    let remaining: u32 = FLASH_SIZE
-        - 28 * 1024 // size of boot 2 + embassy-boot + embassy-boot state
-        - STORAGE_SIZE;
-    let active_size: u32 = (remaining - PAGE_SIZE) / 2; // DFU = ACTIVE + 1 page (embassy-boot requirement)
-    let dfu_size: u32 = active_size + PAGE_SIZE; // embassy-boot needs that extra page for swap info
-    let dfu_offset: u32 = ACTIVE_OFFSET + active_size; // dfu after active
-    let storage_offset: u32 = dfu_offset + dfu_size; // storage after active + dfu
-    assert!(storage_offset + STORAGE_SIZE == FLASH_SIZE); // sanity check that we fit everything in flash
-
-    info!(
-        "Flash layout: state @ 0x{:04X} ({}K), active @ 0x{:04X} ({}K), dfu @ 0x{:04X} ({}K), storage @ 0x{:04X} ({}K)",
-        STATE_OFFSET,
-        STATE_SIZE / 1024,
-        ACTIVE_OFFSET,
-        active_size / 1024,
-        dfu_offset,
-        dfu_size / 1024,
-        storage_offset,
-        STORAGE_SIZE / 1024
-    );
-
-    let flash = async_flash_wrapper(rmk::dfu::init_flash(
-        p.FLASH,
-        storage_offset,
-        STORAGE_SIZE,
-        STATE_OFFSET,
-        STATE_SIZE,
-        dfu_offset,
-        dfu_size,
-    ));
+    let flash_mutex = FlashMutex::new(rmk::storage::async_flash_wrapper(Flash::<
+        _,
+        embassy_rp::flash::Blocking,
+        { rmk::dfu::FLASH_SIZE },
+    >::new_blocking(p.FLASH)));
+    let (storage_partition, state_partition, dfu_partition) = partitions_from_linkerscript(&flash_mutex);
 
     let keyboard_device_config = DeviceConfig {
+        serial_number,
         vid: 0x4c4b,
         pid: 0x4643,
         manufacturer: "Haobo",
         product_name: "RMK Keyboard RP2040 embassy-boot split use_rust example",
-        serial_number: "vial:f64c2b3c:000001",
-        device_release: 0x0010,
+        ..DeviceConfig::default()
     };
 
     let vial_config = VialConfig::new(VIAL_KEYBOARD_ID, VIAL_KEYBOARD_DEF, &[(0, 0), (1, 1)]);
@@ -122,7 +81,7 @@ async fn main(_spawner: Spawner) {
 
     let mut keymap_data = KeymapData::new(keymap::get_default_keymap());
     let storage_config = StorageConfig {
-        num_sectors: 32,
+        num_sectors: 8,
         start_addr: 0,
         clear_storage: false,
         clear_layout: false,
@@ -132,15 +91,12 @@ async fn main(_spawner: Spawner) {
     let per_key_config = PositionalConfig::default();
     let (keymap, mut storage) = initialize_keymap_and_storage(
         &mut keymap_data,
-        flash,
+        storage_partition,
         &storage_config,
         &mut behavior_config,
         &per_key_config,
     )
     .await;
-
-    // mark the firmware as booted otherwise the bootloader thinks it didn't and will revert to the old firmware
-    rmk::dfu::mark_booted();
 
     // DFU LED processor, optional. Flashes the LED when DFU is active
     let mut dfu_led_processor = DfuLedProcessor::new(Output::new(p.PIN_25, Level::Low), false);
@@ -153,10 +109,10 @@ async fn main(_spawner: Spawner) {
     let debouncer = DefaultDebouncer::new();
     let mut matrix = Matrix::<_, _, _, 2, 2, true>::new(row_pins, col_pins, debouncer);
     let mut keyboard = Keyboard::new(&keymap);
-    let host_ctx = rmk::host::KeyboardContext::new(&keymap);
-    let mut host_service = HostService::new(&host_ctx, &rmk_config);
+    let host_service = HostService::new(&keymap, &rmk_config);
 
-    let mut usb_transport = UsbTransport::new(driver, rmk_config.device_config);
+    let mut dfu_iface = FlashDfuHandler::new(dfu_partition, state_partition);
+    let mut usb_transport = UsbTransport::new(driver, rmk_config.device_config, 1).with_host_service(&host_service);
     let mut wpm_processor = WpmProcessor::new();
 
     let mut watchdog_runner = Rp2040Watchdog::default_runner(embassy_rp::watchdog::Watchdog::new(p.WATCHDOG));
@@ -173,14 +129,24 @@ async fn main(_spawner: Spawner) {
             matrix,
             storage,
             usb_transport,
+            dfu_iface,
             wpm_processor,
             dfu_led_processor,
             keyboard,
-            host_service,
             watchdog_runner
         ),
         // use UpdatePolicy::Force to force the peripheral update at every start of central
-        run_peripheral_manager::<2, 1, 2, 2, _>(0, uart_receiver, rmk::split::central::UpdatePolicy::MatchHash),
+        run_peripheral_manager(
+            0,
+            uart_receiver,
+            PeripheralMatrixConfig {
+                rows: 2,
+                cols: 1,
+                row_offset: 2,
+                col_offset: 2,
+            },
+            rmk::split::central::UpdatePolicy::MatchHash,
+        ),
     )
     .await;
 }

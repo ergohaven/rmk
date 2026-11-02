@@ -5,7 +5,8 @@ import sys
 
 OWNERS = {
     'firmware': {'validate-profile', 'build', 'build-qube', 'build-settings-reset'},
-    'tests': {'format', 'fetch-check', 'check', 'test', 'discover', 'build', 'build-esp', 'bloat-report'},
+    'tests': {'format', 'fetch-check', 'check', 'test', 'host', 'qemu-rynk', 'discover', 'build', 'build-esp',
+              'bloat-report'},
 }
 
 

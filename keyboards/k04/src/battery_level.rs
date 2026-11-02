@@ -13,14 +13,17 @@ pub(crate) struct BatteryLevelTracker {
 
 impl BatteryLevelTracker {
     /// Return the level that may safely be published for the current power
-    /// state. Charging keeps the last discharging measurement; a cold boot on
-    /// USB reports an unknown level until the first unplugged sample.
+    /// state. Charging and a failed sample keep the last discharging
+    /// measurement; a cold boot on USB reports an unknown level until the
+    /// first unplugged sample.
     pub(crate) fn observe(&mut self, measured: Option<u8>, charging: bool) -> Option<u8> {
         if charging {
             return self.trusted_level;
         }
 
-        let next = measured?;
+        let Some(next) = measured else {
+            return self.trusted_level;
+        };
         let filtered = match self.trusted_level {
             Some(current) if next != 0 && next != 100 && next.abs_diff(current) < HYSTERESIS_PCT => current,
             _ => next,
@@ -57,6 +60,22 @@ mod tests {
         assert_eq!(tracker.observe(Some(73), false), Some(73));
         assert_eq!(tracker.observe(Some(100), true), Some(73));
         assert_eq!(tracker.observe(Some(79), false), Some(79));
+    }
+
+    #[test]
+    fn failed_sample_keeps_the_last_trusted_level() {
+        let mut tracker = BatteryLevelTracker::default();
+
+        assert_eq!(tracker.observe(Some(74), false), Some(74));
+        assert_eq!(tracker.observe(None, false), Some(74));
+        assert_eq!(tracker.observe(Some(70), false), Some(70));
+    }
+
+    #[test]
+    fn failed_first_sample_stays_unknown() {
+        let mut tracker = BatteryLevelTracker::default();
+
+        assert_eq!(tracker.observe(None, false), None);
     }
 
     #[test]

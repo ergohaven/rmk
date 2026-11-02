@@ -74,12 +74,11 @@ jobs:
             output_name: k03
             keyboard_toml: keyboard.toml
             vial_json: vial.json
-            build_features: "--features universal_mac_iso"
           - keyboard: k04
             output_name: k04_series_k04
             keyboard_toml: keyboard.toml
             vial_json: vial.json
-            build_features: "--features production_v30g,universal_mac_iso"
+            build_features: "--features production_v30g"
           - keyboard: k04
             output_name: k04_series_mini
             keyboard_toml: keyboard_mini.toml
@@ -89,24 +88,74 @@ jobs:
             output_name: k04_series_micro
             keyboard_toml: keyboard_micro.toml
             vial_json: vial_micro.json
-            build_features: "--features production_v30g,universal_mac_iso"
+            build_features: "--features production_v30g"
           - keyboard: imperial44
             output_name: imperial44
             keyboard_toml: keyboard.toml
             vial_json: vial.json
-            build_features: "--features universal_mac_iso"
           - keyboard: op36
             output_name: op36
             keyboard_toml: keyboard.toml
             vial_json: vial.json
-            build_features: "--features universal_mac_iso"
           - keyboard: velvet
             output_name: velvet
             keyboard_toml: keyboard.toml
             vial_json: vial.json
-            build_features: "--features universal_mac_iso"
             central_output_name: velvet_standalone_right_main.uf2
             peripheral_output_name: velvet_standalone_left_peripheral.uf2
+          - keyboard: phenom
+            output_name: phenom
+            keyboard_toml: keyboard.toml
+            vial_json: vial.json
+            target: thumbv6m-none-eabi
+            uf2_base: "0x10000000"
+            uf2_family: "0xE48BFF56"
+          - keyboard: phenom
+            output_name: phenom_mini
+            keyboard_toml: keyboard_mini.toml
+            vial_json: vial_mini.json
+            target: thumbv6m-none-eabi
+            uf2_base: "0x10000000"
+            uf2_family: "0xE48BFF56"
+          - keyboard: phenom
+            output_name: phenom_micro
+            keyboard_toml: keyboard_micro.toml
+            vial_json: vial_micro.json
+            target: thumbv6m-none-eabi
+            uf2_base: "0x10000000"
+            uf2_family: "0xE48BFF56"
+          - keyboard: k03
+            output_name: k03_vial
+            keyboard_toml: keyboard_vial.toml
+            vial_json: vial_universal.json
+            build_features: "--no-default-features --features vial_standalone,universal_mac_iso"
+          - keyboard: k04
+            output_name: k04_series_k04_vial
+            keyboard_toml: keyboard_vial.toml
+            vial_json: vial_universal.json
+            build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"
+          - keyboard: k04
+            output_name: k04_series_micro_vial
+            keyboard_toml: keyboard_micro_vial.toml
+            vial_json: vial_micro_universal.json
+            build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"
+          - keyboard: imperial44
+            output_name: imperial44_vial
+            keyboard_toml: keyboard_vial.toml
+            vial_json: vial_universal.json
+            build_features: "--no-default-features --features vial_standalone,universal_mac_iso"
+          - keyboard: op36
+            output_name: op36_vial
+            keyboard_toml: keyboard_vial.toml
+            vial_json: vial_universal.json
+            build_features: "--no-default-features --features vial_standalone,universal_mac_iso"
+          - keyboard: velvet
+            output_name: velvet_vial
+            keyboard_toml: keyboard_vial.toml
+            vial_json: vial_universal.json
+            central_output_name: velvet_standalone_right_main_vial.uf2
+            peripheral_output_name: velvet_standalone_left_peripheral_vial.uf2
+            build_features: "--no-default-features --features vial_standalone,universal_mac_iso"
 
     steps:
       - name: Checkout
@@ -120,7 +169,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: thumbv7em-none-eabihf
+          targets: ${{ matrix.target || 'thumbv7em-none-eabihf' }}
 
       - name: Cache cargo registry
         uses: actions/cache@v4
@@ -173,15 +222,15 @@ jobs:
         working-directory: keyboards/${{ matrix.keyboard }}
         run: |
           arm-none-eabi-objcopy -O binary \
-            target/thumbv7em-none-eabihf/release/central left.bin
+            target/${{ matrix.target || 'thumbv7em-none-eabihf' }}/release/central left.bin
           python3 ../../uf2conv.py left.bin \
-            --base 0x26000 --family 0xADA52840 \
+            --base ${{ matrix.uf2_base || '0x26000' }} --family ${{ matrix.uf2_family || '0xADA52840' }} \
             --output ${{ matrix.central_output_name || format('{0}_left.uf2', matrix.output_name) }}
 
           arm-none-eabi-objcopy -O binary \
-            target/thumbv7em-none-eabihf/release/peripheral right.bin
+            target/${{ matrix.target || 'thumbv7em-none-eabihf' }}/release/peripheral right.bin
           python3 ../../uf2conv.py right.bin \
-            --base 0x26000 --family 0xADA52840 \
+            --base ${{ matrix.uf2_base || '0x26000' }} --family ${{ matrix.uf2_family || '0xADA52840' }} \
             --output ${{ matrix.peripheral_output_name || format('{0}_right.uf2', matrix.output_name) }}
 
       - name: Upload firmware

@@ -11,7 +11,10 @@ autobenches = false
 autoexamples = false
 
 [features]
-default = []
+default = ["protocol_rynk"]
+protocol_rynk = ["rmk/ergohaven_rynk"]
+protocol_vial = ["rmk/vial", "rmk/host_lock"]
+vial_standalone = ["protocol_vial"]
 universal_mac_iso = ["rmk/universal_symbols_iso_bit0"]
 
 [dependencies]
@@ -19,8 +22,6 @@ embedded-storage = "0.3"
 rmk = { path = "../../rmk", default-features = false, features = [
     "usb_log",
     "storage",
-    "vial",
-    "vial_lock",
     "universal_symbols",
     "nrf52840_ble",
     "split",
@@ -28,18 +29,18 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "adafruit_bl",
 ] }
 embassy-futures = "0.1"
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", features = [
+nrf-sdc = { version = "0.4.0", features = [
     "defmt",
     "peripheral",
     "central",
     "nrf52840",
 ] }
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", features = [
+nrf-mpsl = { version = "0.4.0", features = [
     "defmt",
     "critical-section-impl",
     "nrf52840",
 ] }
-bt-hci = { version = "0.9", default-features = false, features = ["defmt"] }
+bt-hci = { version = "0.10", default-features = false, features = ["defmt"] }
 
 cortex-m = "0.7.7"
 cortex-m-rt = "0.7.5"
@@ -110,3 +111,7 @@ name = "hardreset"
 path = "src/bin/hardreset.rs"
 test = false
 bench = false
+
+# nrf-mpsl 0.4.0 with the flash timeslot lock fix sent upstream. Drop once a release has it.
+[patch.crates-io]
+nrf-mpsl = { path = "../../vendor/nrf-mpsl" }

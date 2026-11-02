@@ -12,6 +12,7 @@
 //! - [`combo`] — `Combo`: combo trigger configuration
 //! - [`fork`] — `Fork`, `StateBits`: key-override configuration
 //! - [`morse`] — `Morse`, `MorsePattern`, `MorseProfile`, `MorseMode`: tap-dance/tap-hold
+//! - [`keyboard_macros`] — `MacroOp`, `Macro`: keyboard macro steps
 //!
 //! ### Hardware state
 //! - [`modifier`] — `ModifierCombination` bitfield
@@ -23,12 +24,17 @@
 //!
 //! ### Protocol
 //! - [`protocol::vial`] — Vial/Via protocol types
-//! - [`protocol::rmk`] — RMK native protocol ICD (feature-gated: `rmk_protocol`)
+//! - [`protocol::rynk`] — RMK native protocol ICD (feature-gated: `rynk`)
 //!
 //! ### Build-time
 //! - [`constants`] — Generated from `keyboard.toml` by `build.rs`
 
-#![no_std]
+#![cfg_attr(not(feature = "wasm"), no_std)]
+
+// The host build (no_std, but on an allocator-backed platform) uses `alloc::Vec`
+// for bulk message fields, which are unbounded there — see `protocol::rynk`.
+#[cfg(feature = "host")]
+extern crate alloc;
 
 pub mod action;
 pub mod battery;
@@ -36,10 +42,11 @@ pub mod ble;
 pub mod combo;
 pub mod connection;
 pub mod constants;
-#[cfg(feature = "dfu")]
+#[cfg(feature = "_dfu")]
 pub mod dfu;
 pub mod fmt;
 pub mod fork;
+pub mod keyboard_macros;
 pub mod keycode;
 pub mod led_indicator;
 pub mod modifier;
@@ -48,6 +55,9 @@ pub mod mouse_button;
 pub mod protocol;
 #[cfg(feature = "steno")]
 pub mod steno;
+
+/// Maximum device information string length in bytes, including serial number markers.
+pub const DEVICE_INFO_STRING_MAX_LEN: usize = 32;
 
 /// Compute the maximum varint-encoded length for a given max value.
 /// Mirrors `postcard`'s internal `varint_size`.

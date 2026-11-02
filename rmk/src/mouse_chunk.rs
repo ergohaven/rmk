@@ -1,4 +1,4 @@
-//! Vector-preserving chunking for signed 8-bit relative HID reports.
+//! Vector-preserving chunking for signed 16-bit relative HID reports.
 //!
 //! The number of required reports is selected from the dominant axis, then
 //! every component is divided across that same number of reports. This keeps
@@ -8,12 +8,16 @@ fn chunks_needed(value: i32) -> u32 {
     if value == 0 {
         return 0;
     }
-    let limit = if value < 0 { 128u64 } else { 127u64 };
+    let limit = if value < 0 {
+        u64::from(i16::MIN.unsigned_abs())
+    } else {
+        i16::MAX as u64
+    };
     let magnitude = u64::from(value.unsigned_abs());
     magnitude.div_ceil(limit).min(u64::from(u32::MAX)) as u32
 }
 
-fn take_even_chunk(value: &mut i32, chunks: u32) -> i8 {
+fn take_even_chunk(value: &mut i32, chunks: u32) -> i16 {
     debug_assert!(chunks > 0);
     let denominator = i64::from(chunks);
     let source = i64::from(*value);
@@ -24,12 +28,12 @@ fn take_even_chunk(value: &mut i32, chunks: u32) -> i8 {
     } else {
         quotient
     };
-    let chunk = rounded.clamp(i64::from(i8::MIN), i64::from(i8::MAX)) as i8;
+    let chunk = rounded.clamp(i64::from(i16::MIN), i64::from(i16::MAX)) as i16;
     *value -= i32::from(chunk);
     chunk
 }
 
-pub(crate) fn take_vector_chunk(x: &mut i32, y: &mut i32, wheel: &mut i32, pan: &mut i32) -> (i8, i8, i8, i8) {
+pub(crate) fn take_vector_chunk(x: &mut i32, y: &mut i32, wheel: &mut i32, pan: &mut i32) -> (i16, i16, i16, i16) {
     let chunks = chunks_needed(*x)
         .max(chunks_needed(*y))
         .max(chunks_needed(*wheel))
@@ -47,7 +51,7 @@ pub(crate) fn take_vector_chunk(x: &mut i32, y: &mut i32, wheel: &mut i32, pan: 
 mod tests {
     use super::take_vector_chunk;
 
-    fn drain(mut x: i32, mut y: i32) -> (Vec<(i8, i8)>, i32, i32) {
+    fn drain(mut x: i32, mut y: i32) -> (Vec<(i16, i16)>, i32, i32) {
         let source_x = x;
         let source_y = y;
         let mut chunks = Vec::new();
@@ -65,14 +69,19 @@ mod tests {
 
     #[test]
     fn asymmetric_vector_keeps_the_same_direction() {
-        let (chunks, x, y) = drain(-250, 20);
-        assert_eq!(chunks, vec![(-125, 10), (-125, 10)]);
+        let (chunks, x, y) = drain(-65_000, 2_000);
+        assert_eq!(chunks, vec![(-32_500, 1_000), (-32_500, 1_000)]);
         assert_eq!((x, y), (0, 0));
     }
 
     #[test]
     fn all_quadrants_are_distributed_without_loss() {
-        for (x, y) in [(300, 90), (300, -90), (-300, 90), (-300, -90)] {
+        for (x, y) in [
+            (70_000, 21_000),
+            (70_000, -21_000),
+            (-70_000, 21_000),
+            (-70_000, -21_000),
+        ] {
             let (chunks, residual_x, residual_y) = drain(x, y);
             assert_eq!(chunks.len(), 3);
             assert_eq!((residual_x, residual_y), (0, 0));
@@ -81,13 +90,13 @@ mod tests {
 
     #[test]
     fn signed_hid_limits_fit_in_one_report() {
-        let (chunks, _, _) = drain(127, -128);
-        assert_eq!(chunks, vec![(127, -128)]);
+        let (chunks, _, _) = drain(i32::from(i16::MAX), i32::from(i16::MIN));
+        assert_eq!(chunks, vec![(i16::MAX, i16::MIN)]);
     }
 
     #[test]
     fn large_values_terminate_and_preserve_exact_sum() {
-        let (chunks, _, _) = drain(32_000, -32_000);
-        assert_eq!(chunks.len(), 252);
+        let (chunks, _, _) = drain(2_000_000, -2_000_000);
+        assert_eq!(chunks.len(), 62);
     }
 }

@@ -1,39 +1,50 @@
 [package]
 name = "rmk-macro"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2024"
 authors = ["Haobo Gu <haobogu@outlook.com>"]
 description = "Proc-macro crate of RMK"
-homepage = "https://github.com/haobogu/rmk"
-repository = "https://github.com/haobogu/rmk"
+homepage = "https://github.com/rmk-rs/rmk"
+repository = "https://github.com/rmk-rs/rmk"
 license = "MIT OR Apache-2.0"
 resolver = "2"
-
-[dependencies]
-rmk-config = { path = "../rmk-config", version = "=0.6.1"}
-rmk-types = { path = "../rmk-types", version = "=0.2.2", features = ["_codegen"] }
-quote = "1.0"
-syn = { version = "2.0", features = ["full", "extra-traits"] }
-proc-macro2 = "1.0"
-darling = "0.23"
-cargo_toml = "1"
-strum = { version = "0.28", default-features = false, features = ["derive"] }
-
-[features]
-## Enable hardware watchdog code generation
-watchdog = []
-dfu_rp = []
-## Enable nRF DFU firmware update code generation
-dfu_nrf = []
-dfu_split = []
 
 [lib]
 proc-macro = true
 doctest = false
 
+[features]
+## Enable hardware watchdog code generation
+watchdog = []
+## Expose the `run_tests!` simulator-scenario macro (rmk test suite only)
+_simulator = ["dep:toml", "dep:serde", "dep:serde_json"]
+## Base DFU code generation, pulled by `dfu_rp`/`dfu_nrf`
+_dfu = []
+dfu_rp = ["_dfu"]
+dfu_nrf = ["_dfu"]
+dfu_split = []
+dfu_ext = []
+
+[dependencies]
+rmk-config = { path = "../rmk-config", version = "=0.8.0" }
+rmk-types = { path = "../rmk-types", version = "=0.4.0", features = ["_codegen"] }
+
+cargo_toml = "1"
+darling = "0.24"
+proc-macro2 = "1.0"
+quote = "1.0"
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+strsim = "0.11"
+strum = { version = "0.28", default-features = false, features = ["derive"] }
+syn = { version = "3.0", features = ["full", "extra-traits"] }
+# Simulator scenario parsing only (`_simulator`). Rynk payloads are handed to
+# the test as JSON, so the request type is named once, in the test crate.
+toml = { version = "1", optional = true }
+
 [dev-dependencies]
 embassy-sync = "0.8"
 embassy-time = "0.5"
 macrotest = "1.0"
-trybuild = "1.0"
 rmk = { path = "tests/rmk", package = "rmk-mock" }
+trybuild = "1.0"

@@ -6,9 +6,11 @@ use embassy_usb::class::hid::ReadError;
 use embassy_usb::driver::EndpointError;
 use rmk_types::connection::ConnectionType;
 use rmk_types::led_indicator::LedIndicator;
+#[cfg(feature = "rynk")]
+use rmk_types::protocol::rynk::RYNK_HID_REPORT_SIZE;
 use serde::Serialize;
 use usbd_hid::descriptor::generator_prelude::*;
-use usbd_hid::descriptor::{AsInputReport, MediaKeyboardReport, MouseReport, SystemControlReport};
+use usbd_hid::descriptor::{AsInputReport, BufferOverflow, MediaKeyboardReport, SystemControlReport};
 
 use crate::event::{LedIndicatorEvent, publish_event};
 use crate::keyboard::LOCK_LED_STATES;
@@ -63,7 +65,7 @@ pub struct ViaReport {
 /// USB keeps the standard unnumbered Vial interface above. The composite BLE
 /// HID service must number every report, otherwise Linux interprets the first
 /// Vial payload byte as another report's id.
-#[cfg(all(feature = "_ble", feature = "host"))]
+#[cfg(all(feature = "_ble", feature = "vial"))]
 #[gen_hid_descriptor(
     (collection = APPLICATION, usage_page = 0xFF60, usage = 0x61) = {
         (report_id = 0x05,) = {
@@ -81,6 +83,33 @@ pub struct BleViaReport {
     pub(crate) input_data: [u8; 32],
     pub(crate) output_data: [u8; 32],
 }
+
+/// Vendor HID report carrying the Rynk config protocol over HID.
+#[cfg(feature = "rynk")]
+#[gen_hid_descriptor(
+    (collection = APPLICATION, usage_page = 0xFF14, usage = 0x61) = {
+        (usage = 0x62, logical_min = 0x0) = {
+            #[item_settings(data,variable,absolute)] input_data=input;
+        };
+        (usage = 0x63, logical_min = 0x0) = {
+            #[item_settings(data,variable,absolute)] output_data=output;
+        };
+    }
+)]
+#[derive(Default)]
+pub struct RynkHidReport {
+    // `gen_hid_descriptor` needs a literal length; keep it in lockstep with
+    // RYNK_HID_REPORT_SIZE (asserted below), which sizes the GATT chars/channel.
+    pub(crate) input_data: [u8; 32],
+    pub(crate) output_data: [u8; 32],
+}
+
+// `core::assert!`: a `defmt` build's crate-level `assert!` isn't const-callable.
+#[cfg(feature = "rynk")]
+const _: () = core::assert!(
+    RYNK_HID_REPORT_SIZE == 32,
+    "RynkHidReport literal length must equal RYNK_HID_REPORT_SIZE"
+);
 
 /// Predefined report ids for composite hid report.
 /// Should be same with `#[gen_hid_descriptor]` of `CompositeReport` and `BleCompositeReport`
@@ -169,6 +198,39 @@ mod steno_tests {
     }
 }
 
+/// Wire size of [`MouseReport`]: sizes the BLE report characteristic and the
+/// USB composite write buffer.
+pub(crate) const MOUSE_REPORT_SIZE: usize = 9;
+
+/// Mouse HID report.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MouseReport {
+    pub buttons: u8, // MouseButtons
+    pub x: i16,
+    pub y: i16,
+    /// Scroll down (negative) or up (positive) this many units
+    pub wheel: i16,
+    /// Scroll left (negative) or right (positive) this many units
+    pub pan: i16,
+}
+
+/// Hand-written because `gen_hid_descriptor` emits a `repr(packed)` struct,
+/// which with 16-bit axes makes every `&report.x` a compile error for callers.
+impl AsInputReport for MouseReport {
+    fn serialize(&self, buffer: &mut [u8]) -> Result<usize, BufferOverflow> {
+        if buffer.len() < MOUSE_REPORT_SIZE {
+            return Err(BufferOverflow);
+        }
+        buffer[0] = self.buttons;
+        buffer[1..3].copy_from_slice(&self.x.to_le_bytes());
+        buffer[3..5].copy_from_slice(&self.y.to_le_bytes());
+        buffer[5..7].copy_from_slice(&self.wheel.to_le_bytes());
+        buffer[7..9].copy_from_slice(&self.pan.to_le_bytes());
+        Ok(MOUSE_REPORT_SIZE)
+    }
+}
+
 /// A composite hid report which contains mouse, consumer, system reports.
 /// Report id is used to distinguish from them.
 #[gen_hid_descriptor(
@@ -215,12 +277,54 @@ mod steno_tests {
 #[derive(Default, Serialize)]
 pub struct CompositeReport {
     pub(crate) buttons: u8, // MouseButtons
-    pub(crate) x: i8,
-    pub(crate) y: i8,
-    pub(crate) wheel: i8, // Scroll down (negative) or up (positive) this many units
-    pub(crate) pan: i8,   // Scroll left (negative) or right (positive) this many units
+    pub(crate) x: i16,
+    pub(crate) y: i16,
+    pub(crate) wheel: i16, // Scroll down (negative) or up (positive) this many units
+    pub(crate) pan: i16,   // Scroll left (negative) or right (positive) this many units
     pub(crate) media_usage_id: u16,
     pub(crate) system_usage_id: u8,
+}
+
+#[cfg(test)]
+mod mouse_report_tests {
+    use usbd_hid::descriptor::{AsInputReport, SerializedDescriptor};
+
+    use super::{CompositeReport, MOUSE_REPORT_SIZE, MouseReport};
+
+    /// The report map tells the host how to parse the axes and `serialize`
+    /// writes them; only this test holds the two to the same widths.
+    #[test]
+    fn mouse_report_matches_composite_descriptor() {
+        let desc = CompositeReport::desc();
+        fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+            haystack.windows(needle.len()).position(|w| w == needle)
+        }
+        let start = find(desc, &[0x85, 0x02]).expect("missing mouse ReportID 2");
+        let end = find(desc, &[0x85, 0x03]).expect("missing consumer ReportID 3");
+        let mouse = &desc[start..end];
+        assert!(
+            find(mouse, &[0x17, 0x01, 0x80, 0xff, 0xff]).is_some(),
+            "missing LogicalMinimum -32767"
+        );
+        assert!(
+            find(mouse, &[0x26, 0xff, 0x7f]).is_some(),
+            "missing LogicalMaximum 32767"
+        );
+        assert!(find(mouse, &[0x75, 0x10]).is_some(), "missing ReportSize 16");
+        assert!(find(mouse, &[0x25, 0x7f]).is_none(), "an axis is still 8-bit");
+
+        // A delta past the old 8-bit ceiling survives the wire encoding.
+        let report = MouseReport {
+            buttons: 0x03,
+            x: 300,
+            y: -300,
+            wheel: 1,
+            pan: -1,
+        };
+        let mut buf = [0u8; MOUSE_REPORT_SIZE];
+        assert_eq!(report.serialize(&mut buf).unwrap(), MOUSE_REPORT_SIZE);
+        assert_eq!(buf, [0x03, 0x2c, 0x01, 0xd4, 0xfe, 0x01, 0x00, 0xff, 0xff]);
+    }
 }
 
 /// The BLE report map: everything in one HID service, distinguished by report id.
@@ -297,16 +401,16 @@ pub struct BleCompositeReport {
     pub(crate) leds: u8,
     pub(crate) keycodes: [u8; 6],
     pub(crate) buttons: u8,
-    pub(crate) x: i8,
-    pub(crate) y: i8,
-    pub(crate) wheel: i8,
-    pub(crate) pan: i8,
+    pub(crate) x: i16,
+    pub(crate) y: i16,
+    pub(crate) wheel: i16,
+    pub(crate) pan: i16,
     pub(crate) media_usage_id: u16,
     pub(crate) system_usage_id: u8,
 }
 
-#[cfg(all(feature = "_ble", feature = "host"))]
-pub(crate) const BLE_REPORT_MAP_LEN: usize = 207;
+#[cfg(all(feature = "_ble", feature = "vial"))]
+pub(crate) const BLE_REPORT_MAP_LEN: usize = 206;
 
 /// Compose the one HID-over-GATT report map used by BLE hosts.
 ///
@@ -315,7 +419,7 @@ pub(crate) const BLE_REPORT_MAP_LEN: usize = 207;
 /// unnumbered Vial interface. BLE assigns Vial report id 5 so the entire
 /// composite report map follows the HID requirement that report id 0 cannot be
 /// mixed with numbered reports.
-#[cfg(all(feature = "_ble", feature = "host"))]
+#[cfg(all(feature = "_ble", feature = "vial"))]
 pub(crate) fn ble_report_map() -> [u8; BLE_REPORT_MAP_LEN] {
     let composite = BleCompositeReport::desc();
     let vial = BleViaReport::desc();
@@ -332,7 +436,7 @@ mod ble_report_map_tests {
     use usbd_hid::descriptor::SerializedDescriptor;
 
     use super::BleCompositeReport;
-    #[cfg(feature = "host")]
+    #[cfg(feature = "vial")]
     use super::{BLE_REPORT_MAP_LEN, BleViaReport, CompositeReportType, ble_report_map};
 
     /// Pins the report map: `ble_server::HidService` hardcodes its length, and
@@ -343,7 +447,7 @@ mod ble_report_map_tests {
         fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
             haystack.windows(needle.len()).position(|w| w == needle)
         }
-        assert_eq!(desc.len(), 178, "update HidService's report_map size on change");
+        assert_eq!(desc.len(), 177, "update HidService's report_map size on change");
         let keyboard = find(desc, &[0x09, 0x06]).expect("missing Usage Keyboard");
         for report_id in 1u8..=4 {
             let id = find(desc, &[0x85, report_id]).unwrap_or_else(|| panic!("missing ReportID {report_id}"));
@@ -353,7 +457,7 @@ mod ble_report_map_tests {
         }
     }
 
-    #[cfg(feature = "host")]
+    #[cfg(feature = "vial")]
     #[test]
     fn host_ble_report_map_includes_vial_in_the_composite_service() {
         let desc = ble_report_map();

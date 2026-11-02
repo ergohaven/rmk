@@ -1,6 +1,6 @@
 # Keymap configuration
 
-RMK supports configuring the default keymap at the compile time. Keymap in RMK is a 3-D matrix of [`KeyAction`](https://docs.rs/rmk/latest/rmk/action/enum.KeyAction.html), which represent the keyboard's action after you trigger a physical key. The 3 dimensions are the number of columns, rows and layers.
+RMK supports configuring the default keymap at the compile time. Keymap in RMK is a 3-D matrix of [`KeyAction`](https://docs.rs/rmk-types/latest/rmk_types/action/enum.KeyAction.html), which represent the keyboard's action after you trigger a physical key. The 3 dimensions are the number of columns, rows and layers.
 
 RMK provides both Rust code or config ways to set your default keymap.
 
@@ -10,10 +10,9 @@ Please check [layout section](../layout) in keyboard configuration doc.
 
 ## Define default keymap in Rust source file
 
-The default keymap could also be defined at a Rust source file, There are `keymap.rs`s in example folder, such as [this](https://github.com/HaoboGu/rmk/blob/main/examples/use_rust/nrf52840_ble/src/keymap.rs), which could be a good example of defining keymaps using Rust in RMK:
+The default keymap could also be defined at a Rust source file, There are `keymap.rs`s in example folder, such as [this](https://github.com/rmk-rs/rmk/blob/main/examples/use_rust/nrf52840_ble/src/keymap.rs), which could be a good example of defining keymaps using Rust in RMK. A simplified two-layer version:
 
 ```rust
-// https://github.com/HaoboGu/rmk/blob/main/examples/use_rust/nrf52840_ble/src/keymap.rs
 use rmk::types::action::KeyAction;
 use rmk::{a, k, layer, mo};
 pub(crate) const COL: usize = 14;

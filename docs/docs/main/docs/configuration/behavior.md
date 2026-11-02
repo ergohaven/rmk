@@ -4,18 +4,14 @@ The `[behavior]` section contains configuration for how different keyboard actio
 
 ```toml
 [behavior]
-tri_layer = {
-  upper = 1,
-  lower = 2,
-  adjust = 3,
-}
-one_shot = {
-  timeout = "1s",
-}
-one_shot_modifiers = {
-  activate_on_keypress = false,
-}
+tri_layer = { upper = 1, lower = 2, adjust = 3 }
+one_shot = { timeout = "1s" }
+one_shot_modifiers = { activate_on_keypress = false }
 ```
+
+::: note Rust API only
+`BehaviorConfig` has three fields with no `keyboard.toml` counterpart: `default_layer` (the base layer at startup), `tap` (`TapConfig`) and `mouse_key` (`MouseKeyConfig`, mouse-key acceleration; only its repeat intervals come from `[rmk].mouse_key_interval` and `[rmk].mouse_wheel_interval`). With `keyboard.toml` they keep their defaults; set them when you build `BehaviorConfig` in Rust.
+:::
 
 ## Tri Layer
 
@@ -32,30 +28,24 @@ adjust = 3
 
 In this example, when both layers 1 (`upper`) and 2 (`lower`) are active, layer 3 (`adjust`) will also be enabled.
 
-Note that `"#layer_name"` could also be used in place of layer numbers.
-
 ## One-Shot
 
 The `one_shot` sub-table contains common one-shot configuration (for both OSM and OSL)
 
-Currently, there are only `timeout` field that specifies how long the one-shot modifier/layer remains active.
-When no key is pressed within this time, the one-shot modifier/layer will be canceled.
-`timeout` value is a string suffixed with `s` or `ms` (default: `1s`).
+Currently, there are only `timeout` field that specifies how long the one-shot modifier/layer remains active. When no key is pressed within this time, the one-shot modifier/layer will be canceled. `timeout` value is a string suffixed with `s` or `ms` (default: `1s`).
 
 ## One-Shot Modifiers
 
 The `one_shot_modifiers` sub-table configures one-shot modifiers (OSM).
 
-By default, one-shot modifiers do not activate on keypress and will be sent only when other key is pressed.
-You can change this behavior by setting `activate_on_keypress` to `true`.
-This behavior is also known as One-Shot Sticky Modifiers (OSSM).
+By default, one-shot modifiers do not activate on keypress and will be sent only when other key is pressed. You can change this behavior by setting `activate_on_keypress` to `true`. This behavior is also known as One-Shot Sticky Modifiers (OSSM).
 
 If you press One-Shot Modifier again, it will be sent as a normal modifier key press and, therefore, released.
 
 The `quick_release` option controls when the one-shot modifier is released:
 
-- `false` (default): the modifier is released when the next key is **released** (chain mode, equivalent to ZMK `&skn`). The modifier stays active for the entire duration of the next keypress, including key repeat.
-- `true`: the modifier is released when the next key is **pressed** (equivalent to ZMK `&skq`). Only the initial press of the next key is modified; key repeat will not include the modifier.
+- `false` (default): the modifier is included in the next key's press report and stays part of that report for as long as the key is held, including key repeat (chain mode, equivalent to ZMK `&skn`). No separate report is sent when the key is released.
+- `true`: an extra report is sent right after the next key's press with the modifier removed (equivalent to ZMK `&skq`). Only the initial press of the next key is modified; key repeat will not include the modifier.
 
 Default values:
 
@@ -85,7 +75,7 @@ In the `combo` sub-table, you can configure the keyboard's combo key functionali
 
 Combo configuration includes the following parameters:
 
-- `timeout`: Defines the maximum time window for pressing all combo keys. If the time exceeds this, the combo key will not be triggered. The format is a string, which can be milliseconds (e.g. "200ms") or seconds (e.g. "1s").
+- `timeout`: Defines the maximum time window for pressing all combo keys. If the time exceeds this, the combo key will not be triggered. The format is a string, which can be milliseconds (e.g. "200ms") or seconds (e.g. "1s"). Defaults to 50ms.
 - `prior_idle_time`: An optional cooldown window after any key press before a combo can start recording. This helps prevent accidental combo triggers during fast typing. The format is a string (e.g. `"130ms"`). If not set, there is no idle check (equivalent to ZMK's `require-prior-idle-ms`).
 - `combos`: An array containing all defined combos. Each combo configuration is an object containing the following attributes:
   - `actions`: An array of strings defining the keys that need to be pressed simultaneously to trigger the combo action.
@@ -110,20 +100,25 @@ combos = [
 
 ## Macro
 
-In the `macro` sub-table, you can configure the keyboard's macro functionality. Macros are explained in more detail in the [keyboard macros](./keymap_configuration/keyboard_macros.md) page.
+The `macro` sub-table defines the default macros. [Keyboard macros](./keymap_configuration/keyboard_macros.md) explains what each operation does and the limits a macro must follow.
 
-Macro operations are defined with an `operation` and a `keycode`, `duration` or `text` field depending on the operation. Available operations are:
+Each operation has an `operation` name and, depending on it, a `keycode`, `duration` or `text` field:
 
 ```toml
 [[behavior.macro.macros]]
 operations = [
-  { operation = "down", keycode = "_" }, # [!code focus:5]
+  { operation = "down", keycode = "_" }, # [!code focus:6]
   { operation = "up", keycode = "_" },
   { operation = "tap", keycode = "_" },
   { operation = "delay", duration = "0ms" },
-  { operation = "text", text = "foo" }
+  { operation = "text", text = "foo" },
+  { operation = "pause_for_release" },
 ]
 ```
+
+- `keycode` takes a [keycode](./keymap_configuration/keycodes.md) or a single action such as `WM(A, LCtrl)`, `MO(1)` or `Macro(n)`. Tap-hold and tap-dance keys (`MT`, `LT`, `TH`, `TT`, `TD`) are not accepted.
+- `duration` takes a time such as `100ms` or `1s`, at most 65535 ms.
+- `text` is ASCII.
 
 ```toml
 # Outputs "Hello"
@@ -186,15 +181,15 @@ morses = [
 
 This is an extended version of tap dance. It allows you to define sequences of actions for multiple taps and for holds that occur after a specific number of taps.
 
-- `tap_actions`: An array of actions triggered by sequential taps. Each tap within the tapping term increments the tap count and triggers the corresponding action from the `tap_actions` array. For example, `tap_actions = ["F1", "F2", "F3"]` means a single tap triggers "F1", double tap triggers "F2", triple tap triggers "F3", and so on. If the tap count exceeds the length of the array, the last action is used.
-- `hold_actions`: An array of actions triggered when the key is held _after_ a certain number of taps. When a key is held after multiple taps, the corresponding action from the `hold_actions` array is triggered. For example, `hold_actions = ["MO(1)", "MO(2)", "MO(3)"]` means holding after one tap triggers "MO(1)", holding after two taps triggers "MO(2)", and so on.
+- `tap_actions`: An array of actions triggered by sequential taps. Each tap within the tapping term increments the tap count and triggers the corresponding action from the `tap_actions` array. For example, `tap_actions = ["F1", "F2", "F3"]` means a single tap triggers "F1", double tap triggers "F2", triple tap triggers "F3". Once the longest configured pattern is reached (the third tap here), the action fires immediately and the sequence ends; the next tap starts a new sequence.
+- `hold_actions`: An array of actions triggered when the key is held, indexed by the number of taps _before_ the hold: the first entry is a plain hold, the second is a hold after one tap, and so on. For example, `hold_actions = ["MO(1)", "MO(2)", "MO(3)"]` means holding triggers "MO(1)", holding after one tap triggers "MO(2)", holding after two taps triggers "MO(3)".
 
 Example:
 
 ```toml
 [behavior.morse]
 morses = [
-  # A morse key defined with tap and hold-after-tap actions array
+  # A morse key defined with tap and hold action arrays
   { tap_actions = ["F1", "F2", "F3", "F4", "F5"], hold_actions = ["MO(1)", "MO(2)", "MO(3)", "MO(4)", "MO(5)"] }
 ]
 ```
@@ -221,7 +216,6 @@ morses = [
 ```
 
 ::: warning
-
 The three definition methods are mutually exclusive. For any single Morse key definition, you must choose only one of the following approaches:
 
 - Full Morse: `morse_actions`
@@ -229,27 +223,32 @@ The three definition methods are mutually exclusive. For any single Morse key de
 - Vial-style: `tap`, `hold`, `hold_after_tap`, `double_tap`.
 
 Mixing fields from different methods in the same definition is not allowed.
-
 :::
 
 ### Profile
 
 The `profile` of a morse key contains all tunable configurations of this morse key, such as behavior mode, timing configurations, etc.
 
+::: tip
+
+- `enable_flow_tap`: Enables HRM (Home Row Mod) mode. When enabled, the global `prior_idle_time` setting becomes functional. Defaults to `false`. Profiles may set this to override the global `[behavior.morse]` value; omitting it inherits the global value.
+- `prior_idle_time`: _(global only)_ If the previous non-modifier key was pressed within this period before pressing the current tap-hold key, the tap action for the tap-hold behavior will be triggered. This parameter lives in `[behavior.morse]` (not in a per-key profile) and is effective only when `enable_flow_tap` is enabled for the key. Defaults to 120ms.
+  :::
+
 A profile contains the following fields:
 
-- `enable_flow_tap`: Enables HRM (Home Row Mod) mode. When enabled, the `prior_idle_time` setting becomes functional. Defaults to `false`. Profiles may set this to override the global `[behavior.morse]` value; omitting it inherits the global value.
-- `prior_idle_time`: If the previous non-modifier key is released within this period before pressing the current tap-hold key, the tap action for the tap-hold behavior will be triggered. This parameter is configured globally in `[behavior.morse]` and is effective only when `enable_flow_tap` is enabled for the key. Defaults to 120ms.
-
-- `unilateral_tap`: (Experimental) Enables unilateral tap mode. When enabled, tap action will be triggered when a key from "same" hand is pressed. In current experimental version, the "same" hand is calculated using the `<hand>`, which can be given in `matrix_map`. This option is recommended to set to true when `enable_flow_tap` is set to true.
+- `unilateral_tap`: (Experimental) Enables unilateral tap mode. When enabled, tap action will be triggered when a key from "same" hand is pressed. In current experimental version, the "same" hand is calculated using the `<hand>`, which can be given in `layout.map`. This option is recommended to set to true when `enable_flow_tap` is set to true. In `normal_mode` the tap resolves when the same-hand key is pressed; in `permissive_hold` mode, when it is released. `hold_on_other_press` mode ignores this option, because the hold fires on the other key's press first.
 
 - The morse mode, which can be set by enabling one of these:
   - `permissive_hold`: Enables permissive hold mode. When enabled, hold action will be triggered when a key is pressed and released during tap-hold decision. This option is recommended to set to true when `enable_flow_tap` is set to true.
-  - `hold_on_other_press`: Enables hold-on-other-key-press mode. When enabled, hold action will be triggered immediately when any other non-tap-hold key is pressed while a tap-hold key is being held. This provides faster modifier activation without waiting for the timeout. Defaults to `false`.
+  - `hold_on_other_press`: Enables hold-on-other-key-press mode. When enabled, hold action will be triggered immediately when any other key (including another tap-hold key) is pressed while a tap-hold key is being held. This provides faster modifier activation without waiting for the timeout. Defaults to `false`.
   - `normal_mode` : this is the default mode, when nor the `permissive_hold` nor the `hold_on_other_press` is set.
 
-- `hold_timeout`: Defines the duration a tap-hold key must be pressed to determine hold behavior. If tap-hold key is released within this time, the key is recognized as a "tap". Holding it beyond this duration triggers the "hold" action when that hold pattern is final; if a longer configured morse pattern can still continue from the hold, RMK keeps the morse key unresolved until the sequence is completed. Defaults to 250ms.
-- `gap_timeout`: Defines the duration a tap-hold key must be released to terminate a morse sequence. Buffered non-morse keys remain behind unresolved morse keys until the sequence resolves, preserving typing order during rollovers. Defaults to 250ms. Note that only morse and tap-dance needs this setting, simple tap-hold does not.
+- `hold_timeout`: Defines the duration a tap-hold key must be pressed to determine hold behavior. If tap-hold key is released within this time, the key is recognized as a "tap". Holding it beyond this duration triggers the "hold" action when that hold pattern is final; if a longer configured morse pattern can still continue from the hold, RMK keeps the morse key unresolved until the sequence is completed. Defaults to 250ms. Maximum 8191ms (13-bit field).
+- `gap_timeout`: Defines the duration a tap-hold key must be released to terminate a morse sequence. Buffered non-morse keys remain behind unresolved morse keys until the sequence resolves, preserving typing order during rollovers. Defaults to 250ms. Maximum 8191ms (13-bit field). Note that only morse and tap-dance needs this setting, simple tap-hold does not.
+- `quick_tap_timeout`: If the same morse/tap-hold key is pressed again within this window after its last release, the tap action fires immediately on press and stays held while the key is held. This lets the OS auto-repeat the tap action instead of triggering the hold action. Disabled by default. Maximum 8191ms (13-bit field).
+  - Setting `quick_tap_timeout = "0ms"` explicitly disables quick-tap for that profile, even if a non-zero global default is configured. This lets you opt out on a per-profile basis. Omitting the field entirely causes the profile to inherit the global default.
+  - A re-press within the window resolves as a tap even if a `double_tap` action is configured, so double-tapping faster than `quick_tap_timeout` produces two taps instead of the `double_tap` action.
 
 #### Default profile for Morse/TapDance/TapHold
 
@@ -265,14 +264,18 @@ prior_idle_time = "120ms"
 hold_on_other_press = true
 hold_timeout = "250ms"
 gap_timeout = "250ms"
+```
 
+```toml
 # This default setting enables fast modifiers without HRM
 [behavior.morse]
 enable_flow_tap = false
 hold_on_other_press = true
 hold_timeout = "200ms"
 gap_timeout = "200ms"
+```
 
+```toml
 # This default setting is the most basic configuration
 [behavior.morse]
 enable_flow_tap = false
@@ -284,12 +287,11 @@ gap_timeout = "250ms"
 
 In the `morse.profiles` sub-table you can define individual key profiles. Each profile has an associated name, which can be referred
 
-- from the layout.matrix_map (the name is case sensitive), to override the defaults in certain key positions
 - from the tap hold keys in the key map if the third optional parameter is filled:
   - `TH(key-tap, key-hold, <profile_name>)`,
   - `MT(key, modifier, <profile_name>)`,
   - `LT(n, key, <profile_name>)`
-- the Morse keys may also have their per key profile overrides (which is stronger than the positional override) by setting the `profile` field.
+- the Morse keys may also have their per key profile overrides by setting the `profile` field.
 
 The following examples are the typical default configurations:
 
@@ -309,7 +311,7 @@ MRZ = { normal_mode = true, unilateral_tap = false, hold_timeout = "200ms", gap_
 Then you can reference the profile in layer config:
 
 ```toml
-[[layer]]
+[[keymap.layer]]
 keys = """
 MT(A, LShift, HRM)
 LT(1, A, FH)
@@ -321,16 +323,17 @@ TH(A, B, MRZ)
 
 The following parameters in the `[rmk]` section control the resource allocation for the Morse feature:
 
-- `morse_max_num`: The maximum number of Morse key you can create. (Default: 8, Range: 0-256)
-- `max_patterns_per_key`: The maximum number of individual patterns (like ".-") or actions that a single Morse key can contain. (Default: 8, Range: 4-65536)
+- `morse_max_num`: The maximum number of Morse key you can create. (Default: 8, Range: 0-255)
+- `morse_profile_max_num`: The capacity of the named profile table in `[behavior.morse.profiles]`. (Default: 16, Range: 0-255)
+- `max_patterns_per_key`: The maximum number of individual patterns (like ".-") or actions that a single Morse key can contain. (Default: 8, Range: 4-32)
 
 ```toml
 [rmk]
 morse_max_num = 10  # To support up to 10 morse keys
-max_patterns_per_key = 36  # To support up to 36 morse patterns per morse key
+max_patterns_per_key = 32  # To support up to 32 morse patterns per morse key
 ```
 
-Note that the Vial-style method (using `tap`, `hold`, `hold_after_tap`, `double_tap`) needs at least 4 patterns. If you create a key with a long `tap_actions`/`hold_actions` array or many `morse_actions`, you might need to increase `max_patterns_per_key` accordingly.
+Note that the Vial-style method (using `tap`, `hold`, `hold_after_tap`, `double_tap`) needs at least 4 patterns. RMK raises `morse_max_num` and `max_patterns_per_key` automatically to fit the morse keys defined in `keyboard.toml`, so set them only to reserve room for keys added later (for example through Vial). A single key cannot hold more than 32 patterns; the build fails above that limit.
 
 ::: warning Vial Compatibility
 Please note that while the firmware can handle all Morse configurations, Vial can only recognize and edit the four basic Vial-style actions. These correspond to the patterns for single tap (.), hold (-), double tap (..), and hold-after-tap (.-). More complex patterns defined using morse_actions or extended tap_actions will not be visible or editable in Vial.
@@ -342,10 +345,10 @@ Here is a comprehensive example of morse configuration:
 
 ```toml
 [rmk]
-# Maximum number of morses keyboard can store (max 256)
+# Maximum number of morses keyboard can store (max 255)
 morse_max_num = 9
-# Maximum number of patterns a morse key can handle
-max_patterns_per_key = 36
+# Maximum number of patterns a morse key can handle (max 32)
+max_patterns_per_key = 32
 
 [behavior.morse]
 # default profile for morse, tap dance and tap-hold keys:
@@ -367,7 +370,7 @@ morses = [
   { tap = "Tab", hold = "MO(2)", double_tap = "Escape" },
 
   # td(3): Extended morse for function keys
-  { tap_actions = ["F1", "F2", "F3", "F4", "F5"], hold_actions = ["MO(1)", "MO(2)", "MO(3)", "MO(4)", "MO(5)"] }
+  { tap_actions = ["F1", "F2", "F3", "F4", "F5"], hold_actions = ["MO(1)", "MO(2)", "MO(3)", "MO(4)", "MO(5)"] },
 
   # td(4): the morse ABC
   { morse_actions = [
@@ -396,17 +399,7 @@ morses = [
       { pattern = ".--", action = "W" },
       { pattern = "-..-", action = "X" },
       { pattern = "-.--", action = "Y" },
-      { pattern = "--..", action = "Z" },
-      { pattern = ".----", action = "Kc1" },
-      { pattern = "..---", action = "Kc2" },
-      { pattern = "...--", action = "Kc3" },
-      { pattern = "....-", action = "Kc4" },
-      { pattern = ".....", action = "Kc5" },
-      { pattern = "-....", action = "Kc6" },
-      { pattern = "--...", action = "Kc7" },
-      { pattern = "---..", action = "Kc8" },
-      { pattern = "----.", action = "Kc9" },
-      { pattern = "-----", action = "Kc0" }
+      { pattern = "--..", action = "Z" }
     ], profile = "MRZ" }
 ]
 
@@ -428,21 +421,35 @@ You can use both `Morse` and `TD` to represent a morse key in your keymap, you c
 [layout]
 rows = 4
 cols = 3
-layers = 2
-keymap = [
-    [
-        ["A", "B", "C"],
-        ["TD(0)", "TD(1)", "TD(2)"],  # Use morse dances 0, 1, and 2
-        ["LCtrl", "MO(1)", "LShift"],
-        ["OSL(1)", "LT(2, Kc9, PN)", "LM(1, LShift | LGui)"]  # PN is a morse profile name here
-    [
-        ["_", "TT(1)", "TG(2)"],
-        ["_", "_", "_"],
-        ["_", "_", "_"],
-        ["_", "_", "_"]
-    ],
-]
+map = """
+(0,0) (0,1) (0,2)
+(1,0) (1,1) (1,2)
+(2,0) (2,1) (2,2)
+(3,0) (3,1) (3,2)
+"""
+
+[keymap]
+# Layers 0 and 1 are defined below; layer 2 (referenced by LT(2, ...) and TG(2)) stays empty
+layers = 3
+
+[[keymap.layer]]
+keys = """
+A      B              C
+TD(0)  TD(1)          TD(2)
+LCtrl  MO(1)          LShift
+OSL(1) LT(2, Kc9, PN) LM(1, LShift | LGui)
+"""
+
+[[keymap.layer]]
+keys = """
+_ TT(1) TG(2)
+_ _     _
+_ _     _
+_ _     _
+"""
 ```
+
+Here `TD(0)`, `TD(1)`, and `TD(2)` reference morse dances by index, and the trailing `PN` in `LT(2, Kc9, PN)` names a morse profile (defined above). `keys` and `map` blocks hold data only.
 
 ## Fork
 
@@ -453,13 +460,16 @@ Forks also power Vial's Key Override feature: entries edited in the Key Override
 Fork configuration includes the following parameters:
 
 - `forks`: An array containing all defined forks. Each fork configuration is an object containing the following attributes:
-  - `trigger`: Defines the triggering key.
-  - `negative_output`: A string defining the output action to be triggered when the conditions are not met
-  - `positive_output`: A string defining the output action to be triggered when the conditions are met
+  - `trigger`: Defines the triggering key, or a list of keys. A list creates one fork per key, each counting toward `fork_max_num`.
+  - `negative_output`: A string defining the output action to be triggered when the conditions are not met. If omitted, the trigger key is left alone and no modifiers are suppressed (optional)
+  - `positive_output`: A string defining the output action to be triggered when the conditions are met. Defaults to the trigger key (optional)
+  - `layers`: A list of layers the trigger key must come from. Defaults to all layers (optional)
   - `match_any`: A string defining a combination of modifier keys, lock LEDs, mouse buttons (optional)
   - `match_none`: A string defining a combination of modifier keys, lock LEDs, mouse buttons (optional)
   - `kept_modifiers`: A string defining a combination of modifier keys, which should not be 'suppressed' from the keyboard state for the time the replacement action is executed (optional)
   - `bindable`: Enables the evaluation of not yet triggered forks on the output of this fork to further manipulate the output. Advanced use cases can be solved using this option (optional)
+
+Each fork must set at least one of `match_any` and `match_none`; the build fails otherwise.
 
 For `match_any`, `match_none` the legal values are listed below (many values may be combined with "|"):
 
@@ -494,6 +504,12 @@ forks = [
   # Shift + Backspace output Delete key (inside a layer tap/hold)
   { trigger = "LT(2, Backspace)", negative_output = "LT(2, Backspace)", positive_output = "LT(2, Delete)", match_any = "LShift|RShift" },
 
+  # Shift + Backspace output Delete key, but only on layer 0
+  { trigger = "Backspace", negative_output = "Backspace", positive_output = "Delete", match_any = "LShift|RShift", layers = [0] },
+
+  # Digits on layer 1 are typed without Shift, unless Ctrl is also held
+  { trigger = ["Kc1", "Kc2", "Kc3"], layers = [1], match_any = "LShift", match_none = "LCtrl" },
+
   # Ctrl + play/pause will send next track. MediaPlayPause -> MediaNextTrack
   # Ctrl + Shift + play/pause will send previous track. MediaPlayPause -> MediaPrevTrack
   # Alt + play/pause will send volume up. MediaPlayPause -> AudioVolUp
@@ -521,7 +537,9 @@ Vial does not support fork configuration yet.
 
 When multiple pointing devices are present, set `device_id` on each entry to target the device. An entry without `device_id` acts as a fallback for any device not covered by a more specific entry — leave `device_id` unset on a single entry to use one shared configuration for every device.
 
-Example configuration:
+Choose one of the following configurations. Each has at most one fallback entry.
+
+Use a shared fallback with a device-specific override:
 
 ```toml
 # Default for every pointing device.
@@ -536,15 +554,23 @@ device_id = 1
 target_layer = 4
 timeout = "500ms"
 threshold = 5
+```
 
-# Immediate deactivation on non-mouse key press, but keep the layer while
-# modifiers (Ctrl/Shift/Alt/Gui) are held so users can Ctrl-click, etc.
+To deactivate on non-mouse key presses while allowing modifier keys for Ctrl-click and similar actions:
+
+```toml
 [[behavior.auto_mouse_layer]]
 target_layer = 5
 deactivate_on_key = true
 extra_mouse_keys = ["LCtrl", "LShift", "LAlt", "LGui"]
 
-# Extend the timeout on any non-deactivating key press so users can continue clicking without cursor movement.
+[event.action]
+subs = 1
+```
+
+To also extend the timeout on non-deactivating key presses, allowing repeated clicks without cursor movement:
+
+```toml
 [[behavior.auto_mouse_layer]]
 target_layer = 6
 deactivate_on_key = true
@@ -556,22 +582,20 @@ reset_timeout_on_key = true
 subs = 1
 ```
 
-| Field          | Type    | Default | Description |
-|----------------|---------|---------|-------------|
-| `device_id`    | integer | —       | Pointing device id this entry applies to. Omit for a fallback that matches any device not covered by another entry. At most one fallback (and at most one entry per `device_id`) is allowed. |
-| `target_layer` | integer | —       | Layer index to activate (must be `< [layout.layers]`). |
-| `timeout`      | string  | `"500ms"`| Inactivity duration before deactivation (e.g., `"600ms"`, `"2s"`). |
-| `threshold`    | integer | `1`     | Minimum absolute X/Y delta to trigger motion (`>= 1`). Increase to filter sensor noise. |
-| `deactivate_on_key` | bool | `false` | When `true`, pressing any non-mouse key immediately deactivates `target_layer` (ignoring `timeout`). Mouse HID keys and keys listed in `extra_mouse_keys` do NOT trigger deactivation. Keys are classified by their **resolved** keycode; see the limitation note below. |
-| `extra_mouse_keys` | array of strings | `[]` | Extra keycodes (e.g. `"LCtrl"`, `"Space"`) treated like mouse keys for the purpose of `deactivate_on_key`. |
-| `reset_timeout_on_key` | bool | `false` | When `true`, key presses that do NOT deactivate `target_layer` push the `timeout` deadline forward (reset it to *now + `timeout`*). When `deactivate_on_key` is `false`, every key press extends the timeout. |
+| Field                  | Type             | Default   | Description                                                                                                                                                                                                                                                              |
+| ---------------------- | ---------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `device_id`            | integer          | —         | Pointing device id this entry applies to. Omit for a fallback that matches any device not covered by another entry. At most one fallback (and at most one entry per `device_id`) is allowed.                                                                             |
+| `target_layer`         | integer          | —         | Layer index to activate (must be `< [keymap].layers`).                                                                                                                                                                                                                   |
+| `timeout`              | string           | `"500ms"` | Inactivity duration before deactivation (e.g., `"600ms"`, `"2s"`).                                                                                                                                                                                                       |
+| `threshold`            | integer          | `1`       | Minimum absolute X/Y delta to trigger motion (`>= 1`). Increase to filter sensor noise.                                                                                                                                                                                  |
+| `deactivate_on_key`    | bool             | `false`   | When `true`, pressing any non-mouse key immediately deactivates `target_layer` (ignoring `timeout`). Mouse HID keys and keys listed in `extra_mouse_keys` do NOT trigger deactivation. Keys are classified by their **resolved** keycode; see the limitation note below. |
+| `extra_mouse_keys`     | array of strings | `[]`      | Extra keycodes (e.g. `"LCtrl"`, `"Space"`) treated like mouse keys for the purpose of `deactivate_on_key`.                                                                                                                                                               |
+| `reset_timeout_on_key` | bool             | `false`   | When `true`, key presses that do NOT deactivate `target_layer` push the `timeout` deadline forward (reset it to _now + `timeout`_). When `deactivate_on_key` is `false`, every key press extends the timeout.                                                            |
 
 ::: warning
-
 Prefer a dedicated layer that is not bound to any manual keys (like `MO` or `TG`). The auto-mouse task releases its ownership when keyboard-driven changes deactivate the layer, so transient overlap is handled cleanly. Layer state is still a single boolean, however, so pressing `TG(target_layer)` while auto-mouse is active toggles the layer off instead of pinning it on.
 
 Entries that share the same `target_layer` cooperate: the layer stays active until the last device stops moving, so per-device `timeout`/`threshold` differences on a shared layer are safe.
-
 :::
 
 ::: warning Limitation: keys that cannot be classified
@@ -589,8 +613,7 @@ Some keys cannot be classified; they never trigger immediate deactivation (only 
 
 - **Subscriber Slots**: Increment `[event.pointing].subs` and `[event.layer_change].subs` by `1` each in your `keyboard.toml` to reserve slots for this task. If any entry uses `deactivate_on_key` or `reset_timeout_on_key`, also set `[event.action].subs` to `1` (it defaults to `0`), otherwise the build fails with a validation error. See [Event Configuration](./event.md).
 - **Buffer Size**: If pointing events are dropped under high-frequency input, increase `[event.pointing].channel_size` (default `8`). `[event.layer_change].channel_size` defaults to `1` and only needs raising if you burst many layer changes faster than subscribers consume them.
-
-:::
+  :::
 
 ::: note Rust API
 Configure the layer via `BehaviorConfig` and run the helper future alongside your other keyboard tasks. Subscriber slots are resolved from `keyboard.toml`'s `[event]` section at build time, so point `KEYBOARD_TOML_PATH` (set in `.cargo/config.toml`) to a `keyboard.toml` and increment `[event.pointing].subs` and `[event.layer_change].subs` by `1` there as well. When using `deactivate_on_key` / `reset_timeout_on_key`, also set `[event.action].subs` to `1` (it defaults to `0`) in that file. Otherwise the firmware panics at startup.
@@ -646,4 +669,5 @@ run_all!(
     auto_mouse_layer,
 ).await;
 ```
+
 :::

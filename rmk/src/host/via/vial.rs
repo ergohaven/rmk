@@ -3,27 +3,22 @@ use rmk_types::action::KeyAction;
 use rmk_types::constants::{COMBO_MAX_LENGTH, COMBO_MAX_NUM, FORK_MAX_NUM, MORSE_MAX_NUM};
 use rmk_types::fork::{Fork, ForkOptions, StateBits};
 use rmk_types::modifier::ModifierCombination;
-use rmk_types::morse::{DOUBLE_TAP, HOLD, HOLD_AFTER_TAP, Morse, MorseMode, TAP};
+use rmk_types::morse::{DOUBLE_TAP, HOLD, HOLD_AFTER_TAP, Morse, TAP};
 use rmk_types::protocol::vial::{
     SettingKey, VIAL_EP_SIZE, VIAL_KEY_OVERRIDE_OPTION_BITS, VIAL_PROTOCOL_VERSION, VialCommand, VialDynamic,
 };
 
-#[cfg(feature = "storage")]
-use crate::channel::FLASH_CHANNEL;
 use crate::config::VialConfig;
 use crate::hid::ViaReport;
 use crate::host::context::KeyboardContext;
+use crate::host::settings;
 use crate::host::via::keycode_convert::{from_via_keycode, to_via_keycode};
-#[cfg(feature = "storage")]
-use crate::storage::FlashOperationMessage;
-
-const BUILTIN_SETTING_KEYS: &[u16] = &[0x02, 0x06, 0x07, 0x12, 0x13, 0x16, 0x17, 0x1A, 0x1B];
 
 /// Note: vial uses little endian, while via uses big endian
 pub(crate) async fn process_vial<'a>(
     report: &mut ViaReport,
     vial_config: &VialConfig<'a>,
-    #[cfg(feature = "vial_lock")] locker: &mut super::vial_lock::VialLock<'_>,
+    #[cfg(feature = "host_lock")] locker: &crate::host::lock::HostLock<'_>,
     ctx: &KeyboardContext<'_>,
 ) {
     // report.output_data[0] == 0xFE -> vial commands
@@ -61,7 +56,7 @@ pub(crate) async fn process_vial<'a>(
         VialCommand::GetUnlockStatus => {
             // Reset all data to 0xFF(it's required!)
             report.input_data.fill(0xFF);
-            #[cfg(feature = "vial_lock")]
+            #[cfg(feature = "host_lock")]
             {
                 // Unlocked
                 report.input_data[0] = locker.is_unlocked() as u8;
@@ -73,7 +68,7 @@ pub(crate) async fn process_vial<'a>(
                     report.input_data[3 + idx * 2] = *col;
                 }
             }
-            #[cfg(not(feature = "vial_lock"))]
+            #[cfg(not(feature = "host_lock"))]
             {
                 // Unlocked
                 report.input_data[0] = 1;
@@ -83,13 +78,13 @@ pub(crate) async fn process_vial<'a>(
             }
         }
         VialCommand::UnlockStart => {
-            #[cfg(feature = "vial_lock")]
+            #[cfg(feature = "host_lock")]
             locker.unlocking();
-            #[cfg(not(feature = "vial_lock"))]
+            #[cfg(not(feature = "host_lock"))]
             error!("Vial lock feature is not enabled");
         }
         VialCommand::UnlockPoll => {
-            #[cfg(feature = "vial_lock")]
+            #[cfg(feature = "host_lock")]
             {
                 // Match Vial QMK: once unlocked, a poll must report
                 // `unlocked=1, in_progress=0`. Re-arming unconditionally would
@@ -103,193 +98,46 @@ pub(crate) async fn process_vial<'a>(
                 report.input_data[1] = locker.is_unlocking() as u8;
                 report.input_data[2] = counter;
             }
-            #[cfg(not(feature = "vial_lock"))]
+            #[cfg(not(feature = "host_lock"))]
             error!("Vial lock feature is not enabled");
         }
         VialCommand::Lock => {
-            #[cfg(feature = "vial_lock")]
+            #[cfg(feature = "host_lock")]
             locker.lock();
-            #[cfg(not(feature = "vial_lock"))]
+            #[cfg(not(feature = "host_lock"))]
             error!("Vial lock feature is not enabled");
         }
         VialCommand::BehaviorSettingQuery => {
             report.input_data.fill(0xFF);
-            let value = u16::from_le_bytes([report.output_data[2], report.output_data[3]]);
-            let mut out_idx = 0usize;
-            for key in BUILTIN_SETTING_KEYS {
-                if *key > value && out_idx + 2 <= report.input_data.len() {
-                    LittleEndian::write_u16(&mut report.input_data[out_idx..out_idx + 2], *key);
-                    out_idx += 2;
-                }
-            }
-            if let Some(device_settings) = vial_config.device_settings {
-                let mut setting_value = [0u8; VIAL_EP_SIZE];
-                for key in device_settings.setting_keys {
-                    if *key > value
-                        && out_idx + 2 <= report.input_data.len()
-                        && (device_settings.get_setting)(*key, &mut setting_value).is_some()
-                    {
-                        LittleEndian::write_u16(&mut report.input_data[out_idx..out_idx + 2], *key);
-                        out_idx += 2;
-                    }
-                }
+            let after = u16::from_le_bytes([report.output_data[2], report.output_data[3]]);
+            for (slot, key) in report
+                .input_data
+                .as_chunks_mut::<2>()
+                .0
+                .iter_mut()
+                .zip(settings::keys_after(after, vial_config.device_settings))
+            {
+                slot.copy_from_slice(&key.to_le_bytes());
             }
         }
         VialCommand::GetBehaviorSetting => {
             report.input_data.fill(0xFF);
-            let value = u16::from_le_bytes([report.output_data[2], report.output_data[3]]);
-            report.input_data[0] = 0;
-            match value.into() {
-                SettingKey::None => {
-                    if let Some(device_settings) = vial_config.device_settings {
-                        if let Some(len) = (device_settings.get_setting)(value, &mut report.input_data[1..]) {
-                            report.input_data[1 + len..].fill(0xFF);
-                        } else {
-                            report.input_data[0] = 0xFF;
-                        }
-                    } else {
-                        report.input_data[0] = 0xFF;
-                    }
-                }
-                SettingKey::ComboTimeout => {
-                    let combo_timeout = ctx.combo_timeout().as_millis() as u16;
-                    LittleEndian::write_u16(&mut report.input_data[1..3], combo_timeout);
-                }
-                SettingKey::MorseTimeout => {
-                    let tapping_term = ctx.morse_default_profile().hold_timeout_ms().unwrap_or(250);
-                    LittleEndian::write_u16(&mut report.input_data[1..3], tapping_term);
-                }
-                SettingKey::OneShotTimeout => {
-                    let one_shot_timeout = ctx.one_shot_timeout().as_millis() as u16;
-                    LittleEndian::write_u16(&mut report.input_data[1..3], one_shot_timeout);
-                }
-                SettingKey::TapInterval => {
-                    let tap_interval = ctx.tap_interval();
-                    LittleEndian::write_u16(&mut report.input_data[1..3], tap_interval);
-                }
-                SettingKey::TapCapslockInterval => {
-                    let tap_interval = ctx.tap_interval();
-                    LittleEndian::write_u16(&mut report.input_data[1..3], tap_interval);
-                }
-                SettingKey::PermissiveHold => {
-                    if let Some(m) = ctx.morse_default_profile().mode()
-                        && m == MorseMode::PermissiveHold
-                    {
-                        report.input_data[1] = 1
-                    } else {
-                        report.input_data[1] = 0
-                    }
-                }
-                SettingKey::HoldOnOtherKeyPress => {
-                    if let Some(m) = ctx.morse_default_profile().mode()
-                        && m == MorseMode::HoldOnOtherPress
-                    {
-                        report.input_data[1] = 1
-                    } else {
-                        report.input_data[1] = 0
-                    }
-                }
-                SettingKey::UnilateralTap => {
-                    let unilateral_tap = ctx.morse_default_profile().unilateral_tap().unwrap_or(false);
-                    if unilateral_tap {
-                        report.input_data[1] = 1;
-                    } else {
-                        report.input_data[1] = 0;
-                    };
-                }
-                SettingKey::PriorIdleTime => {
-                    let prior_idle_time = ctx.morse_prior_idle_time().as_millis() as u16;
-                    LittleEndian::write_u16(&mut report.input_data[1..3], prior_idle_time);
-                }
-            }
+            let id = u16::from_le_bytes([report.output_data[2], report.output_data[3]]);
+            let value = &mut report.input_data[1..];
+            report.input_data[0] = match settings::get(ctx, vial_config.device_settings, id, value) {
+                Some(_) => 0,
+                None => 0xFF,
+            };
         }
         VialCommand::SetBehaviorSetting => {
-            let key = u16::from_le_bytes([report.output_data[2], report.output_data[3]]);
-            match key.into() {
-                SettingKey::None => {
-                    report.input_data[0] = 0;
-                    if let Some(device_settings) = vial_config.device_settings {
-                        if (device_settings.set_setting)(key, &report.output_data[4..]) {
-                            #[cfg(feature = "storage")]
-                            FLASH_CHANNEL
-                                .send(FlashOperationMessage::DeviceSettings((device_settings.serialize)()))
-                                .await;
-                        } else {
-                            report.input_data[0] = 0xFF;
-                        }
-                    } else {
-                        report.input_data[0] = 0xFF;
-                    }
-                }
-                SettingKey::ComboTimeout => {
-                    let combo_timeout = u16::from_le_bytes([report.output_data[4], report.output_data[5]]);
-                    ctx.set_combo_timeout(combo_timeout).await;
-                }
-                SettingKey::MorseTimeout => {
-                    let timeout_time = u16::from_le_bytes([report.output_data[4], report.output_data[5]]);
-                    let new_profile = ctx.morse_default_profile().with_hold_timeout_ms(Some(timeout_time));
-                    ctx.set_morse_default_profile(new_profile).await;
-                }
-                SettingKey::OneShotTimeout => {
-                    let timeout_time = u16::from_le_bytes([report.output_data[4], report.output_data[5]]);
-                    ctx.set_one_shot_timeout(timeout_time).await;
-                }
-                SettingKey::TapInterval => {
-                    let tap_interval = u16::from_le_bytes([report.output_data[4], report.output_data[5]]);
-                    ctx.set_tap_interval(tap_interval).await;
-                }
-                SettingKey::TapCapslockInterval => {
-                    let tap_capslock_interval = u16::from_le_bytes([report.output_data[4], report.output_data[5]]);
-                    ctx.set_tap_capslock_interval(tap_capslock_interval).await;
-                }
-
-                SettingKey::PermissiveHold => {
-                    let enabled = report.output_data[4] == 1;
-                    let old = ctx.morse_default_profile();
-                    let new_mode = if enabled {
-                        // Hold On Other Key Press has higher priority
-                        if old.mode() == Some(MorseMode::HoldOnOtherPress) {
-                            old.mode()
-                        } else {
-                            // Enable: Set to Permissive Hold
-                            Some(MorseMode::PermissiveHold)
-                        }
-                    } else {
-                        // Disable: Only set to Normal if currently PermissiveHold
-                        if old.mode() == Some(MorseMode::PermissiveHold) {
-                            Some(MorseMode::Normal)
-                        } else {
-                            old.mode() // Keep current mode unchanged
-                        }
-                    };
-                    ctx.set_morse_default_profile(old.with_mode(new_mode)).await;
-                }
-                SettingKey::HoldOnOtherKeyPress => {
-                    let enabled = report.output_data[4] == 1;
-                    let old = ctx.morse_default_profile();
-                    let new_mode = if enabled {
-                        // Enable: Set to HoldOnOtherPress (will override other modes)
-                        Some(MorseMode::HoldOnOtherPress)
-                    } else {
-                        // Disable: Only set to Normal if currently HoldOnOtherPress
-                        if old.mode() == Some(MorseMode::HoldOnOtherPress) {
-                            Some(MorseMode::Normal)
-                        } else {
-                            old.mode() // Keep current mode unchanged
-                        }
-                    };
-                    ctx.set_morse_default_profile(old.with_mode(new_mode)).await;
-                }
-                SettingKey::UnilateralTap => {
-                    let new_profile = ctx
-                        .morse_default_profile()
-                        .with_unilateral_tap(Some(report.output_data[4] == 1));
-                    ctx.set_morse_default_profile(new_profile).await;
-                }
-                SettingKey::PriorIdleTime => {
-                    let prior_idle_time = u16::from_le_bytes([report.output_data[4], report.output_data[5]]);
-                    ctx.set_morse_prior_idle_time(prior_idle_time).await;
-                }
+            let id = u16::from_le_bytes([report.output_data[2], report.output_data[3]]);
+            let value = report.output_data[4..]
+                .try_into()
+                .expect("a Vial report holds a whole value");
+            let served = settings::set(ctx, vial_config.device_settings, id, value).await;
+            // Only a board's own setting reports its status.
+            if SettingKey::from(id) == SettingKey::None {
+                report.input_data[0] = if served { 0 } else { 0xFF };
             }
         }
         VialCommand::DynamicEntryOp => {
@@ -345,15 +193,16 @@ pub(crate) async fn process_vial<'a>(
                         let hold_after_tap = from_via_keycode(LittleEndian::read_u16(&report.output_data[10..12]));
                         let timeout_ms = LittleEndian::read_u16(&report.output_data[12..14]);
 
-                        ctx.update_morse(morse_idx, |morse: &mut Morse| {
-                            let _ = morse.put(TAP, tap.to_action());
-                            let _ = morse.put(DOUBLE_TAP, double_tap.to_action());
-                            let _ = morse.put(HOLD, hold.to_action());
-                            let _ = morse.put(HOLD_AFTER_TAP, hold_after_tap.to_action());
-                            morse.profile.set_hold_timeout_ms(timeout_ms);
-                            morse.profile.set_gap_timeout_ms(timeout_ms);
-                        })
-                        .await;
+                        let _ = ctx
+                            .update_morse(morse_idx, |morse: &mut Morse| {
+                                let _ = morse.put(TAP, tap.to_action());
+                                let _ = morse.put(DOUBLE_TAP, double_tap.to_action());
+                                let _ = morse.put(HOLD, hold.to_action());
+                                let _ = morse.put(HOLD_AFTER_TAP, hold_after_tap.to_action());
+                                morse.profile.set_hold_timeout_ms(timeout_ms);
+                                morse.profile.set_gap_timeout_ms(timeout_ms);
+                            })
+                            .await;
                     }
                 }
                 VialDynamic::DynamicVialComboGet => {
@@ -412,15 +261,18 @@ pub(crate) async fn process_vial<'a>(
                             .and_then(|combo| combo.config.layer)
                     });
                     let config = ComboConfig { actions, output, layer };
-                    ctx.set_combo(combo_idx, config).await;
+                    let _ = ctx.set_combo(combo_idx, config).await;
                 }
                 VialDynamic::DynamicVialKeyOverrideGet => {
                     debug!("DynamicEntryOp - DynamicVialKeyOverrideGet");
                     report.input_data[0] = 0; // Index 0 is the return code, 0 means success
 
-                    let fork_idx = report.output_data[3] as usize;
-                    let entry =
-                        ctx.with_forks(|forks| forks.get(fork_idx).map(fork_to_vial_key_override).unwrap_or_default());
+                    let fork_idx = report.output_data[3];
+                    let entry = ctx
+                        .get_fork(fork_idx)
+                        .as_ref()
+                        .map(fork_to_vial_key_override)
+                        .unwrap_or_default();
                     report.input_data[1..11].copy_from_slice(&entry);
                 }
                 VialDynamic::DynamicVialKeyOverrideSet => {
@@ -429,7 +281,7 @@ pub(crate) async fn process_vial<'a>(
 
                     let fork_idx = report.output_data[3];
                     let fork = vial_key_override_to_fork(&report.output_data[4..14]);
-                    ctx.set_fork(fork_idx, fork).await;
+                    let _ = ctx.set_fork(fork_idx, fork).await;
                 }
                 VialDynamic::Unhandled => {
                     warn!("DynamicEntryOp - Unhandled -- subcommand not recognized");
@@ -464,13 +316,8 @@ pub(crate) async fn process_vial<'a>(
             );
             let keycode = BigEndian::read_u16(&report.output_data[5..7]);
             let action = from_via_keycode(keycode);
-            if clockwise == 1 {
-                info!("Setting clockwise action: {:?}", action);
-                ctx.set_encoder_clockwise(layer, index, action).await;
-            } else {
-                info!("Setting counter-clockwise action: {:?}", action);
-                ctx.set_encoder_counter_clockwise(layer, index, action).await;
-            }
+            info!("Setting encoder action (clockwise: {}): {:?}", clockwise, action);
+            let _ = ctx.set_encoder_direction(layer, index, clockwise == 1, action).await;
         }
         _ => (),
     }
@@ -487,7 +334,12 @@ fn fork_to_vial_key_override(fork: &Fork) -> [u8; 10] {
     }
     LittleEndian::write_u16(&mut entry[0..2], to_via_keycode(fork.trigger));
     LittleEndian::write_u16(&mut entry[2..4], to_via_keycode(fork.positive_output));
-    LittleEndian::write_u16(&mut entry[4..6], fork.layers.unwrap_or(0xFFFF));
+    let layers = if fork.layers == u32::MAX {
+        0xFFFF
+    } else {
+        fork.layers as u16
+    };
+    LittleEndian::write_u16(&mut entry[4..6], layers);
     entry[6] = fork.match_any.modifiers.into_bits();
     entry[7] = fork.match_none.modifiers.into_bits();
     entry[8] = fork.suppressed_modifiers.into_bits();
@@ -516,7 +368,7 @@ fn vial_key_override_to_fork(entry: &[u8]) -> Fork {
             ..Default::default()
         },
         suppressed_modifiers: ModifierCombination::from_bits(entry[8]),
-        layers: if layers == 0xFFFF { None } else { Some(layers) },
+        layers: if layers == 0xFFFF { u32::MAX } else { layers as u32 },
         options: ForkOptions::from_bits(entry[9] & VIAL_KEY_OVERRIDE_OPTION_BITS),
         // QMK key overrides don't cascade
         bindable: false,
@@ -536,7 +388,7 @@ mod tests {
 
     use super::*;
     use crate::COMBO_MAX_LENGTH;
-    use crate::storage::StorageData;
+    use crate::storage::StorageValue;
     #[test]
     fn test_combo_serialization_deserialization() {
         let mut actions = heapless::Vec::<KeyAction, COMBO_MAX_LENGTH>::new();
@@ -549,13 +401,13 @@ mod tests {
             layer: None,
         };
         let mut buffer = [0u8; 64];
-        let storage_data = StorageData::Combo(combo_config.clone());
+        let storage_data = StorageValue::Combo(combo_config.clone());
         let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
         // Deserialization
-        let deserialized_data = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
+        let deserialized_data = StorageValue::deserialize_from(&buffer[..serialized_size]).unwrap();
         // Validation
         match deserialized_data {
-            (StorageData::Combo(deserialized_config), _) => {
+            (StorageValue::Combo(deserialized_config), _) => {
                 assert_eq!(deserialized_config, combo_config);
             }
             _ => panic!("Expected Combo"),
@@ -595,7 +447,7 @@ mod tests {
         assert_eq!(fork.match_none.modifiers.into_bits(), 0x44);
         assert_eq!(fork.suppressed_modifiers.into_bits(), 0x02);
         assert!(fork.options.one_mod());
-        assert_eq!(fork.layers, None); // 0xFFFF = all layers
+        assert_eq!(fork.layers, u32::MAX); // 0xFFFF = all layers
 
         assert_eq!(fork_to_vial_key_override(&fork), wire);
     }
@@ -609,7 +461,7 @@ mod tests {
 
         let fork = vial_key_override_to_fork(&wire);
         assert!(!fork.options.one_mod()); // QMK AND semantics
-        assert_eq!(fork.layers, Some(0x0005));
+        assert_eq!(fork.layers, 0x0005);
         assert_eq!(fork.suppressed_modifiers.into_bits(), 0x44);
 
         assert_eq!(fork_to_vial_key_override(&fork), wire);
@@ -654,11 +506,11 @@ mod tests {
         let wire = shift_backspace_wire_entry();
         let fork = vial_key_override_to_fork(&wire);
         let mut buffer = [0u8; 64];
-        let storage_data = StorageData::Fork(fork);
+        let storage_data = StorageValue::Fork(fork);
         let serialized_size = Value::serialize_into(&storage_data, &mut buffer).unwrap();
-        let deserialized_data = StorageData::deserialize_from(&buffer[..serialized_size]).unwrap();
+        let deserialized_data = StorageValue::deserialize_from(&buffer[..serialized_size]).unwrap();
         match deserialized_data {
-            (StorageData::Fork(deserialized_fork), _) => {
+            (StorageValue::Fork(deserialized_fork), _) => {
                 assert_eq!(deserialized_fork, fork);
             }
             _ => panic!("Expected Fork"),
@@ -667,14 +519,14 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg(feature = "vial_lock")]
+#[cfg(feature = "host_lock")]
 mod lock_tests {
     use embassy_futures::block_on;
 
     use super::*;
     use crate::config::{BehaviorConfig, PositionalConfig};
     use crate::event::KeyboardEvent;
-    use crate::host::via::vial_lock::VialLock;
+    use crate::host::lock::HostLock;
     use crate::keymap::{KeyMap, KeymapData};
 
     fn vial_report(command: VialCommand) -> ViaReport {
@@ -692,7 +544,7 @@ mod lock_tests {
         use rmk_types::action::Action;
         use rmk_types::keycode::{HidKeyCode, KeyCode};
 
-        use crate::event::KeyboardEventPos;
+        use crate::event::KeyboardEventSource;
 
         let profiles = [
             ("k03", [(2, 2), (2, 1)], [(0, 5), (0, 4)]),
@@ -720,10 +572,10 @@ mod lock_tests {
                 unlock_keys: &unlock_keys,
                 ..Default::default()
             };
-            let mut locker = VialLock::new(&unlock_keys, &keymap, false);
+            let locker = HostLock::new(&unlock_keys, &keymap, false, embassy_time::Duration::from_millis(100));
             let mut command = |command| {
                 let mut report = vial_report(command);
-                block_on(process_vial(&mut report, &config, &mut locker, &ctx));
+                block_on(process_vial(&mut report, &config, &locker, &ctx));
                 report.input_data
             };
             let status = command(VialCommand::GetUnlockStatus);
@@ -761,11 +613,11 @@ mod lock_tests {
             // on both layers. Unlock must not follow those current keycodes.
             for layer in 0..2 {
                 for (row, col) in unlock_keys {
-                    keymap.set_action_at(KeyboardEventPos::key_pos(col, row), layer, KeyAction::No);
+                    keymap.set_action_at(KeyboardEventSource::key_pos(col, row), layer, KeyAction::No);
                 }
                 for ((row, col), code) in old_keys.into_iter().zip([HidKeyCode::D, HidKeyCode::F]) {
                     keymap.set_action_at(
-                        KeyboardEventPos::key_pos(col, row),
+                        KeyboardEventSource::key_pos(col, row),
                         layer,
                         KeyAction::Single(Action::Key(KeyCode::Hid(code))),
                     );
@@ -821,12 +673,12 @@ mod lock_tests {
             unlock_keys: &unlock_keys,
             ..Default::default()
         };
-        let mut locker = VialLock::new(&unlock_keys, &keymap, false);
+        let locker = HostLock::new(&unlock_keys, &keymap, false, embassy_time::Duration::from_millis(100));
         let mut start = vial_report(VialCommand::UnlockStart);
-        block_on(process_vial(&mut start, &vial_config, &mut locker, &ctx));
+        block_on(process_vial(&mut start, &vial_config, &locker, &ctx));
         let mut poll = || {
             let mut report = vial_report(VialCommand::UnlockPoll);
-            block_on(process_vial(&mut report, &vial_config, &mut locker, &ctx));
+            block_on(process_vial(&mut report, &vial_config, &locker, &ctx));
             (report.input_data[0], report.input_data[1], report.input_data[2])
         };
 

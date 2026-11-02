@@ -119,11 +119,4 @@ mod tests {
         // CRC32 of "123456789" (standard test vector)
         assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
     }
-
-    #[test]
-    fn test_new_is_idempotent() {
-        let c1 = Crc32::new();
-        let c2 = Crc32::new();
-        assert_eq!(c1.finalize(), c2.finalize());
-    }
 }

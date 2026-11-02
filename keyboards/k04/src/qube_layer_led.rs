@@ -27,7 +27,8 @@ const FRAME_WORDS: usize = LED_COUNT * 24 + RESET_SLOTS;
         SplitConnectionStateEvent,
         SleepStateEvent,
         BatteryStatusEvent
-    ]
+    ],
+    deadline
 )]
 pub struct LayerLed {
     led: SequencePwm<'static>,

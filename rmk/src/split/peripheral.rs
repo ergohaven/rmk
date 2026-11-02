@@ -1,79 +1,97 @@
+#[cfg(all(feature = "_ble", feature = "subrating"))]
+use bt_hci::cmd::le::LeSetHostFeature;
 #[cfg(feature = "_ble")]
-use bt_hci::{
-    cmd::{le::LeSetPhy, status::ReadRssi},
-    controller::{ControllerCmdAsync, ControllerCmdSync},
-};
+use bt_hci::{cmd::status::ReadRssi, controller::ControllerCmdSync};
 use embassy_futures::select::{Either, select};
 #[cfg(not(feature = "_ble"))]
 use embedded_io_async::{Read, Write};
 use futures::FutureExt;
 #[cfg(all(feature = "_ble", feature = "storage"))]
-use {super::ble::PeerAddress, crate::channel::FLASH_CHANNEL};
+use {
+    super::ble::PeerAddress,
+    crate::storage::{StorageItem, store_unchecked},
+};
 #[cfg(feature = "_ble")]
 use {
-    crate::event::{BatteryStatusEvent, ChargingStateEvent, EventSubscriber},
-    rmk_types::battery::BatteryStatus,
+    crate::event::{BatteryStatusEvent, EventSubscriber},
     trouble_host::prelude::*,
 };
 
 use super::SplitMessage;
 use super::driver::{SplitReader, SplitWriter};
+#[cfg(feature = "dfu_split")]
+use crate::dfu::{DfuCmd, DfuTarget, SPLIT_RESPONSE_CHANNEL, SplitResponse};
+#[cfg(feature = "dfu_split")]
+use crate::event::DfuCmdEvent;
 use crate::event::{
-    KeyboardEvent, LayerChangeEvent, LedIndicatorEvent, PointingEvent, SubscribableEvent, publish_event,
+    KeyboardEvent, LayerChangeEvent, LedIndicatorEvent, PointingEvent, SleepStateEvent, SubscribableEvent,
+    publish_event,
 };
 #[cfg(feature = "display")]
-use crate::event::{ModifierEvent, SleepStateEvent, WpmUpdateEvent};
+use crate::event::{ModifierEvent, WpmUpdateEvent};
 #[cfg(not(feature = "_ble"))]
 use crate::split::serial::SerialSplitDriver;
 use crate::state::update_status;
 
-/// Run the split peripheral service.
+/// Run the split peripheral service. On BLE builds this owns the peripheral's
+/// whole BLE stack, sized to its single link (the central) — nothing else
+/// uses it.
+///
+/// On serial (`dfu_split`) builds the peripheral also takes its DFU download
+/// and boot state partitions so over-the-split-link firmware updates can
+/// write to them directly (no global registry).
 ///
 /// # Arguments
 ///
 /// * `id` - (optional) The id of the peripheral
-/// * `stack` - (optional) The TrouBLE stack
+/// * `controller` - (optional) The BLE controller
+/// * `address` - (optional) The BLE address of this peripheral
 /// * `serial` - (optional) serial port used to send peripheral split message. This argument is enabled only for serial split now
-/// * `storage` - (optional) The storage to save the central address
-#[allow(clippy::extra_unused_lifetimes)]
 pub async fn run_rmk_split_peripheral<
-    'b,
-    's,
-    #[cfg(feature = "_ble")] C: Controller + ControllerCmdAsync<LeSetPhy> + ControllerCmdSync<ReadRssi>,
+    #[cfg(all(feature = "_ble", feature = "subrating"))] C: Controller + ControllerCmdSync<LeSetHostFeature> + ControllerCmdSync<ReadRssi>,
+    #[cfg(all(feature = "_ble", not(feature = "subrating")))] C: Controller + ControllerCmdSync<ReadRssi>,
     #[cfg(not(feature = "_ble"))] S: Write + Read,
 >(
     #[cfg(feature = "_ble")] id: usize,
-    #[cfg(feature = "_ble")] stack: &'b Stack<'s, C, DefaultPacketPool>,
+    #[cfg(feature = "_ble")] controller: C,
+    #[cfg(feature = "_ble")] address: [u8; 6],
     #[cfg(not(feature = "_ble"))] serial: S,
-) where
-    's: 'b,
-{
+) {
     #[cfg(not(feature = "_ble"))]
     {
         let mut peripheral = SplitPeripheral::new(SerialSplitDriver::new(serial));
+        // The central's session outlives our reboot on a wired link, so ask it
+        // to send its state again.
+        peripheral
+            .split_driver
+            .write(&SplitMessage::ProductId(crate::SPLIT_PRODUCT_ID))
+            .await
+            .ok();
+
         loop {
             peripheral.run().await;
         }
     }
 
     #[cfg(feature = "_ble")]
-    crate::split::ble::peripheral::initialize_nrf_ble_split_peripheral_and_run(id, stack).await;
+    {
+        // Exactly one link — the central.
+        let mut resources: HostResources<DefaultPacketPool, 1, 4> = HostResources::new();
+        let stack = trouble_host::new(controller, &mut resources)
+            .set_random_address(Address::random(address))
+            .build();
+        crate::split::ble::peripheral::initialize_nrf_ble_split_peripheral_and_run(id, &stack).await;
+    }
 }
 
 /// The split peripheral instance.
 pub(crate) struct SplitPeripheral<S: SplitWriter + SplitReader> {
     split_driver: S,
-    #[cfg(feature = "dfu_split")]
-    dfu_handler: Option<crate::dfu::SplitDfuHandler>,
 }
 
 impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
     pub(crate) fn new(split_driver: S) -> Self {
-        Self {
-            split_driver,
-            #[cfg(feature = "dfu_split")]
-            dfu_handler: None,
-        }
+        Self { split_driver }
     }
 
     /// Run the peripheral keyboard service.
@@ -86,6 +104,7 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
         #[cfg(feature = "dfu_split")]
         {
             let hash = crate::dfu::read_embedded_firmware_hash();
+            info!("dfu_split: announcing firmware hash {:#x}", hash);
             self.split_driver
                 .write(&SplitMessage::FirmwareHashResponse(hash))
                 .await
@@ -93,8 +112,6 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
         }
 
         let mut key_sub = KeyboardEvent::subscriber();
-        #[cfg(feature = "_ble")]
-        let mut charging_state_sub = ChargingStateEvent::subscriber();
         let mut pointing_sub = PointingEvent::subscriber();
         #[cfg(feature = "_ble")]
         let mut battery_sub = BatteryStatusEvent::subscriber();
@@ -112,12 +129,6 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
             let read_message_to_send = async {
                 crate::select_biased_with_feature! {
                     e = key_sub.next_message_pure().fuse() => SplitMessage::Key(e),
-                    with_feature("_ble"): e = charging_state_sub.next_message_pure().fuse() => {
-                        SplitMessage::BatteryStatus(BatteryStatus::Available {
-                            charge_state: e.charging.into(),
-                            level: None,
-                        }.into())
-                    },
                     e = pointing_sub.next_message_pure().fuse() => {
                         let (event, pending) =
                             coalesce_queued_pointing(e, || pointing_sub.try_next_message_pure());
@@ -135,6 +146,14 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
                         SplitMessage::ConnectionStatus(status) => {
                             trace!("Received central connection status: {:?}", status);
                             update_status(|c| *c = status);
+                            // The central sends this only after subscribing to split notifications.
+                            #[cfg(feature = "_ble")]
+                            self.split_driver
+                                .write(&SplitMessage::BatteryStatus(
+                                    crate::input_device::battery::current_battery_status().into(),
+                                ))
+                                .await
+                                .ok();
                         }
                         #[cfg(feature = "_ble")]
                         SplitMessage::BleAdvertisingMode(mode) => {
@@ -143,11 +162,7 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
                         #[cfg(all(feature = "_ble", feature = "storage"))]
                         SplitMessage::ClearPeer => {
                             // Clear the peer address
-                            FLASH_CHANNEL
-                                .send(crate::storage::FlashOperationMessage::PeerAddress(PeerAddress::new(
-                                    0, false, [0; 6],
-                                )))
-                                .await;
+                            store_unchecked(StorageItem::PeerAddress(PeerAddress::new(0, false, [0; 6]))).await;
                         }
                         #[cfg(feature = "_ble")]
                         SplitMessage::BatteryRefresh => {
@@ -180,7 +195,6 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
                                 modifier: rmk_types::modifier::ModifierCombination::from_bits(bits),
                             });
                         }
-                        #[cfg(feature = "display")]
                         SplitMessage::SleepState(sleeping) => {
                             publish_event(SleepStateEvent::new(sleeping));
                         }
@@ -196,70 +210,87 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
                         }
                         #[cfg(feature = "dfu_split")]
                         SplitMessage::FirmwareChunk { offset, len, data } => {
-                            if self.dfu_handler.is_none() {
-                                self.dfu_handler = crate::dfu::SplitDfuHandler::new();
-                                if self.dfu_handler.is_none() {
-                                    error!("dfu_split: FlashManager not initialized, skipping chunk");
-                                    continue;
-                                }
-                            }
-                            let handler = self.dfu_handler.as_mut().unwrap();
-                            let actual_len = len as usize;
+                            let actual_len = (len as usize).min(data.0.len());
                             let chunk_data = &data.0[..actual_len];
-                            match handler.write_chunk(offset as u32, chunk_data) {
-                                Ok(()) => {
-                                    debug!("dfu_split: wrote {} bytes at offset {}", actual_len, offset);
-                                    let ack = SplitMessage::FirmwareChunkAck {
-                                        offset,
-                                        crc: crate::crc32::crc32(chunk_data),
-                                    };
-                                    self.split_driver.write(&ack).await.ok();
-                                }
-                                Err(()) => error!("dfu_split: write error at offset {}", offset),
+                            let mut buf: heapless::Vec<u8, { crate::dfu::BLOCK_SIZE_DFU }> = heapless::Vec::new();
+                            if buf.extend_from_slice(chunk_data).is_err() {
+                                error!("dfu_split: chunk too large for DFU command buffer");
+                                continue;
                             }
+                            // The peripheral never receives Start(Local); the first chunk opens the session.
+                            if offset == 0 {
+                                publish_event(DfuCmdEvent(DfuCmd::Start(DfuTarget::Local)));
+                            }
+                            publish_event(DfuCmdEvent(DfuCmd::Write(DfuTarget::Local, offset, buf)));
+                            // Wait for handler to finish write_chunk before sending ack
+                            loop {
+                                match SPLIT_RESPONSE_CHANNEL.receiver().receive().await {
+                                    SplitResponse::Write(_) => break,
+                                    _ => continue,
+                                }
+                            }
+                            // Transport-Ack
+                            let ack = SplitMessage::FirmwareChunkAck {
+                                offset,
+                                crc: crate::crc32::crc32(chunk_data),
+                            };
+                            self.split_driver.write(&ack).await.ok();
                         }
                         #[cfg(feature = "dfu_split")]
                         SplitMessage::FirmwareUpdateComplete => {
-                            if let Some(ref mut handler) = self.dfu_handler {
-                                let dfu_crc = handler.compute_dfu_crc();
-                                info!("dfu_split: DFU partition CRC: {:#010x}", dfu_crc);
-                                let crc_msg = SplitMessage::FirmwareCrcReport(dfu_crc);
-                                self.split_driver.write(&crc_msg).await.ok();
-                                info!("dfu_split: CRC report sent");
-
-                                let deadline = embassy_time::Instant::now() + embassy_time::Duration::from_secs(5);
-                                let ok = loop {
-                                    match select(self.split_driver.read(), embassy_time::Timer::at(deadline)).await {
-                                        Either::First(Ok(SplitMessage::FirmwareCrcOk)) => {
-                                            info!("dfu_split: central confirmed CRC, resetting");
-                                            break true;
-                                        }
-                                        Either::First(Ok(SplitMessage::FirmwareCrcFail)) => {
-                                            warn!("dfu_split: central rejected CRC, stopping update");
-                                            break false;
-                                        }
-                                        Either::First(Ok(_)) => {}
-                                        Either::First(Err(e)) => {
-                                            error!("read error: {:?}", e);
-                                            break false;
-                                        }
-                                        Either::Second(_) => {
-                                            error!("timeout");
-                                            break false;
-                                        }
-                                    }
-                                };
-
-                                if ok {
-                                    self.split_driver.write(&SplitMessage::FirmwareUpdateConfirm).await.ok();
-                                    embassy_time::Timer::after_millis(50).await;
-                                    handler.mark_updated_and_reset().ok();
-                                } else {
-                                    self.dfu_handler = None;
+                            // Ask the handler (via Runnable) to compute CRC over flash.
+                            publish_event(DfuCmdEvent(DfuCmd::ComputeCrc));
+                            let dfu_crc = match loop {
+                                match SPLIT_RESPONSE_CHANNEL.receiver().receive().await {
+                                    SplitResponse::Crc(result) => break result,
+                                    _ => continue,
                                 }
-                            } else {
-                                error!("dfu_split: no active DFU session");
+                            } {
+                                Ok(crc) => crc,
+                                Err(()) => {
+                                    error!("dfu_split: CRC computation failed, aborting verification");
+                                    continue;
+                                }
+                            };
+                            info!("dfu_split: DFU partition CRC: {:#010x}", dfu_crc);
+                            let crc_msg = SplitMessage::FirmwareCrcReport(dfu_crc);
+                            self.split_driver.write(&crc_msg).await.ok();
+                            info!("dfu_split: CRC report sent");
+
+                            let deadline = embassy_time::Instant::now() + embassy_time::Duration::from_secs(5);
+                            let ok = loop {
+                                match select(self.split_driver.read(), embassy_time::Timer::at(deadline)).await {
+                                    Either::First(Ok(SplitMessage::FirmwareCrcOk)) => {
+                                        info!("dfu_split: central confirmed CRC, resetting");
+                                        break true;
+                                    }
+                                    Either::First(Ok(SplitMessage::FirmwareCrcFail)) => {
+                                        warn!("dfu_split: central rejected CRC, stopping update");
+                                        break false;
+                                    }
+                                    Either::First(Ok(_)) => {}
+                                    Either::First(Err(e)) => {
+                                        error!("read error: {:?}", e);
+                                        break false;
+                                    }
+                                    Either::Second(_) => {
+                                        error!("timeout");
+                                        break false;
+                                    }
+                                }
+                            };
+
+                            if ok {
+                                self.split_driver.write(&SplitMessage::FirmwareUpdateConfirm).await.ok();
+                                embassy_time::Timer::after_millis(50).await;
+                                // Handler does sanity check + mark_updated_and_reset.
+                                publish_event(DfuCmdEvent(DfuCmd::Finish(DfuTarget::Local)));
                             }
+                        }
+                        #[cfg(feature = "dfu_split")]
+                        SplitMessage::SystemReset => {
+                            info!("dfu_split: received system reset from central");
+                            crate::boot::reboot_keyboard();
                         }
                         _ => (),
                     },

@@ -1,6 +1,8 @@
 use core::str;
-use core::sync::atomic::{AtomicU8, Ordering};
 
+// portable-atomic: `fetch_add` also builds on thumbv6m (Phenom), which has no
+// atomic read-modify-write instructions.
+use portable_atomic::{AtomicU8, Ordering};
 use rmk::config::{VialDeviceSettings, VialDeviceSettingsData};
 use rmk::event::{publish_event, PeripheralSettingsEvent, PeripheralSettingsRefreshEvent};
 use rmk::macros::processor;
@@ -127,6 +129,10 @@ const MODULE_DEFAULTS: [u8; MODULE_SETTINGS_LEN] = {
     data[IDX_RIGHT_BALL_DPI] = if cfg!(feature = "production_v22") { 2 } else { 4 };
     data[IDX_LEFT_TOUCH_DPI] = 3;
     data[IDX_RIGHT_TOUCH_DPI] = 3;
+    data[IDX_LEFT_BALL_AXIS] = crate::board::DEFAULT_BALL_AXIS[0];
+    data[IDX_RIGHT_BALL_AXIS] = crate::board::DEFAULT_BALL_AXIS[1];
+    data[IDX_LEFT_TOUCH_AXIS] = crate::board::DEFAULT_TOUCH_AXIS[0];
+    data[IDX_RIGHT_TOUCH_AXIS] = crate::board::DEFAULT_TOUCH_AXIS[1];
     data[IDX_FLAGS] = DEFAULT_ACCELERATION_FLAGS;
     data[IDX_MODULE_SELECT] = (3 << 0) | (2 << 2);
     data[IDX_LEFT_SCROLL_SENS] = 8;
@@ -206,10 +212,12 @@ pub const fn vial_device_settings() -> VialDeviceSettings<'static> {
     }
 }
 
+#[cfg(feature = "qube")]
 pub fn version() -> u8 {
     LAYER_NAMES_VERSION.load(Ordering::Relaxed)
 }
 
+#[cfg(feature = "qube")]
 pub fn copy_layer_name(layer: u8, out: &mut LayerNameString) -> bool {
     let index = layer as usize;
     if index >= LAYER_NAME_COUNT {

@@ -7,10 +7,6 @@
 
 use heapless::LinearMap;
 use postcard::experimental::max_size::MaxSize;
-#[cfg(feature = "rmk_protocol")]
-use postcard_schema::Schema;
-#[cfg(feature = "rmk_protocol")]
-use postcard_schema::schema::{DataModelType, NamedType, NamedValue};
 use serde::{Deserialize, Serialize};
 
 use crate::action::Action;
@@ -23,10 +19,11 @@ use crate::constants::MORSE_SIZE;
 /// Mode for morse key behavior
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
 #[repr(u8)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub enum MorseMode {
-    /// Same as QMK's permissive hold: https://docs.qmk.fm/tap_hold#tap-or-hold-decision-modes
+    /// Same as QMK's permissive hold: <https://docs.qmk.fm/tap_hold#tap-or-hold-decision-modes>
     /// When another key is pressed and released during the current morse key is held,
     /// the hold action of current morse key will be triggered
     PermissiveHold,
@@ -37,43 +34,48 @@ pub enum MorseMode {
 }
 
 /// Configuration for morse, tap dance and tap-hold.
-/// Manually packed into 32 bits to save RAM.
+/// Manually packed into 64 bits to save RAM.
 ///
-/// Bit layout of the inner `u32`:
+/// Bit layout of the inner `u64`:
 /// ```text
-/// 31  30 | 29       17 | 16  15 | 14  13   | 12       0
-/// mode   | gap_timeout | uni_tap| flow_tap | hold_timeout
-///  (2b)  |   (13b ms)  |  (2b)  |   (2b)   |  (13b ms)
+/// 63        46 | 45      | 44           32 | 31  30 | 29       17 | 16  15 | 14  13   | 12       0
+/// reserved     | qt_set  | quick_tap_tm    | mode   | gap_timeout | uni_tap| flow_tap | hold_timeout
+///   (18b)      |  (1b)   |   (13b ms)      |  (2b)  |   (13b ms)  |  (2b)  |   (2b)   |  (13b ms)
 /// ```
 ///
+/// - `qt_set` (bit 45): when set, `quick_tap_timeout` is explicitly configured
+///   (even if 0, which means "disabled"). When clear, the field is unset and
+///   callers should fall back to the global default.
+/// - `quick_tap_timeout` (bits 44-32): quick-tap timeout in ms (max 8191).
 /// - `mode` (bits 31-30): `00` = None, `01` = PermissiveHold, `10` = HoldOnOtherPress, `11` = Normal
 /// - `flow_tap` (bits 14, 13): `00`/`01` = None, `10` = Some(false), `11` = Some(true)
 /// - `gap_timeout` (bits 29-17): gap timeout in ms (0 = None, max 8191)
 /// - `uni_tap` (bits 16-15): `00`/`01` = None, `10` = Some(false), `11` = Some(true)
 /// - `hold_timeout` (bits 12-0): hold timeout in ms (0 = None, max 8191)
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize, MaxSize)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, MaxSize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
-pub struct MorseProfile(u32);
+pub struct MorseProfile(u64);
 
-const TIMEOUT_MASK: u32 = 0x1FFF;
+const TIMEOUT_MASK: u64 = 0x1FFF;
 const TIMEOUT_MAX_MS: u16 = TIMEOUT_MASK as u16;
 const GAP_TIMEOUT_SHIFT: u32 = 17;
-const HOLD_TIMEOUT_MASK: u32 = TIMEOUT_MASK;
-const GAP_TIMEOUT_MASK: u32 = TIMEOUT_MASK << GAP_TIMEOUT_SHIFT;
-const UNI_TAP_LOW_BIT: u32 = 0x0000_8000;
-const UNI_TAP_HIGH_BIT: u32 = 0x0001_0000;
-const UNI_TAP_MASK: u32 = UNI_TAP_LOW_BIT | UNI_TAP_HIGH_BIT;
-const FLOW_TAP_LOW_BIT: u32 = 0x0000_2000;
-const FLOW_TAP_HIGH_BIT: u32 = 0x0000_4000;
-const FLOW_TAP_MASK: u32 = FLOW_TAP_LOW_BIT | FLOW_TAP_HIGH_BIT;
-const MODE_MASK: u32 = 0xC000_0000;
+const HOLD_TIMEOUT_MASK: u64 = TIMEOUT_MASK;
+const GAP_TIMEOUT_MASK: u64 = TIMEOUT_MASK << GAP_TIMEOUT_SHIFT;
+const UNI_TAP_LOW_BIT: u64 = 0x0000_8000;
+const UNI_TAP_HIGH_BIT: u64 = 0x0001_0000;
+const UNI_TAP_MASK: u64 = UNI_TAP_LOW_BIT | UNI_TAP_HIGH_BIT;
+const FLOW_TAP_LOW_BIT: u64 = 0x0000_2000;
+const FLOW_TAP_HIGH_BIT: u64 = 0x0000_4000;
+const FLOW_TAP_MASK: u64 = FLOW_TAP_LOW_BIT | FLOW_TAP_HIGH_BIT;
+const MODE_MASK: u64 = 0xC000_0000;
+const QT_VALUE_MASK: u64 = TIMEOUT_MASK << 32;
+const QT_SET_BIT: u64 = 1 << 45;
 
-const fn encode_timeout_ms(t: u16) -> u32 {
+const fn encode_timeout_ms(t: u16) -> u64 {
     if t > TIMEOUT_MAX_MS {
-        TIMEOUT_MAX_MS as u32
+        TIMEOUT_MAX_MS as u64
     } else {
-        t as u32
+        t as u64
     }
 }
 
@@ -102,7 +104,8 @@ impl MorseProfile {
         )
     }
 
-    /// Per-profile override for flow tap. `None` inherits the global morse setting.
+    /// Per-profile override for flow tap. `None` falls back to the default
+    /// profile's bit, then the config-level `enable_flow_tap` switch.
     pub fn enable_flow_tap(self) -> Option<bool> {
         match (self.0 & FLOW_TAP_MASK) >> 13 {
             3 => Some(true),
@@ -180,13 +183,33 @@ impl MorseProfile {
         }
     }
 
+    pub const fn quick_tap_timeout_ms(self) -> Option<u16> {
+        if self.0 & QT_SET_BIT != 0 {
+            Some(((self.0 >> 32) & TIMEOUT_MASK) as u16)
+        } else {
+            None
+        }
+    }
+
+    pub const fn with_quick_tap_timeout_ms(self, t: Option<u16>) -> Self {
+        if let Some(t) = t {
+            Self((self.0 & !(QT_VALUE_MASK | QT_SET_BIT)) | (encode_timeout_ms(t) << 32) | QT_SET_BIT)
+        } else {
+            Self(self.0 & !(QT_VALUE_MASK | QT_SET_BIT))
+        }
+    }
+
+    pub const fn set_quick_tap_timeout_ms(&mut self, t: u16) {
+        self.0 = (self.0 & !(QT_VALUE_MASK | QT_SET_BIT)) | (encode_timeout_ms(t) << 32) | QT_SET_BIT;
+    }
+
     pub const fn new(
         unilateral_tap: Option<bool>,
         mode: Option<MorseMode>,
         hold_timeout_ms: Option<u16>,
         gap_timeout_ms: Option<u16>,
     ) -> Self {
-        let mut v = 0u32;
+        let mut v = 0u64;
         if let Some(t) = hold_timeout_ms {
             v = encode_timeout_ms(t);
         }
@@ -213,17 +236,77 @@ impl Default for MorseProfile {
     }
 }
 
-impl From<u32> for MorseProfile {
-    fn from(v: u32) -> Self {
+impl From<u64> for MorseProfile {
+    fn from(v: u64) -> Self {
         MorseProfile(v)
     }
 }
 
-impl From<MorseProfile> for u32 {
+impl From<MorseProfile> for u64 {
     fn from(val: MorseProfile) -> Self {
         val.0
     }
 }
+
+// Wire stays packed; human-readable serializers expose named fields.
+impl Serialize for MorseProfile {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if serializer.is_human_readable() {
+            #[derive(Serialize)]
+            struct Repr {
+                unilateral_tap: Option<bool>,
+                enable_flow_tap: Option<bool>,
+                mode: Option<MorseMode>,
+                hold_timeout_ms: Option<u16>,
+                gap_timeout_ms: Option<u16>,
+                quick_tap_timeout_ms: Option<u16>,
+            }
+            Repr {
+                unilateral_tap: self.unilateral_tap(),
+                enable_flow_tap: self.enable_flow_tap(),
+                mode: self.mode(),
+                hold_timeout_ms: self.hold_timeout_ms(),
+                gap_timeout_ms: self.gap_timeout_ms(),
+                quick_tap_timeout_ms: self.quick_tap_timeout_ms(),
+            }
+            .serialize(serializer)
+        } else {
+            serializer.serialize_u64(self.0)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MorseProfile {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if deserializer.is_human_readable() {
+            #[derive(Deserialize)]
+            struct Repr {
+                unilateral_tap: Option<bool>,
+                enable_flow_tap: Option<bool>,
+                mode: Option<MorseMode>,
+                hold_timeout_ms: Option<u16>,
+                gap_timeout_ms: Option<u16>,
+                quick_tap_timeout_ms: Option<u16>,
+            }
+            let r = Repr::deserialize(deserializer)?;
+            Ok(
+                MorseProfile::new(r.unilateral_tap, r.mode, r.hold_timeout_ms, r.gap_timeout_ms)
+                    .with_enable_flow_tap(r.enable_flow_tap)
+                    .with_quick_tap_timeout_ms(r.quick_tap_timeout_ms),
+            )
+        } else {
+            Ok(MorseProfile(u64::deserialize(deserializer)?))
+        }
+    }
+}
+
+// TS shape mirrors the `Repr` above; `Option<T>` renders as `T | undefined`.
+#[cfg(feature = "wasm")]
+const _: () = {
+    #[::wasm_bindgen::prelude::wasm_bindgen(typescript_custom_section)]
+    const TS_APPEND_CONTENT: &'static str = "export type MorseProfile = { unilateral_tap: boolean | undefined; enable_flow_tap: boolean | undefined; mode: MorseMode | undefined; hold_timeout_ms: number | undefined; gap_timeout_ms: number | undefined; quick_tap_timeout_ms: number | undefined; };";
+};
+crate::wasm_object_abi!(MorseProfile, "MorseProfile");
 
 // ---------------------------------------------------------------------------
 // MorsePattern & Morse — pattern encoding and key definition
@@ -232,8 +315,9 @@ impl From<MorseProfile> for u32 {
 /// MorsePattern is a sequence of maximum 15 taps or holds that can be encoded into an u16:
 /// 0x1 when empty, then 0 for tap or 1 for hold shifted from the right
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
-#[cfg_attr(feature = "rmk_protocol", derive(Schema))]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct MorsePattern(u16);
 
 pub const TAP: MorsePattern = MorsePattern(0b10);
@@ -302,6 +386,12 @@ impl MorsePattern {
         // Shift the bits to the left and set the last bit to 1 (hold)
         MorsePattern((self.0 << 1) | 0b1)
     }
+
+    /// `true` when the pattern consists only of tap steps (no holds).
+    /// Returns `false` for the empty pattern (encoding `0b1`).
+    pub fn is_all_taps(&self) -> bool {
+        self.0 > 0b1 && self.0 & (self.0 - 1) == 0
+    }
 }
 
 /// Definition of a morse key.
@@ -314,12 +404,15 @@ impl MorsePattern {
 /// Note: `MORSE_SIZE` is a **wire-format** capacity — on firmware it equals
 /// `MAX_PATTERNS_PER_KEY` (from `keyboard.toml`), on host it's a fixed upper bound.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "wasm", derive(tsify::Tsify))]
+#[cfg_attr(feature = "wasm", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct Morse {
     /// The profile of this morse key, which defines the timing parameters, etc.
     /// If some of its fields are filled with None, the global default value will be used.
     pub profile: MorseProfile,
     /// The list of pattern -> action pairs, which can be triggered
     #[serde(with = "morse_actions_serde")]
+    #[cfg_attr(feature = "wasm", tsify(type = "[number, Action][]"))]
     pub actions: LinearMap<MorsePattern, Action, MORSE_SIZE>,
 }
 
@@ -354,36 +447,9 @@ impl PartialEq for Morse {
 
 impl Eq for Morse {}
 
-/// Manual Schema impl because Morse uses custom serde for LinearMap.
-/// The wire format is: (MorseProfile, Vec<(u16, Action)>).
-///
-/// **Important:** This must stay in sync with the custom serde impl in
-/// `morse_actions_serde`. If the wire format changes, update this Schema
-/// accordingly. The `morse_schema_matches_wire_format` test validates
-/// this invariant.
-#[cfg(feature = "rmk_protocol")]
-impl Schema for Morse {
-    const SCHEMA: &'static NamedType = &NamedType {
-        name: "Morse",
-        ty: &DataModelType::Struct(&[
-            &NamedValue {
-                name: "profile",
-                ty: <MorseProfile as Schema>::SCHEMA,
-            },
-            &NamedValue {
-                name: "actions",
-                ty: &NamedType {
-                    name: "MorseActions",
-                    ty: &DataModelType::Seq(&NamedType {
-                        name: "MorseActionEntry",
-                        ty: &DataModelType::Tuple(&[<u16 as Schema>::SCHEMA, <Action as Schema>::SCHEMA]),
-                    }),
-                },
-            },
-        ]),
-    };
-}
-
+/// Wire format note: `Morse` uses a custom serde impl for the `LinearMap`
+/// of actions. The on-wire shape is `(MorseProfile, Vec<(u16, Action)>)`.
+/// The `morse_wire_format` test below pins this contract.
 impl Morse {
     pub fn new_from_vial(
         tap: Action,
@@ -685,6 +751,47 @@ mod tests {
         profile.set_gap_timeout_ms(0);
         assert_eq!(profile.hold_timeout_ms(), None);
         assert_eq!(profile.gap_timeout_ms(), None);
+
+        let p = MorseProfile::const_default().with_quick_tap_timeout_ms(Some(300));
+        assert_eq!(p.quick_tap_timeout_ms(), Some(300));
+        assert_eq!(p.hold_timeout_ms(), MorseProfile::const_default().hold_timeout_ms());
+        assert_eq!(p.gap_timeout_ms(), MorseProfile::const_default().gap_timeout_ms());
+
+        let mut p2 = p;
+        p2.set_quick_tap_timeout_ms(0);
+        assert_eq!(p2.quick_tap_timeout_ms(), Some(0), "set_*_ms(0) is explicit");
+
+        p2.set_quick_tap_timeout_ms(0xFFFF);
+        assert_eq!(p2.quick_tap_timeout_ms(), Some(TIMEOUT_MAX_MS));
+
+        let p3 = p.with_quick_tap_timeout_ms(None);
+        assert_eq!(p3.quick_tap_timeout_ms(), None, "with_*(None) clears the field");
+
+        let p4 = MorseProfile::const_default().with_quick_tap_timeout_ms(Some(0));
+        assert_eq!(p4.quick_tap_timeout_ms(), Some(0), "Some(0) is explicitly disabled");
+    }
+
+    #[test]
+    fn is_all_taps_encoding_invariant() {
+        let tap = MorsePattern::from_u16(0b10);
+        let tap_tap = MorsePattern::from_u16(0b100);
+        let tap_tap_tap = MorsePattern::from_u16(0b1000);
+        let hold = MorsePattern::from_u16(0b11);
+        let tap_hold = MorsePattern::from_u16(0b101);
+        let hold_tap = MorsePattern::from_u16(0b110);
+        let empty = MorsePattern::default();
+
+        assert!(tap.is_all_taps());
+        assert!(tap_tap.is_all_taps());
+        assert!(tap_tap_tap.is_all_taps());
+        assert!(!hold.is_all_taps());
+        assert!(!tap_hold.is_all_taps());
+        assert!(!hold_tap.is_all_taps());
+        assert!(!empty.is_all_taps());
+
+        assert_eq!(tap, MorsePattern::default().followed_by_tap());
+        assert_eq!(tap_tap, tap.followed_by_tap());
+        assert_eq!(hold, MorsePattern::default().followed_by_hold());
     }
 
     #[test]
@@ -697,8 +804,8 @@ mod tests {
         )
         .with_enable_flow_tap(Some(false));
         assert_eq!(
-            u32::from(profile),
-            0x8000_0000 | (0x0456u32 << 17) | 0x0001_0000 | 0x0000_4000 | 0x0123
+            u64::from(profile),
+            0x8000_0000 | (0x0456u64 << 17) | 0x0001_0000 | 0x0000_4000 | 0x0123
         );
         assert_eq!(profile.unilateral_tap(), Some(false));
         assert_eq!(profile.enable_flow_tap(), Some(false));
@@ -706,8 +813,8 @@ mod tests {
         let profile = MorseProfile::new(Some(true), Some(MorseMode::Normal), Some(0x0123), Some(0x0456))
             .with_enable_flow_tap(Some(true));
         assert_eq!(
-            u32::from(profile),
-            0xC000_0000 | (0x0456u32 << 17) | 0x0001_8000 | 0x0000_6000 | 0x0123
+            u64::from(profile),
+            0xC000_0000 | (0x0456u64 << 17) | 0x0001_8000 | 0x0000_6000 | 0x0123
         );
         assert_eq!(profile.unilateral_tap(), Some(true));
         assert_eq!(profile.enable_flow_tap(), Some(true));
@@ -715,8 +822,8 @@ mod tests {
 
     #[test]
     fn test_morse_profile_enable_flow_tap_accessors_preserve_packed_fields() {
-        assert_eq!(core::mem::size_of::<MorseProfile>(), 4);
-        assert_eq!(MorseProfile::POSTCARD_MAX_SIZE, u32::POSTCARD_MAX_SIZE);
+        assert_eq!(core::mem::size_of::<MorseProfile>(), 8);
+        assert_eq!(MorseProfile::POSTCARD_MAX_SIZE, u64::POSTCARD_MAX_SIZE);
         assert_eq!(MorseProfile::const_default().enable_flow_tap(), None);
 
         let profile = MorseProfile::new(Some(true), Some(MorseMode::PermissiveHold), Some(1000), Some(2000));
@@ -742,15 +849,36 @@ mod tests {
         assert_eq!(profile.mode(), Some(MorseMode::PermissiveHold));
     }
 
-    /// Validates that the manual Schema impl matches the actual serde wire format.
-    ///
-    /// The Schema claims Morse serializes as:
-    ///   struct { profile: MorseProfile, actions: Vec<(u16, Action)> }
-    ///
-    /// We verify this by checking that a Morse value can be reconstructed by
-    /// manually deserializing its two fields in order using the same bytes.
+    /// The human-readable serde goes `MorseProfile` -> decoded parts -> `new()`.
+    /// All 32 bits are covered by the five fields, so that path must be lossless.
     #[test]
-    fn morse_schema_matches_wire_format() {
+    fn morse_profile_parts_roundtrip() {
+        for p in [
+            MorseProfile::new(
+                Some(false),
+                Some(MorseMode::HoldOnOtherPress),
+                Some(TIMEOUT_MAX_MS),
+                Some(1),
+            )
+            .with_enable_flow_tap(Some(false)),
+            MorseProfile::new(Some(true), Some(MorseMode::Normal), Some(200), Some(150))
+                .with_enable_flow_tap(Some(true)),
+            MorseProfile::const_default(),
+        ] {
+            let parts = MorseProfile::new(p.unilateral_tap(), p.mode(), p.hold_timeout_ms(), p.gap_timeout_ms())
+                .with_enable_flow_tap(p.enable_flow_tap());
+            assert_eq!(p, parts);
+        }
+    }
+
+    /// Pins the on-wire shape of `Morse`:
+    ///   `(MorseProfile, Vec<(u16, Action)>)`
+    ///
+    /// `Morse` uses a custom serde impl for the `LinearMap` of actions; this
+    /// test verifies a Morse value can be reconstructed by manually
+    /// deserializing those two fields from the same byte stream.
+    #[test]
+    fn morse_wire_format() {
         use postcard::to_slice;
 
         // Build a Morse with known data
@@ -762,7 +890,7 @@ mod tests {
         let bytes = to_slice(&morse, &mut buf).unwrap();
 
         // Now manually deserialize field-by-field in the order the Schema declares:
-        // 1. profile: MorseProfile (a newtype around u32)
+        // 1. profile: MorseProfile (a newtype around u64)
         let (profile, rest): (MorseProfile, &[u8]) =
             postcard::take_from_bytes(bytes).expect("should deserialize MorseProfile first");
         assert_eq!(profile, MorseProfile::const_default());

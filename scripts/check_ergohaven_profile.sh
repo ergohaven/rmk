@@ -111,6 +111,7 @@ live_matrix_cargo_manifests=(
 )
 
 battery_reader_sources=(
+    keyboards/k04/src/battery_nrf.rs
     keyboards/imperial44/src/battery_nrf.rs
     keyboards/k03/src/battery_nrf.rs
     keyboards/op36/src/battery_nrf.rs
@@ -129,29 +130,106 @@ non_k04_profiles=(
     keyboards/velvet/keyboard.toml
 )
 
+# Phenom is wired and has no batteries, so the Bluetooth part of the contract
+# does not apply to it.
+wired_profiles=(
+    keyboards/phenom/keyboard.toml
+    keyboards/phenom/keyboard_micro.toml
+    keyboards/phenom/keyboard_mini.toml
+)
+
 for file in "${live_matrix_cargo_manifests[@]}"; do
-    rg -Fq '"vial_lock"' "$file" \
-        || fail "$file: Vial live matrix support requires vial_lock/host_security"
+    # Check active feature closures, not tokens in unused aliases or comments.
+    python3 - "$file" <<'PY' || fail "$file: live matrix protocol selections require host_lock"
+from pathlib import Path
+import sys
+import tomllib
+
+path = Path(sys.argv[1])
+board = tomllib.loads(path.read_text())
+dependency = board["dependencies"]["rmk"]
+rmk = tomllib.loads((path.parent / dependency["path"] / "Cargo.toml").read_text())
+board_features = board.get("features", {})
+rmk_features = rmk["features"]
+
+
+def closure(selection):
+    pending = [("board", feature) for feature in selection]
+    pending += [("rmk", feature) for feature in dependency.get("features", [])]
+    if dependency.get("default-features", True):
+        pending.append(("rmk", "default"))
+    seen = set()
+    while pending:
+        owner, feature = pending.pop()
+        if (owner, feature) in seen:
+            continue
+        seen.add((owner, feature))
+        if owner == "board" and feature.startswith("rmk/"):
+            pending.append(("rmk", feature.split("/", 1)[1]))
+        elif "/" not in feature and not feature.startswith("dep:"):
+            features = board_features if owner == "board" else rmk_features
+            # Cargo permits an absent default feature group.
+            assert feature == "default" or feature in features, (owner, feature)
+            pending += [(owner, child) for child in features.get(feature, [])]
+    return {feature for owner, feature in seen if owner == "rmk"}
+
+
+selectable = any(name in board_features for name in
+                 ("protocol_rynk", "protocol_vial", "vial_standalone"))
+selections = {"default": (["default"], {"rynk"} if selectable else None)}
+if selectable:
+    selections.update(protocol_rynk=(["protocol_rynk"], {"rynk"}),
+                      protocol_vial=(["protocol_vial"], {"vial"}),
+                      vial_standalone=(["vial_standalone"], {"vial"}))
+for name, (selection, expected) in selections.items():
+    active = closure(selection)
+    protocols = active & {"vial", "rynk"}
+    assert "host_lock" in active, f"{name}: live matrix support requires host_lock"
+    assert len(protocols) == 1, f"{name}: expected exactly one host protocol, got {protocols}"
+    assert expected is None or protocols == expected, (name, protocols, expected)
+PY
+done
+
+mapfile -t keyboard_manifests < <(git ls-files 'keyboards/*/Cargo.toml')
+for file in "${keyboard_manifests[@]}"; do
+    rg -Fq '"universal_symbols"' "$file" \
+        || fail "$file: every Ergohaven keyboard must enable Universal Symbols"
 done
 
 for file in "${battery_reader_sources[@]}"; do
     rg -Fq 'publish_battery_status(' "$file" \
         || fail "$file: custom battery reader must update the synchronous host cache"
+    # A split half answers the central from that cache, so a reading published
+    # around it reaches the central as Unavailable.
+    rg -Fq 'publish_event(BatteryStatusEvent' "$file" \
+        && fail "$file: battery reader must not publish around the synchronous cache"
 done
 
-for file in "${profiles[@]}"; do
+for file in "${profiles[@]}" "${wired_profiles[@]}"; do
     expect_toml "$file" manufacturer Ergohaven
     expect_toml "$file" layers 16
     expect_toml "$file" no_action_layer_start 5
     expect_toml "$file" combo_max_num 32
     expect_toml "$file" fork_max_num 32
     expect_toml "$file" morse_max_num 32
-    expect_toml "$file" macro_space_size 2048
+    # A Rynk frame holds the whole macro pool, and Rynk's encoding takes up to
+    # twice Vial's bytes, so Rynk profiles double the pool to keep every macro.
+    if [[ "$(toml_value "$file" rynk_enabled)" == "true" ]]; then
+        expect_toml "$file" vial_enabled false
+        expect_toml "$file" macro_space_size 4096
+        expect_toml "$file" rynk_buffer_size 4128
+        expect_toml "$file" write_requires_unlock false
+    else
+        expect_toml "$file" macro_space_size 2048
+    fi
+    expect_not_true "$file" clear_storage
+    expect_not_true "$file" clear_layout
+done
+
+for file in "${profiles[@]}"; do
     expect_toml "$file" ble_profiles_num 5
     expect_toml "$file" ble_reconnect_timeout_seconds 60
     expect_toml "$file" ble_pairing_timeout_seconds 60
-    expect_not_true "$file" clear_storage
-    expect_not_true "$file" clear_layout
 done
 
 python3 - <<'PY' || fail "shared K:04 crate must keep all topology and model identities"
@@ -190,7 +268,7 @@ import tomllib
 for path in sys.argv[1:]:
     with open(path, "rb") as source:
         config = tomllib.load(source)
-    explicit_layers = config.get("layer", [])
+    explicit_layers = config.get("keymap", {}).get("layer", [])
     if len(explicit_layers) > 5:
         raise SystemExit(
             f"{path}: defines {len(explicit_layers)} factory layers; "
@@ -210,7 +288,7 @@ profiles = [
 
 for path in profiles:
     with open(path, "rb") as source:
-        layers = tomllib.load(source).get("layer", [])
+        layers = tomllib.load(source).get("keymap", {}).get("layer", [])
     adjust = next((layer for layer in layers if layer.get("name") == "Adjust"), None)
     if adjust is None:
         raise SystemExit(f"{path}: Adjust layer is missing")
@@ -233,7 +311,7 @@ import tomllib
 
 def layers(path):
     with open(path, "rb") as source:
-        return tomllib.load(source).get("layer", [])
+        return tomllib.load(source).get("keymap", {}).get("layer", [])
 
 replacements = {
     "User19": "User0",
@@ -242,8 +320,6 @@ replacements = {
     "User22": "User3",
     "User23": "User4",
     "User26": "User7",
-    "User37": "OutputBluetooth",
-    "User38": "OutputUsb",
     # Classic profiles have no K:04 status LED for the battery indication action.
     "User39": "No",
 }
@@ -303,7 +379,7 @@ def check_projection(
                 layout = tomllib.load(source)["layout"]
             positions = [
                 (int(row), int(col))
-                for row, col in re.findall(r"\((\d+),(\d+),[^)]+\)", layout["matrix_map"])
+                for row, col in re.findall(r"\((\d+),(\d+),[^)]+\)", layout["map"])
             ]
             base_name, base_keys, base_encoders = expected[0]
             base_keys = list(base_keys)
@@ -396,8 +472,6 @@ python3 scripts/test_approved_factory_layouts.py || fail "approved factory layou
 for file in "${non_k04_profiles[@]}"; do
     expect_toml "$file" combo_max_length 4
     expect_toml "$file" max_patterns_per_key 8
-    expect_toml "$file" protocol_max_bulk_size 8
-    expect_toml "$file" protocol_macro_chunk_size 64
 done
 
 for file in "${split_profiles[@]}"; do
@@ -414,6 +488,13 @@ for file in "${qube_profiles[@]}"; do
         *) expected=900 ;;
     esac
     expect_toml "$file" split_central_sleep_timeout_seconds "$expected"
+done
+
+# K:04 Qube keeps the 7.5 ms trackball link clear of the 15 ms key link.
+for file in keyboards/k04/keyboard_qube.toml keyboards/k04/keyboard_qube_micro.toml keyboards/k04/keyboard_qube_mini.toml; do
+    expect_toml "$file" central_event_length_us 3000
+    expect_toml "$file" central_acl_event_spacing_us 3750
+    expect_toml "$file" host_advertising false
 done
 
 for file in "${profiles[@]}"; do
@@ -451,9 +532,9 @@ from pathlib import Path
 
 workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 expected_features = {
-    "k04_series_k04": "production_v30g,universal_mac_iso",
+    "k04_series_k04": "production_v30g",
     "k04_series_mini": "production_v30g",
-    "k04_series_micro": "production_v30g,universal_mac_iso",
+    "k04_series_micro": "production_v30g",
 }
 for output_name, features in expected_features.items():
     marker = f"output_name: {output_name}"
@@ -464,8 +545,8 @@ for output_name, features in expected_features.items():
 
 assert "cargo build --release --bin central ${{ matrix.build_features }}" in workflow
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
-assert workflow.count('build_features: "--features production_v30g"') == 1
-assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 2
+assert workflow.count('build_features: "--features production_v30g"') == 3
+assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 2
 PY
 
 python3 - <<'PY' || fail "K:04 local build instructions drifted from the production profile"
@@ -516,29 +597,30 @@ python3 - <<'PY' || fail "K:04 production_v30g feature scope is invalid"
 from pathlib import Path
 
 k04 = Path("keyboards/k04/Cargo.toml").read_text(encoding="utf-8")
+k04_build = Path("keyboards/k04/build.rs").read_text(encoding="utf-8")
 rmk = Path("rmk/Cargo.toml").read_text(encoding="utf-8")
 entry = Path("rmk-macro/src/codegen/entry.rs").read_text(encoding="utf-8")
+constants = Path("rmk-types/build.rs").read_text(encoding="utf-8")
 ble = Path("rmk/src/ble/mod.rs").read_text(encoding="utf-8")
 split = Path("rmk/src/split/ble/central.rs").read_text(encoding="utf-8")
-central = Path("rmk/src/split/central.rs").read_text(encoding="utf-8")
 assert 'production_v30g = ["production_v22", "fixed_mouse_pacing_15ms", "rmk/host_first_split_wake"]' in k04
 assert 'fixed_mouse_pacing_15ms = ["mouse_vector_preserve", "rmk/fixed_mouse_pacing_15ms"]' in k04
 assert 'host_first_split_wake = []' in rmk
 assert 'production_v30g' not in rmk
 assert "adaptive_mouse_pacing" not in k04 + rmk
-assert entry.count("#use_2m_phy,") == 3
-assert "run_peripheral_manager_with_profile_and_phy::<" in entry
-legacy = central.split("pub async fn run_peripheral_manager_with_profile<", 1)[1].split(
-    "pub async fn run_peripheral_manager_with_profile_and_phy<", 1
-)[0]
-assert "use_2m_phy: bool" not in legacy
-assert "id, addr, stack, profile, true" in " ".join(legacy.split())
-phy_aware = central.split("pub async fn run_peripheral_manager_with_profile_and_phy<", 1)[1]
-assert "use_2m_phy: bool" in phy_aware
-assert "new_with_host_power_and_phy_config" in entry
-assert 'if split_phy_update_requested(use_2m_phy)' in split
+# Standalone halves pass host-link power management and per-link split
+# profiles to the BLE transport through its builders.
+assert "RMK_BLE_HOST_POWER_CONFIG_FN=crate::ble_host_power::ble_host_power_config" in k04_build
+assert "RMK_BLE_HOST_POWER_CONFIG_FN" in entry
+assert ".with_host_power_config(#path())" in entry
+assert ".with_split_link_profiles([#(#profiles),*])" in entry
+# The 2M PHY decision stays configurable through `[ble].use_2m_phy`, for the
+# host link and the split links alike.
+assert "pub const BLE_USE_2M_PHY: bool" in constants
+assert "crate::BLE_USE_2M_PHY" in ble
+assert "if crate::BLE_USE_2M_PHY {" in split
 assert '#[cfg(feature = "host_first_split_wake")]' in ble
-assert '#[cfg(feature = "host_first_split_wake")]' in split
+assert 'feature = "host_first_split_wake"' in split
 PY
 
 rg -Fq 'usb_config.device_release = keyboard_config.device_release;' rmk/src/usb/mod.rs \
@@ -666,8 +748,18 @@ assert len(static_profiles) + 3 == 14
 PY
 
 for file in "${vial_definitions[@]}"; do
+    # Phenom is a wired split without batteries.
+    [[ "$file" == keyboards/phenom/* ]] && continue
     jq -e '.entropy.batteryHalves == true' "$file" >/dev/null \
         || fail "$file: split devices must advertise entropy.batteryHalves"
+done
+
+# Phenom serves the K:04 Standalone module and LED settings, so entropy must get
+# the same tabs. It has no Bluetooth or battery to configure.
+k04_module_tabs="$(jq -cS '[.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")]' keyboards/k04/vial.json)"
+for file in keyboards/phenom/vial{,_mini,_micro}.json; do
+    [[ "$(jq -cS '.settings' "$file")" == "$k04_module_tabs" ]] \
+        || fail "$file: settings must be the K:04 Standalone module and LED tabs"
 done
 
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
@@ -919,9 +1011,8 @@ if [[ "$actual_velvet_modes" != "EH_SNP,EH_SCR,EH_TXT" ]]; then
 fi
 jq -e '
     .productId == "0x00BE"
-    and .layouts.labels == [["Universal Symbols geometry", "ANSI", "ISO"], "Right trackball instead of key"]
-    and ([.layouts.keymap[][] | select(type == "string")] | index("7,1\n\n\n1,0") != null)
-    and ([.settings[].fields[] | select(.qsid == 334) | .layoutOption] == [1])
+    and .layouts.labels == ["Right trackball instead of key"]
+    and ([.layouts.keymap[][] | select(type == "string")] | index("7,1\n\n\n0,0") != null)
     and ([.settings[].fields[].qsid] | sort == [
         121, 127, 128, 129, 131, 135, 138, 139, 141, 142, 143, 144, 145, 146, 148, 324, 328, 330, 334
     ])

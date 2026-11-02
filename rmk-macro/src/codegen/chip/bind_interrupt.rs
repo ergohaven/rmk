@@ -6,24 +6,49 @@ use std::collections::HashSet;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use rmk_config::resolved::Hardware;
-use rmk_config::resolved::hardware::{BoardConfig, InputDeviceConfig, UniBodyConfig};
-use syn::ItemMod;
+use rmk_config::resolved::hardware::{BoardConfig, DfuConfig, InputDeviceConfig, UniBodyConfig};
+use syn::{ItemFn, ItemMod};
 
 use crate::codegen::display::expand_display_interrupt;
 use crate::codegen::feature::{get_rmk_features, is_feature_enabled};
 use crate::codegen::input_device::iqs5xx::expand_iqs5xx_interrupts;
+use crate::codegen::override_helper::{Overwritten, find_overwritten};
+
+/// Does this function override the generated `bind_interrupts!` boilerplate?
+///
+/// Two markers are accepted:
+/// - `#[Override(bind_interrupt)]` / `#[Overwritten(bind_interrupt)]` (the form the stm32h7
+///   example documents), selected through the shared override matcher so inert attributes and
+///   `cfg` gating behave like every other override;
+/// - the legacy bare `#[bind_interrupt]` attribute (the original syntax), matched exactly as
+///   before for backward compatibility: it must be the function's only attribute.
+fn is_bind_interrupt_override(item_fn: &ItemFn) -> bool {
+    let current = matches!(
+        find_overwritten(item_fn),
+        Some(Ok(Overwritten::BindInterrupt))
+    );
+    let legacy = item_fn.attrs.len() == 1
+        && item_fn.attrs[0]
+            .meta
+            .path()
+            .get_ident()
+            .is_some_and(|i| i == "bind_interrupt");
+    current || legacy
+}
 
 /// Expand `bind_interrupt!` stuffs, and other code before `main` function
-pub(crate) fn expand_bind_interrupt(hardware: &Hardware, item_mod: &ItemMod) -> TokenStream2 {
-    // If there is a function with `#[Overwritten(bind_interrupt)]`, override it
+pub(crate) fn expand_bind_interrupt(
+    hardware: &Hardware,
+    item_mod: &ItemMod,
+    dfu: Option<&DfuConfig>,
+) -> TokenStream2 {
+    // If there is a function marked as the bind_interrupt override, use its body
     if let Some((_, items)) = &item_mod.content {
         items
             .iter()
             .find_map(|item| {
                 if let syn::Item::Fn(item_fn) = &item
-                    && item_fn.attrs.len() == 1
-                    && let Some(i) = item_fn.attrs[0].meta.path().get_ident()
-                    && i == "bind_interrupt"
+                    && is_bind_interrupt_override(item_fn)
                 {
                     let content = &item_fn.block.stmts;
                     return Some(quote! {
@@ -32,9 +57,9 @@ pub(crate) fn expand_bind_interrupt(hardware: &Hardware, item_mod: &ItemMod) -> 
                 }
                 None
             })
-            .unwrap_or(bind_interrupt_default(hardware, item_mod))
+            .unwrap_or(bind_interrupt_default(hardware, item_mod, dfu))
     } else {
-        bind_interrupt_default(hardware, item_mod)
+        bind_interrupt_default(hardware, item_mod, dfu)
     }
 }
 
@@ -53,7 +78,11 @@ pub(crate) fn find_extern_irqs(item_mod: &ItemMod) -> Vec<TokenStream2> {
 }
 
 /// Expand default `bind_interrupt!` for different chips and nrf-sdc config for nRF52
-pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) -> TokenStream2 {
+pub(crate) fn bind_interrupt_default(
+    hardware: &Hardware,
+    item_mod: &ItemMod,
+    dfu: Option<&DfuConfig>,
+) -> TokenStream2 {
     let extern_irqs_vec = find_extern_irqs(item_mod);
     let extern_irqs = if extern_irqs_vec.is_empty() {
         quote! {}
@@ -92,6 +121,24 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
             .unwrap_or(Vec::new()),
     };
     let iqs5xx_interrupt = expand_iqs5xx_interrupts(&chip.series, &iqs5xx_config);
+
+    // External DFU flash SPI interrupt for nRF52
+    let ext_flash_spi_interrupt = {
+        let ext_flash = dfu.and_then(|d| d.external_flash.as_ref());
+        if let Some(ext_flash) = ext_flash {
+            match chip.series {
+                rmk_config::resolved::hardware::ChipSeries::Nrf52 => {
+                    let instance = format_ident!("{}", ext_flash.spi.instance);
+                    quote! {
+                        #instance => ::embassy_nrf::spim::InterruptHandler<::embassy_nrf::peripherals::#instance>;
+                    }
+                }
+                _ => quote! {},
+            }
+        } else {
+            quote! {}
+        }
+    };
 
     match chip.series {
         rmk_config::resolved::hardware::ChipSeries::Stm32 => {
@@ -160,16 +207,17 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
             } else {
                 quote! {}
             };
-            let use_2m_phy = if ble_config.use_2m_phy.unwrap_or(true) {
-                quote! { .support_le_2m_phy() }
-            } else {
-                quote! {}
-            };
 
             // nrf-sdc interrupt config
             let nrf_sdc_config = match &board {
                 BoardConfig::Split(_) => {
-                    let num_peri = board.get_num_periphreal() as u8;
+                    let num_peri = board.get_num_peripheral() as u8;
+                    let support_subrating = if is_feature_enabled(&get_rmk_features(), "subrating")
+                    {
+                        quote! { .support_connection_subrating_central() }
+                    } else {
+                        quote! {}
+                    };
                     quote! {
                         ::nrf_sdc::Builder::new()?
                         .support_scan()
@@ -180,7 +228,8 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
                         .support_dle_central()
                         .support_phy_update_central()
                         .support_phy_update_peripheral()
-                        #use_2m_phy
+                        #support_subrating
+                        .support_le_2m_phy()
                         #tx_power
                         .central_count(#num_peri)?
                         .peripheral_count(1)?
@@ -194,7 +243,7 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
                     .support_peripheral()
                     .support_dle_peripheral()
                     .support_phy_update_peripheral()
-                    #use_2m_phy
+                    .support_le_2m_phy()
                     #tx_power
                     .peripheral_count(1)?
                     .buffer_cfg(L2CAP_MTU as u16, L2CAP_MTU as u16, L2CAP_TXQ, L2CAP_RXQ)?
@@ -245,6 +294,7 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
                     TIMER0 => ::nrf_sdc::mpsl::HighPrioInterruptHandler;
                     RTC0 => ::nrf_sdc::mpsl::HighPrioInterruptHandler;
                     #pmw33xx_spi_interrupts
+                    #ext_flash_spi_interrupt
                     #iqs5xx_interrupt
                     #display_interrupt
                     #extern_irqs
@@ -284,8 +334,32 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
             } else {
                 quote! {}
             };
+            // DFU external SPI flash DMA channels
+            let dfu_dma_channels = dfu
+                .and_then(|d| d.external_flash.as_ref())
+                .map(|ext| {
+                    let tx = format_ident!(
+                        "{}",
+                        ext.spi
+                            .tx_dma
+                            .as_ref()
+                            .expect("dfu.external_flash.spi.tx_dma is required for RP2040")
+                    );
+                    let rx = format_ident!(
+                        "{}",
+                        ext.spi
+                            .rx_dma
+                            .as_ref()
+                            .expect("dfu.external_flash.spi.rx_dma is required for RP2040")
+                    );
+                    quote! {
+                        , ::embassy_rp::dma::InterruptHandler<::embassy_rp::peripherals::#tx>
+                        , ::embassy_rp::dma::InterruptHandler<::embassy_rp::peripherals::#rx>
+                    }
+                })
+                .unwrap_or_default();
             let dma_irq_0 = quote! {
-                DMA_IRQ_0 => ::embassy_rp::dma::InterruptHandler<::embassy_rp::peripherals::DMA_CH0>, ::embassy_rp::dma::InterruptHandler<::embassy_rp::peripherals::DMA_CH1> #dma_ch2;
+                DMA_IRQ_0 => ::embassy_rp::dma::InterruptHandler<::embassy_rp::peripherals::DMA_CH0>, ::embassy_rp::dma::InterruptHandler<::embassy_rp::peripherals::DMA_CH1> #dma_ch2 #dfu_dma_channels;
             };
             // For Pico W, enabled PIO0_IRQ_0 interrupt
             let (pio0_irq_0, ble_task) = if communication.ble_enabled() {
@@ -311,6 +385,7 @@ pub(crate) fn bind_interrupt_default(hardware: &Hardware, item_mod: &ItemMod) ->
                     #pio0_irq_0
                     #iqs5xx_interrupt
                     #display_interrupt
+                    #extern_irqs
                 });
                 #ble_task
             }
@@ -375,5 +450,64 @@ fn get_pin_num_stm32(gpio_name: &str) -> Option<String> {
         None
     } else {
         Some(gpio_name[2..].to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_fn(src: &str) -> ItemFn {
+        syn::parse_str(src).expect("test fn should parse")
+    }
+
+    // Selection regression tests (#967 review): validation accepting a marker
+    // is meaningless if selection doesn't recognize the same marker.
+
+    #[test]
+    fn documented_override_form_is_selected() {
+        // The form the stm32h7 example documents. It used to pass validation
+        // but never get selected, silently dropping the custom binding.
+        assert!(is_bind_interrupt_override(&parse_fn(
+            "#[Override(bind_interrupt)]\nfn bind_interrupt() {}"
+        )));
+    }
+
+    #[test]
+    fn overwritten_spelling_is_selected() {
+        assert!(is_bind_interrupt_override(&parse_fn(
+            "#[Overwritten(bind_interrupt)]\nfn bind_interrupt() {}"
+        )));
+    }
+
+    #[test]
+    fn legacy_bare_marker_is_still_selected() {
+        // The original syntax; kept working for existing user code.
+        assert!(is_bind_interrupt_override(&parse_fn(
+            "#[bind_interrupt]\nfn bind_interrupt() {}"
+        )));
+    }
+
+    #[test]
+    fn doc_comment_does_not_disable_documented_form() {
+        assert!(is_bind_interrupt_override(&parse_fn(
+            "/// custom irq binding\n#[Override(bind_interrupt)]\nfn bind_interrupt() {}"
+        )));
+    }
+
+    #[test]
+    fn cfg_gated_override_is_not_selected() {
+        // Same `cfg` semantics as every other override: the macro cannot
+        // evaluate `cfg`, so the function is left unselected.
+        assert!(!is_bind_interrupt_override(&parse_fn(
+            "#[cfg(feature = \"x\")]\n#[Override(bind_interrupt)]\nfn bind_interrupt() {}"
+        )));
+    }
+
+    #[test]
+    fn other_override_marker_is_not_selected() {
+        assert!(!is_bind_interrupt_override(&parse_fn(
+            "#[Override(entry)]\nfn run() {}"
+        )));
     }
 }

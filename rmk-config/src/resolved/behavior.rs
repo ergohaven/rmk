@@ -64,6 +64,7 @@ pub enum MacroOperation {
     Up { keycode: String },
     Delay { duration_ms: u64 },
     Text { text: String },
+    PauseForRelease,
 }
 
 pub struct Forks {
@@ -72,12 +73,13 @@ pub struct Forks {
 
 pub struct Fork {
     pub trigger: String,
-    pub negative_output: String,
+    pub negative_output: Option<String>,
     pub positive_output: String,
     pub match_any: Option<String>,
     pub match_none: Option<String>,
     pub kept_modifiers: Option<String>,
     pub bindable: bool,
+    pub layers: u32,
 }
 
 pub struct Morse {
@@ -97,6 +99,7 @@ pub struct MorseProfile {
     pub normal_mode: Option<bool>,
     pub hold_timeout_ms: Option<u64>,
     pub gap_timeout_ms: Option<u64>,
+    pub quick_tap_timeout_ms: Option<u64>,
 }
 
 pub struct MorseKey {
@@ -156,15 +159,21 @@ impl crate::KeyboardTomlConfig {
         let forks = toml_behavior.fork.map(|f| Forks {
             forks: f
                 .forks
-                .into_iter()
-                .map(|fork| Fork {
-                    trigger: fork.trigger,
-                    negative_output: fork.negative_output,
-                    positive_output: fork.positive_output,
-                    match_any: fork.match_any,
-                    match_none: fork.match_none,
-                    kept_modifiers: fork.kept_modifiers,
-                    bindable: fork.bindable.unwrap_or(false),
+                .iter()
+                .flat_map(|fork| {
+                    let layers = fork.layers.as_ref().map_or(u32::MAX, |layers| {
+                        layers.iter().fold(0, |mask, &layer| mask | 1 << layer)
+                    });
+                    fork.trigger.keys().iter().map(move |trigger| Fork {
+                        trigger: trigger.clone(),
+                        negative_output: fork.negative_output.clone(),
+                        positive_output: fork.positive_output.clone().unwrap_or_else(|| trigger.clone()),
+                        match_any: fork.match_any.clone(),
+                        match_none: fork.match_none.clone(),
+                        kept_modifiers: fork.kept_modifiers.clone(),
+                        bindable: fork.bindable.unwrap_or(false),
+                        layers,
+                    })
                 })
                 .collect(),
         });
@@ -180,14 +189,17 @@ impl crate::KeyboardTomlConfig {
                 })
                 .unwrap_or_default();
 
+            // Seeded rather than left `None` so the switch is stored and read
+            // back over Rynk like the profile's other fields.
             let default_profile = MorseProfile {
-                enable_flow_tap: None,
+                enable_flow_tap: Some(m.enable_flow_tap.unwrap_or(false)),
                 unilateral_tap: m.unilateral_tap,
                 permissive_hold: m.permissive_hold,
                 hold_on_other_press: m.hold_on_other_press,
                 normal_mode: m.normal_mode,
                 hold_timeout_ms: Some(m.hold_timeout.as_ref().map(|t| t.0).unwrap_or(250)),
                 gap_timeout_ms: Some(m.gap_timeout.as_ref().map(|t| t.0).unwrap_or(250)),
+                quick_tap_timeout_ms: m.quick_tap_timeout.as_ref().map(|t| t.0),
             };
 
             let morses = m
@@ -222,6 +234,18 @@ impl crate::KeyboardTomlConfig {
                 morses,
             }
         });
+
+        // Named profiles are interned into the fixed-capacity morse profile
+        // table; overflowing it would silently drop profiles at runtime.
+        if let Some(m) = &morse
+            && m.profiles.len() > self.rmk.morse_profile_max_num
+        {
+            return Err(format!(
+                "behavior.morse.profiles defines {} profiles, but `[rmk] morse_profile_max_num` is {}. Raise it in keyboard.toml",
+                m.profiles.len(),
+                self.rmk.morse_profile_max_num
+            ));
+        }
 
         let auto_mouse_layer = toml_behavior
             .auto_mouse_layer
@@ -260,6 +284,7 @@ fn resolve_macro_operation(op: crate::MacroOperation) -> MacroOperation {
             duration_ms: duration.0,
         },
         crate::MacroOperation::Text { text } => MacroOperation::Text { text },
+        crate::MacroOperation::PauseForRelease => MacroOperation::PauseForRelease,
     }
 }
 
@@ -272,6 +297,7 @@ fn resolve_morse_profile(p: &crate::MorseProfile) -> MorseProfile {
         normal_mode: p.normal_mode,
         hold_timeout_ms: p.hold_timeout.as_ref().map(|t| t.0),
         gap_timeout_ms: p.gap_timeout.as_ref().map(|t| t.0),
+        quick_tap_timeout_ms: p.quick_tap_timeout.as_ref().map(|t| t.0),
     }
 }
 
@@ -280,7 +306,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::KeyboardTomlConfig;
+    use crate::{BehaviorConfig, KeyboardTomlConfig};
 
     #[test]
     fn morse_profile_enable_flow_tap_resolves_as_override() {
@@ -288,12 +314,13 @@ mod tests {
 [layout]
 rows = 1
 cols = 1
+map = "(0,0)"
+
+[keymap]
 layers = 1
-keymap = [
-  [
-    ["A"],
-  ],
-]
+
+[[keymap.layer]]
+keys = "A"
 
 [behavior.morse]
 enable_flow_tap = true
@@ -318,9 +345,140 @@ hold_timeout = "200ms"
         let behavior = config.behavior().unwrap();
         let morse = behavior.morse.unwrap();
         assert!(morse.enable_flow_tap);
-        assert_eq!(morse.default_profile.enable_flow_tap, None);
+        assert_eq!(morse.default_profile.enable_flow_tap, Some(true));
         assert_eq!(morse.profiles["flow_on"].enable_flow_tap, Some(true));
         assert_eq!(morse.profiles["flow_off"].enable_flow_tap, Some(false));
         assert_eq!(morse.profiles["inherit"].enable_flow_tap, None);
+    }
+
+    #[test]
+    fn morse_profiles_overflowing_morse_profile_max_num_is_an_error() {
+        let toml = r#"
+[rmk]
+morse_profile_max_num = 1
+
+[layout]
+rows = 1
+cols = 1
+map = "(0,0)"
+
+[keymap]
+layers = 1
+
+[[keymap.layer]]
+keys = "A"
+
+[behavior.morse.profiles.p1]
+hold_timeout = "200ms"
+
+[behavior.morse.profiles.p2]
+hold_timeout = "300ms"
+"#;
+
+        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "rmk-config-profile-overflow-{}-{}.toml",
+            std::process::id(),
+            unique
+        ));
+
+        fs::write(&path, toml).unwrap();
+        let config = KeyboardTomlConfig::new_from_toml_path_with_event_defaults(&path);
+        let _ = fs::remove_file(&path);
+
+        let err = match config.behavior() {
+            Ok(_) => panic!("expected the profile-overflow error"),
+            Err(e) => e,
+        };
+        assert!(err.contains("morse_profile_max_num"), "unexpected error: {err}");
+    }
+
+    /// A two-layer keyboard with the given `forks = [...]` list.
+    fn config_with_forks(forks: &str) -> KeyboardTomlConfig {
+        let mut config: KeyboardTomlConfig = toml::from_str(
+            r#"
+[layout]
+rows = 1
+cols = 1
+map = "(0,0)"
+
+[keymap]
+layers = 2
+
+[[keymap.layer]]
+keys = "A"
+"#,
+        )
+        .unwrap();
+        config.behavior = Some(BehaviorConfig {
+            fork: Some(toml::from_str(forks).unwrap()),
+            ..Default::default()
+        });
+        config
+    }
+
+    #[test]
+    fn fork_layers_resolve_to_a_mask() {
+        let config = config_with_forks(
+            r#"forks = [
+              { trigger = "A", positive_output = "B", negative_output = "A", layers = [1], match_any = "LShift" },
+              { trigger = "A", positive_output = "B", negative_output = "A", match_any = "LShift" },
+            ]"#,
+        );
+
+        let forks = config.behavior().unwrap().forks.unwrap().forks;
+        assert_eq!(forks[0].layers, 0b10);
+        assert_eq!(forks[1].layers, u32::MAX);
+    }
+
+    #[test]
+    fn invalid_fork_layers_are_errors() {
+        for (forks, message) in [
+            (
+                r#"forks = [{ trigger = "A", positive_output = "B", negative_output = "A", layers = [], match_any = "LShift" }]"#,
+                "layers list",
+            ),
+            (
+                r#"forks = [{ trigger = "A", positive_output = "B", negative_output = "A", layers = [2], match_any = "LShift" }]"#,
+                "must be below",
+            ),
+        ] {
+            let err = config_with_forks(forks).behavior().err().unwrap();
+            assert!(err.contains(message), "unexpected error: {err}");
+        }
+    }
+
+    #[test]
+    fn fork_trigger_list_expands() {
+        let config = config_with_forks(
+            r#"forks = [
+              { trigger = ["A", "B"], match_any = "LShift" },
+              { trigger = "C", positive_output = "D", negative_output = "E", match_any = "LShift" },
+            ]"#,
+        );
+
+        let forks = config.behavior().unwrap().forks.unwrap().forks;
+        assert_eq!(forks.len(), 3);
+        for (fork, key) in forks.iter().zip(["A", "B"]) {
+            assert_eq!(fork.trigger, key);
+            assert_eq!(fork.positive_output, key);
+            assert_eq!(fork.negative_output, None);
+        }
+        assert_eq!(forks[2].positive_output, "D");
+        assert_eq!(forks[2].negative_output.as_deref(), Some("E"));
+    }
+
+    #[test]
+    fn invalid_fork_trigger_lists_are_errors() {
+        let err = config_with_forks(r#"forks = [{ trigger = [], match_any = "LShift" }]"#)
+            .behavior()
+            .err()
+            .unwrap();
+        assert!(err.contains("trigger list"), "unexpected error: {err}");
+
+        let mut config = config_with_forks(r#"forks = [{ trigger = ["A", "B"], match_any = "LShift" }]"#);
+        config.rmk.fork_max_num = 1;
+        let err = config.behavior().err().unwrap();
+        assert!(err.contains("fork_max_num"), "unexpected error: {err}");
     }
 }

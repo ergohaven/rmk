@@ -1,37 +1,30 @@
 use embedded_io_async::{Read, Write};
 
 use super::driver::SplitDriverError;
-use crate::split::driver::{PeripheralManager, SplitReader, SplitWriter};
+use crate::split::driver::{PeripheralManager, SplitReader, SplitWriter, set_peripheral_connected};
 use crate::split::{SPLIT_MESSAGE_MAX_SIZE, SplitMessage};
 
-/// Receive split message from peripheral via serial and process it
+/// Run a split peripheral manager over an asynchronous serial port.
 ///
-/// Generic parameters:
-/// - `const ROW`: row number of the peripheral's matrix
-/// - `const COL`: column number of the peripheral's matrix
-/// - `const ROW_OFFSET`: row offset of the peripheral's matrix in the whole matrix
-/// - `const COL_OFFSET`: column offset of the peripheral's matrix in the whole matrix
-/// - `S`: a serial port that implements `Read` and `Write` trait in embedded-io-async
-pub(crate) async fn run_serial_peripheral_manager<
-    const ROW: usize,
-    const COL: usize,
-    const ROW_OFFSET: usize,
-    const COL_OFFSET: usize,
-    S: Read + Write,
->(
+/// `matrix_config` describes the peripheral's matrix size and its position in the central's keymap.
+pub(crate) async fn run_serial_peripheral_manager<S: Read + Write>(
     id: usize,
     receiver: S,
-    #[cfg(feature = "dfu_split")] policy: crate::split::driver::UpdatePolicy,
+    matrix_config: crate::split::PeripheralMatrixConfig,
+    #[cfg(feature = "dfu_split")] policy: crate::split::dfu::UpdatePolicy,
 ) {
     let split_serial_driver: SerialSplitDriver<S> = SerialSplitDriver::new(receiver);
-    let peripheral_manager = PeripheralManager::<ROW, COL, ROW_OFFSET, COL_OFFSET, _>::new(
+    let peripheral_manager = PeripheralManager::new(
         split_serial_driver,
         id,
+        matrix_config,
         #[cfg(feature = "dfu_split")]
         policy,
     );
     info!("Running peripheral manager {}", id);
 
+    // A wired peripheral is connected for as long as its manager runs.
+    set_peripheral_connected(id, true);
     peripheral_manager.run().await;
 }
 
@@ -191,7 +184,7 @@ mod tests {
         assert_eq!(drv.serial.read_calls, 2);
     }
 
-    /// Regression test for https://github.com/HaoboGu/rmk/issues/801: when
+    /// Regression test for https://github.com/rmk-rs/rmk/issues/801: when
     /// two complete messages arrive in a single underlying read, the driver
     /// must deliver both without issuing a second underlying read.
     #[test]

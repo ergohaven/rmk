@@ -6,6 +6,9 @@
 
 mod layout;
 
+#[cfg(all(feature = "universal_symbols_iso_bit0", feature = "universal_symbols_iso_bit1"))]
+compile_error!("select exactly one Universal Symbols geometry mask (bit0 or bit1)");
+
 use core::sync::atomic::{AtomicBool, Ordering};
 
 // A boot hand-off, not a second persisted platform setting. Each Keyboard owns
@@ -30,7 +33,7 @@ pub(crate) fn set_layout_options(options: u32) {
         4
     };
     ISO_GEOMETRY.store(
-        cfg!(feature = "universal_symbols_iso") && options & iso_mask != 0,
+        cfg!(all(feature = "vial", feature = "universal_symbols_iso")) && options & iso_mask != 0,
         Ordering::Relaxed,
     );
 }
@@ -198,7 +201,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             layout: HostLayout::English,
-            platform: if BOOT_MAC.load(Ordering::Relaxed) {
+            platform: if cfg!(feature = "vial") && BOOT_MAC.load(Ordering::Relaxed) {
                 Platform::Mac
             } else {
                 Platform::Pc
@@ -230,6 +233,7 @@ impl State {
                 };
                 Command::None
             }
+            #[cfg(feature = "vial")]
             USER_NUMERO => Command::Type(layout::resolve_numero(self.layout)),
             id => {
                 if let Some(letter) = RussianLetter::from_user_id(id) {
@@ -284,6 +288,61 @@ pub(crate) mod tests {
     use rmk_types::modifier::ModifierCombination;
 
     use super::*;
+
+    #[cfg(feature = "vial")]
+    #[test]
+    fn universal_numero_sparse_id_switches_symmetrically_without_state_change() {
+        assert_eq!(USER_NUMERO, 0xB4);
+        for platform in [Platform::Pc, Platform::Mac] {
+            for host in [HostLayout::English, HostLayout::Russian] {
+                let mut state = State {
+                    layout: host,
+                    platform,
+                    last_host_layout: None,
+                };
+                let before = state;
+                let Some(Command::Type(resolved)) = state.handle(USER_NUMERO, None) else {
+                    panic!()
+                };
+                assert_eq!(resolved.stroke.keycode, HidKeyCode::Kc3);
+                assert_eq!(resolved.stroke.modifiers, ModifierCombination::LSHIFT);
+                assert_eq!(resolved.temporary_layout_switch, host == HostLayout::English);
+                assert_eq!(state, before);
+                for id in USER_RUSSIAN_LETTER_START..USER_RUSSIAN_LETTER_END {
+                    assert!(RussianLetter::from_user_id(id).is_some());
+                }
+                assert!(state.handle(0xB5, None).is_none());
+            }
+        }
+    }
+
+    #[cfg(not(feature = "vial"))]
+    #[test]
+    fn universal_non_vial_keeps_target_platform_numero_and_star_behavior() {
+        restore_platform(true);
+        set_layout_options(7);
+        let mut state = State::default();
+        assert_eq!(state.platform(), Platform::Pc);
+        assert!(state.handle(USER_NUMERO, None).is_none());
+        assert!(!ISO_GEOMETRY.load(Ordering::Relaxed));
+        let result = layout::resolve(HostLayout::Russian, Platform::Mac, Symbol::Asterisk);
+        assert_eq!(result.stroke.keycode, HidKeyCode::Kc8);
+        assert!(!result.temporary_layout_switch);
+    }
+
+    #[cfg(not(feature = "universal_symbols_iso"))]
+    #[test]
+    fn universal_geometry_flag_off_ignores_layout_option_bits() {
+        set_layout_options(u32::MAX);
+        for symbol in [Symbol::Grave, Symbol::Tilde] {
+            assert_eq!(
+                layout::resolve(HostLayout::English, Platform::Mac, symbol)
+                    .stroke
+                    .keycode,
+                HidKeyCode::Grave
+            );
+        }
+    }
 
     #[test]
     fn stable_symbol_id_range_covers_all_punctuation() {
@@ -356,6 +415,7 @@ pub(crate) mod tests {
         assert!(!dot.temporary_layout_switch);
     }
 
+    #[cfg(feature = "vial")]
     #[test]
     fn mac_russian_asterisk_uses_english_fallback_but_pc_stays_direct() {
         for platform in [Platform::Pc, Platform::Mac] {
@@ -426,6 +486,7 @@ pub(crate) mod tests {
         }
     }
 
+    #[cfg(feature = "vial")]
     #[test]
     fn restored_platform_keeps_exact_two_way_toggle_semantics() {
         restore_platform(true);

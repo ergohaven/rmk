@@ -108,8 +108,10 @@ When used in configuration files, all keycodes are case-insensitive.
 | `LGui`   | `l_gui`, `leftgui`, `left_gui`, `lcmd`, `lwin`   | Left GUI      |
 | `RCtrl`  | `r_ctrl`, `rightctrl`, `right_ctrl`, `rctl`      | Right Control |
 | `RShift` | `r_shift`, `rightshift`, `right_shift`, `rsft`   | Right Shift   |
-| `RAlt`   | `r_alt`, `rightalt`, `right_alt`, `ropt`         | Right Alt     |
+| `RAlt`   | `r_alt`, `rightalt`, `right_alt`, `ropt`, `algr` | Right Alt     |
 | `RGui`   | `r_gui`, `rightgui`, `right_gui`, `rcmd`, `rwin` | Right GUI     |
+
+For simple keycodes with shift active you can use `SHIFTED(key)` in your [layout](../layout#layout), or more generally expressions like `WM(key, LShift | RGui)` with modifiers.
 
 ## Function keys
 
@@ -142,15 +144,15 @@ When used in configuration files, all keycodes are case-insensitive.
 
 ## Lock keys
 
-| Keycode             | Aliases                       | Usage                                   |
-| ------------------- | ----------------------------- | --------------------------------------- |
-| `CapsLock`          | `caps_lock`, `caps`           | Caps Lock                               |
-| `CapsWordToggle`    | `caps_word`, `cword`          | Activate Caps Lock for next word only   |
-| `ScrollLock`        | `scroll_lock`, `scrl`, `brmd` | Scroll Lock or Brightness Down on macOS |
-| `NumLock`           | `num_lock`, `num`             | Num Lock                                |
-| `LockingCapsLock`   | `locking_caps_lock`, `lcap`   | Locking Caps Lock                       |
-| `LockingNumLock`    | `locking_num_lock`, `lnum`    | Locking Num Lock                        |
-| `LockingScrollLock` | `locking_scroll_lock`, `lscr` | Locking Scroll Lock                     |
+| Keycode             | Aliases                       | Usage                                        |
+| ------------------- | ----------------------------- | -------------------------------------------- |
+| `CapsLock`          | `caps_lock`, `caps`           | Caps Lock                                    |
+| `CapsWordToggle`    |                               | Toggle [Caps Word](./special_keys#caps-word) |
+| `ScrollLock`        | `scroll_lock`, `scrl`, `brmd` | Scroll Lock or Brightness Down on macOS      |
+| `NumLock`           | `num_lock`, `num`             | Num Lock                                     |
+| `LockingCapsLock`   | `locking_caps_lock`, `lcap`   | Locking Caps Lock                            |
+| `LockingNumLock`    | `locking_num_lock`, `lnum`    | Locking Num Lock                             |
+| `LockingScrollLock` | `locking_scroll_lock`, `lscr` | Locking Scroll Lock                          |
 
 ## International keys
 
@@ -158,7 +160,7 @@ When used in configuration files, all keycodes are case-insensitive.
 | ---------------- | ------------------------- | ---------------------- |
 | `International1` | `international_1`, `int1` | JIS `\` and `_`        |
 | `International2` | `international_2`, `int2` | JIS Katana or Hiragana |
-| `International3` | `international_3`, `int3` | JIS `¥` and `          |
+| `International3` | `international_3`, `int3` | JIS `¥` and `\|`       |
 | `International4` | `international_4`, `int4` | JIS Henkan             |
 | `International5` | `international_5`, `int5` | JIS Muhenkan           |
 | `International6` | `international_6`, `int6` | JIS Numpad `,`         |
@@ -207,43 +209,59 @@ When used in configuration files, all keycodes are case-insensitive.
 | `MissionControl`   | `mission_control`, `mctl`    | macOS Mission Control                                 |
 | `Launchpad`        | `lpad`                       | macOS Launchpad                                       |
 
+## System & keyboard-page keys
+
+| Keycode        | Aliases                | Usage                                    |
+| -------------- | ---------------------- | ---------------------------------------- |
+| `SystemPower`  | `system_power`, `pwr`  | System Power Down                        |
+| `SystemSleep`  | `system_sleep`, `slep` | System Sleep                             |
+| `SystemWake`   | `system_wake`, `wake`  | System Wake                              |
+| `KbPower`      | `kb_power`             | Keyboard Power (HID keyboard page)       |
+| `KbMute`       | `kb_mute`              | Keyboard Mute (HID keyboard page)        |
+| `KbVolumeUp`   | `kb_volume_up`         | Keyboard Volume Up (HID keyboard page)   |
+| `KbVolumeDown` | `kb_volume_down`       | Keyboard Volume Down (HID keyboard page) |
+
 ## Navigation & editing keys
 
-| Keycode       | Aliases                       | Usage                                 |
-| ------------- | ----------------------------- | ------------------------------------- |
-| `PrintScreen` | `print_screen`, `pscr`        | Print Screen                          |
-| `ScrollLock`  | `scroll_lock`, `scrl`, `brmd` | Scroll Lock / macOS brightness toggle |
-| `Pause`       | `paus`, `brk`, `brmu`         | Pause / Break                         |
-| `Insert`      | `ins`                         | Insert                                |
-| `Home`        | —                             | Home                                  |
-| `PageUp`      | `page_up`, `pgup`             | Page Up                               |
-| `Delete`      | `del`                         | Delete                                |
-| `End`         | —                             | End                                   |
-| `PageDown`    | `page_down`, `pgdn`           | Page Down                             |
-| `Right`       | `rght`                        | Right arrow                           |
-| `Left`        | —                             | Left arrow                            |
-| `Down`        | —                             | Down arrow                            |
-| `Up`          | —                             | Up arrow                              |
-| `Execute`     | `exec`                        | Execute                               |
-| `Help`        | —                             | Help                                  |
-| `Menu`        | —                             | Application/Menu key                  |
-| `Select`      | `slct`                        | Select                                |
-| `Stop`        | —                             | Stop                                  |
-| `Again`       | `agin`                        | Again / Redo                          |
-| `Undo`        | —                             | Undo                                  |
-| `Cut`         | —                             | Cut                                   |
-| `Copy`        | —                             | Copy                                  |
-| `Paste`       | `pste`                        | Paste                                 |
-| `Find`        | —                             | Find                                  |
-| `Clear`       | `clr`                         | Clear                                 |
-| `Prior`       | `prir`                        | Prior / Previous                      |
-| `Return`      | `retn`                        | Return (alias of Enter)               |
-| `Separator`   | `sepr`                        | Separator (numeric/document use)      |
-| `Out`         | —                             | Out                                   |
-| `Oper`        | —                             | Oper                                  |
-| `ClearAgain`  | `clear_again`, `clag`         | Clear Again                           |
-| `Crsel`       | `crsl`                        | Cursor Select                         |
-| `Exsel`       | `exsl`                        | Extend Selection                      |
+| Keycode          | Aliases                       | Usage                                 |
+| ---------------- | ----------------------------- | ------------------------------------- |
+| `PrintScreen`    | `print_screen`, `pscr`        | Print Screen                          |
+| `ScrollLock`     | `scroll_lock`, `scrl`, `brmd` | Scroll Lock / macOS brightness toggle |
+| `Pause`          | `paus`, `brk`, `brmu`         | Pause / Break                         |
+| `Insert`         | `ins`                         | Insert                                |
+| `Home`           | —                             | Home                                  |
+| `PageUp`         | `page_up`, `pgup`             | Page Up                               |
+| `Delete`         | `del`                         | Delete                                |
+| `End`            | —                             | End                                   |
+| `PageDown`       | `page_down`, `pgdn`           | Page Down                             |
+| `Right`          | `rght`                        | Right arrow                           |
+| `Left`           | —                             | Left arrow                            |
+| `Down`           | —                             | Down arrow                            |
+| `Up`             | —                             | Up arrow                              |
+| `Execute`        | `exec`                        | Execute                               |
+| `Help`           | —                             | Help                                  |
+| `Menu`           | —                             | Menu                                  |
+| `Application`    | `app`                         | Application / context-menu key        |
+| `Select`         | `slct`                        | Select                                |
+| `Stop`           | —                             | Stop                                  |
+| `Again`          | `agin`                        | Again / Redo                          |
+| `Undo`           | —                             | Undo                                  |
+| `Cut`            | —                             | Cut                                   |
+| `Copy`           | —                             | Copy                                  |
+| `Paste`          | `pste`                        | Paste                                 |
+| `Find`           | —                             | Find                                  |
+| `Clear`          | `clr`                         | Clear                                 |
+| `Prior`          | `prir`                        | Prior / Previous                      |
+| `Return`         | `retn`                        | Return (alias of Enter)               |
+| `Separator`      | `sepr`                        | Separator (numeric/document use)      |
+| `Out`            | —                             | Out                                   |
+| `Oper`           | —                             | Oper                                  |
+| `ClearAgain`     | `clear_again`, `clag`         | Clear Again                           |
+| `Crsel`          | `crsl`                        | Cursor Select                         |
+| `Exsel`          | `exsl`                        | Extend Selection                      |
+| `AlternateErase` | `alternate_erase`, `eras`     | Alternate Erase                       |
+| `SystemRequest`  | `system_request`, `syrq`      | SysReq/Attention                      |
+| `Cancel`         | `cncl`                        | Cancel                                |
 
 ## Mouse keys
 
@@ -269,9 +287,42 @@ When used in configuration files, all keycodes are case-insensitive.
 | `MouseAccel1`     | `mouse_accel_1`, `mouseacceleration1`, `mouse_acceleration_1`, `ms_acl1` | Mouse acceleration level 1 |
 | `MouseAccel2`     | `mouse_accel_2`, `mouseacceleration2`, `mouse_acceleration_2`, `ms_acl2` | Mouse acceleration level 2 |
 
+## Keyboard control keys
+
+| Keycode          | Aliases | Usage                                                                 |
+| ---------------- | ------- | --------------------------------------------------------------------- |
+| `Bootloader`     |         | Jump to the bootloader on release. Requires a bootloader feature: `adafruit_bl`, `rp2040`, or `zsa_voyager_bl` |
+| `Reboot`         |         | Reboot the keyboard on release                                        |
+| `ClearEeprom`    |         | Reset the stored settings on release (requires the `storage` feature) |
+| `ComboOn`        |         | Enable combos                                                         |
+| `ComboOff`       |         | Disable combos                                                        |
+| `ComboToggle`    |         | Toggle combos                                                         |
+| `CapsWordToggle` |         | Toggle [Caps Word](./special_keys#caps-word)                          |
+
+## Not yet implemented keys
+
+The following key names are accepted in `keyboard.toml` but not implemented yet — pressing them does nothing:
+
+- Backlight keys: `BacklightOn`, `BacklightOff`, `BacklightToggle`, `BacklightDown`, `BacklightUp`, `BacklightStep`, `BacklightToggleBreathing`
+- RGB keys: `RgbTog`, `RgbHui`, `RgbHud`, `RgbSai`, `RgbSad`, `RgbVai`, `RgbVad`, `RgbSpi`, `RgbSpd`, and the `RgbMode*` effect names
+
+## User keys
+
+| Keycode          | Aliases   | Usage                                                                                                                                                                                                                |
+| ---------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `User0`–`User31` | `User(n)` | User-defined key `n`. On BLE keyboards, `User0` onwards switch and manage BLE profiles, see [Wireless](../../features/wireless#multiple-profile-support). Custom processors can react to them through `ActionEvent`. |
+
+## Macro keys
+
+| Keycode             | Aliases    | Usage                                                                               |
+| ------------------- | ---------- | ----------------------------------------------------------------------------------- |
+| `Macro0`–`Macro255` | `Macro(n)` | Trigger [keyboard macro](./keyboard_macros) `n`, counted from 0 in definition order |
+
 ## Special keys
 
-| Keycode       | Aliases                                                | Usage                                   |
-| ------------- | ------------------------------------------------------ | --------------------------------------- |
-| `No`          |                                                        | Ignore this key                         |
-| `Transparent` | `TRNS`, `_` (you can repeat as many times as you like) | Use the next lowest non-transparent key |
+| Keycode       | Aliases                                                              | Usage                                                                       |
+| ------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `No`          |                                                                      | Ignore this key                                                             |
+| `TRNS`        | `_`, `__`, ... (you can repeat underscore as many times as you like) | Use the next lowest non-transparent key                                     |
+| `GraveEscape` |                                                                      | `Escape`, or `Grave` while any modifier is held                             |
+| `Repeat`      |                                                                      | Repeat the last key, see [Repeat/Again key](./special_keys#repeatagain-key) |

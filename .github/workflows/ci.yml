@@ -4,7 +4,6 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    branches: ["main"]
   workflow_dispatch:
 
 concurrency:
@@ -109,6 +108,53 @@ jobs:
         run: cargo install --locked cargo-expand
       - run: .github/ci/test.sh
 
+  # Host tooling lives in its own workspace, so it gets its own job.
+  host:
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-unknown-unknown
+      - name: Install host system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config
+      # host.sh runs wasm-pack to verify JS/.d.ts package generation.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-host
+          cache-directories: |
+            target/ci
+      - run: .github/ci/host.sh
+
+  qemu-rynk:
+    needs: [plan]
+    if: needs.plan.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: riscv32imac-unknown-none-elf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-qemu-rynk
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-misc libdbus-1-dev pkg-config
+          qemu-system-riscv32 --version
+      - name: Run QEMU Rynk behavior verifier
+        working-directory: examples/use_rust/qemu-riscv-rynk
+        run: python3 run.py
+
   # Discover buildable examples for the matrix
   discover:
     needs: [plan]
@@ -147,6 +193,16 @@ jobs:
         run: |
           rustup target add ${{ matrix.target }}
           cargo install flip-link 2>/dev/null || true
+      # RMK builds trouble's P-256 assembly on nRF, and cc-rs compiles it with
+      # the ARM cross compiler — it has no clang fallback for -none-eabi.
+      - name: Install ARM build dependencies
+        if: contains(matrix.dir, 'nrf')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi clang libclang-dev llvm-dev
+          libclang_dir="$(/usr/bin/llvm-config --libdir)"
+          test -e "$libclang_dir/libclang.so"
+          printf 'CLANG_PATH=/usr/bin/clang\nLIBCLANG_PATH=%s\n' "$libclang_dir" >> "$GITHUB_ENV"
       - name: Build
         working-directory: ${{ matrix.dir }}
         run: |
@@ -231,12 +287,13 @@ jobs:
 
             # cargo size for HEAD — extract text/data/bss/total
             # RUSTFLAGS must match the Build step so cargo reuses the existing binary.
-            RUSTFLAGS="$head_remap" cargo size --release $bin_flag 2>/dev/null > "$outdir/size-head${bin_suffix}.txt"
+            # cargo replays cached build warnings on stdout; keep only the size table.
+            RUSTFLAGS="$head_remap" cargo size --release $bin_flag 2>/dev/null | awk '$1 ~ /^(text|[0-9]+)$/' > "$outdir/size-head${bin_suffix}.txt"
             read -r h_text h_data h_bss head_size < <(awk 'NR==2 {print $1, $2, $3, $4}' "$outdir/size-head${bin_suffix}.txt")
 
             # cargo size + bloaty for BASE
-            if [[ "$base_available" == "true" ]]; then
-              (cd "$base_dir" && RUSTFLAGS="$base_remap" cargo size --release $bin_flag 2>/dev/null) > "$outdir/size-base${bin_suffix}.txt"
+            if [[ -d "$base_dir" ]]; then
+              (cd "$base_dir" && RUSTFLAGS="$base_remap" cargo size --release $bin_flag 2>/dev/null) | awk '$1 ~ /^(text|[0-9]+)$/' > "$outdir/size-base${bin_suffix}.txt"
               read -r b_text b_data b_bss base_size < <(awk 'NR==2 {print $1, $2, $3, $4}' "$outdir/size-base${bin_suffix}.txt")
 
               # Section diffs
@@ -334,7 +391,7 @@ jobs:
   complete:
     name: Complete test coverage
     if: ${{ always() }}
-    needs: [plan, format, fetch-check, check, test, discover, build, build-esp, bloat-report]
+    needs: [plan, format, fetch-check, check, test, host, qemu-rynk, discover, build, build-esp, bloat-report]
     runs-on: ubuntu-latest
     permissions:
       contents: read

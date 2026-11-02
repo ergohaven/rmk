@@ -1,20 +1,14 @@
 # Introduction
 
-RMK is a high-performance and feature-rich keyboard firmware framework, designed for flexibility and
-ease of customization. RMK leverages the power of Rust and it's great async ecosystem, provides
-comprehensive and modern functionality across a wide range of microcontrollers.
+RMK is a high-performance and feature-rich keyboard firmware framework, designed for flexibility and ease of customization. RMK leverages the power of Rust and its great async [Embassy](https://embassy.dev/) ecosystem, providing comprehensive and modern functionality across a wide range of microcontrollers.
 
 ## Core Features
 
-- **Broad Microcontroller Support**: ESP32, nRF52, STM32, RP2040/2350, CYW43(Raspberry Pi Pico W),
-  etc.
-- **Wired and Wireless Connectivity**: Offers both wired (USB) and wireless (BLE) connections, with
-  optimized low-power performance and multi-profile support.
-- **Simple Configuration**: Configure your keyboard easily through a single [TOML](https://toml.io/)
-  file.
-- **Advanced Feature Set**: Packed with modern features, including on-the-fly keymap customization,
-  advanced layer management, powerful macros and multi-role key support (e.g., Tap-Hold, TapDance,
-  Morse Key)
+- **Broad Microcontroller Support**: ESP32, nRF52, nRF54, STM32, RP2040/2350, CYW43(Raspberry Pi Pico W), etc.
+- **Wired and Wireless Connectivity**: Offers both wired (USB) and wireless (BLE) connections, with optimized low-power performance and multi-profile support.
+- **Simple Configuration**: Configure your keyboard easily through a single [TOML](https://toml.io/) file.
+- **On-the-fly Keymap Customization**: Change your keymap in real time via Vial (enabled by default) or RMK's native Rynk protocol (experimental).
+- **Advanced Feature Set**: Packed with modern features, including advanced layer management, powerful macros, multi-role key support (e.g., Tap-Hold, TapDance, Morse Key), display support, hardware watchdog and DFU firmware updates.
 - **Split Keyboard Support**: Natively supports both wired and wireless split keyboard.
 
 ## Next Steps
@@ -38,7 +32,7 @@ import { LinkCard } from '@theme'
     description="Explore how to configure your RMK keyboard"
   />
   <LinkCard
-    href="https://github.com/HaoboGu/rmk/tree/main/examples"
+    href="https://github.com/rmk-rs/rmk/tree/main/examples"
     title="Examples"
     description="Check the built-in examples for various microcontroller"
   />

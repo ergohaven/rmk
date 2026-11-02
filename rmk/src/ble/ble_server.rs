@@ -1,69 +1,176 @@
+#[cfg(all(feature = "dongle", feature = "custom_message"))]
+use postcard::experimental::max_size::MaxSize;
+use rmk_types::battery::BatteryStatus;
 use trouble_host::prelude::*;
 use usbd_hid::descriptor::AsInputReport;
-#[cfg(not(feature = "host"))]
+#[cfg(any(feature = "rynk", not(feature = "vial")))]
 use usbd_hid::descriptor::SerializedDescriptor;
 
 use super::battery_service::BatteryService;
+#[cfg(feature = "split")]
+use super::battery_service::PeripheralBatteryServices;
 use super::device_info::DeviceConfigurationService;
-#[cfg(not(feature = "host"))]
+#[cfg(all(feature = "dongle", feature = "custom_message"))]
+use crate::dongle::event::{CUSTOM_TO_DONGLE_UUID, CUSTOM_TO_KEYBOARD_UUID};
+#[cfg(feature = "dongle")]
+use crate::dongle::event::{DONGLE_EVENT_CHAR_UUID, DONGLE_EVENT_MAX, DONGLE_EVENT_SERVICE_UUID};
+#[cfg(not(feature = "vial"))]
 use crate::hid::BleCompositeReport;
-#[cfg(feature = "host")]
+#[cfg(feature = "rynk")]
+use crate::hid::RynkHidReport;
+#[cfg(feature = "vial")]
 use crate::hid::{BLE_REPORT_MAP_LEN, ble_report_map};
-use crate::hid::{CompositeReportType, HidError, HidWriterTrait, Report};
+use crate::hid::{CompositeReportType, HidError, HidWriterTrait, MOUSE_REPORT_SIZE, Report};
 
 // Used for saving the client attribute (CCCD) table. Tracks the trouble-host
 // per-connection client-specific attribute buffer size.
 pub(crate) const CCCD_TABLE_SIZE: usize = trouble_host::config::CLIENT_ATT_TABLE_SIZE;
 
-// `gatt_server` expands every field regardless of a field-level `cfg`, so the
-// host and non-host layouts are defined separately. Keep the vendor service
-// last: existing HID and Device Information handles remain stable.
-#[cfg(feature = "host")]
+#[cfg(feature = "rynk")]
+use rmk_types::protocol::rynk::{
+    RYNK_BLE_CHUNK_SIZE, RYNK_HID_REPORT_SIZE, RYNK_INPUT_CHAR_UUID, RYNK_OUTPUT_CHAR_UUID, RYNK_SERVICE_UUID,
+};
+
+/// Field order is the attribute order: append, never insert, so a bonded host's
+/// cached GATT table survives a firmware update that adds a service.
 #[gatt_server]
 pub(crate) struct Server {
     pub(crate) battery_service: BatteryService,
+    #[cfg(feature = "split")]
+    pub(crate) peripheral_battery_services: PeripheralBatteryServices,
     pub(crate) hid_service: HidService,
+    #[cfg(feature = "rynk")]
+    pub(crate) rynk_service: RynkGattService,
+    #[cfg(feature = "rynk")]
+    pub(crate) rynk_hid_service: RynkHidService,
     pub(crate) device_config_service: DeviceConfigurationService,
-    pub(crate) vial_gatt_service: VialGattService,
+    #[cfg(feature = "dongle")]
+    pub(crate) dongle_event_service: DongleEventService,
+    #[cfg(feature = "vial")]
+    pub(crate) vial_service: VialGattService,
 }
 
-#[cfg(not(feature = "host"))]
-#[gatt_server]
-pub(crate) struct Server {
-    pub(crate) battery_service: BatteryService,
-    pub(crate) hid_service: HidService,
-    pub(crate) device_config_service: DeviceConfigurationService,
+impl Server<'_> {
+    pub(crate) fn refresh_battery_level(&self, handle: u16) {
+        let (attribute, status) = if handle == self.battery_service.level.handle {
+            (
+                self.battery_service.level,
+                crate::input_device::battery::current_battery_status(),
+            )
+        } else {
+            #[cfg(feature = "split")]
+            {
+                let Some(slot) = self
+                    .peripheral_battery_services
+                    .levels
+                    .iter()
+                    .position(|level| level.handle == handle)
+                else {
+                    return;
+                };
+                (
+                    self.peripheral_battery_services.levels[slot],
+                    crate::split::driver::current_peripheral_battery_status(crate::SPLIT_BATTERY_PERIPHERAL_IDS[slot])
+                        .unwrap_or(BatteryStatus::Unavailable),
+                )
+            }
+            #[cfg(not(feature = "split"))]
+            return;
+        };
+        if let BatteryStatus::Available { level: Some(level), .. } = status
+            && let Err(e) = self.set(&attribute, &level)
+        {
+            warn!("Failed to refresh battery level: {:?}", e);
+        }
+    }
+}
+
+/// One postcard-encoded [`crate::dongle::event::DongleEvent`] per notification.
+#[cfg(feature = "dongle")]
+#[gatt_service(uuid = DONGLE_EVENT_SERVICE_UUID)]
+pub(crate) struct DongleEventService {
+    #[characteristic(uuid = DONGLE_EVENT_CHAR_UUID, notify, permissions(encrypted))]
+    pub(crate) event: heapless::Vec<u8, DONGLE_EVENT_MAX>,
+    #[cfg(feature = "custom_message")]
+    #[characteristic(uuid = CUSTOM_TO_DONGLE_UUID, notify, permissions(encrypted))]
+    pub(crate) custom_to_dongle: heapless::Vec<u8, { crate::custom_message::CustomMessage::POSTCARD_MAX_SIZE }>,
+    #[cfg(feature = "custom_message")]
+    #[characteristic(uuid = CUSTOM_TO_KEYBOARD_UUID, write_without_response, permissions(encrypted))]
+    pub(crate) custom_to_keyboard: heapless::Vec<u8, { crate::custom_message::CustomMessage::POSTCARD_MAX_SIZE }>,
+}
+
+/// Rynk-over-GATT transport. The host writes request chunks to `output_data`;
+/// the firmware replies via `input_data` notify. Variable-length values use
+/// `heapless::Vec` so each notify only spends MTU − 3 bytes for the bytes it
+/// actually carries (a fixed `[u8; N]` would always send N).
+///
+/// `gatt_events_task` forwards `output_data` writes into
+/// [`crate::channel::RYNK_BLE_RX_PIPE`] for [`crate::ble::host::HostGattHandler::run`] to drain.
+#[cfg(feature = "rynk")]
+#[gatt_service(uuid = RYNK_SERVICE_UUID)]
+pub(crate) struct RynkGattService {
+    // ATT enforces encryption; the event loop still filters the data path.
+    #[descriptor(uuid = "2908", read, value = [0u8, 1u8])]
+    #[characteristic(uuid = RYNK_INPUT_CHAR_UUID, read, notify, permissions(encrypted))]
+    pub(crate) input_data: heapless::Vec<u8, RYNK_BLE_CHUNK_SIZE>,
+    #[characteristic(uuid = RYNK_OUTPUT_CHAR_UUID, read, write, write_without_response, permissions(encrypted))]
+    pub(crate) output_data: heapless::Vec<u8, RYNK_BLE_CHUNK_SIZE>,
+}
+
+/// Rynk HID-over-GATT service.
+/// `gatt_events_task` feeds the payload into [`crate::channel::RYNK_BLE_RX_PIPE`],
+/// [`crate::ble::host::HostGattHandler::run`] drains the pipe to get data.
+#[cfg(feature = "rynk")]
+#[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
+pub(crate) struct RynkHidService {
+    #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
+    pub(crate) hid_info: [u8; 4],
+    #[characteristic(uuid = "2a4b", read, value = RynkHidReport::desc().try_into().expect("Failed to convert RynkHidReport to [u8; 27]"))]
+    pub(crate) report_map: [u8; 27],
+    #[characteristic(uuid = "2a4c", write_without_response)]
+    pub(crate) hid_control_point: u8,
+    #[characteristic(uuid = "2a4e", read, write_without_response, value = 1)]
+    pub(crate) protocol_mode: u8,
+    // Report characteristics carry rynk frames — require an encrypted link at
+    // the ATT layer (the app guard in `gatt_events_task` remains the data-path filter).
+    #[descriptor(uuid = "2908", read, value = [0u8, 1u8])]
+    #[characteristic(uuid = "2a4d", read, notify, permissions(encrypted))]
+    pub(crate) input_data: [u8; RYNK_HID_REPORT_SIZE],
+    #[descriptor(uuid = "2908", read, value = [0u8, 2u8])]
+    #[characteristic(uuid = "2a4d", read, write, write_without_response, permissions(encrypted))]
+    pub(crate) output_data: [u8; RYNK_HID_REPORT_SIZE],
 }
 
 /// BlueZ owns HID-over-GATT services and rejects application writes to them.
-/// This parallel vendor service carries the same 32-byte Vial packets without
-/// changing the standard HOGP reports used by keyboards and other Vial hosts.
+/// This parallel vendor service carries the same 32-byte Vial packets as the
+/// HID service's Vial report, without changing the standard HOGP reports.
+/// `gatt_events_task` forwards `output_data` writes into
+/// [`crate::channel::VIAL_BLE_RX_CHANNEL`] for
+/// [`crate::ble::host::HostGattHandler::run`] to drain.
 ///
 /// UUIDs are UUIDv5(DNS) values derived from:
 /// - `vial-gatt.ergohaven.xyz`
 /// - `vial-gatt-input.ergohaven.xyz`
 /// - `vial-gatt-output.ergohaven.xyz`
-#[cfg(feature = "host")]
+#[cfg(feature = "vial")]
 #[gatt_service(uuid = "8cfa65ff-3b6d-55f3-8b67-49693930420d")]
 pub(crate) struct VialGattService {
     #[characteristic(uuid = "7a115e75-ae8e-51b4-9f46-dbd15af07dc3", read, notify, permissions(encrypted))]
-    pub(crate) input: [u8; 32],
+    pub(crate) input_data: [u8; 32],
     #[characteristic(
         uuid = "70ca58d5-fdbf-5497-a33f-d1e8e1698678",
         write,
         write_without_response,
         permissions(encrypted)
     )]
-    pub(crate) output: [u8; 32],
+    pub(crate) output_data: [u8; 32],
 }
 
 /// The single HID service carrying all reports, distinguished by report id via
-/// each characteristic's Report Reference descriptor.
-///
-/// Platform HID hosts are not consistent when a peripheral exposes multiple
-/// HOGP service instances, so Vial must live in this same service alongside the
-/// keyboard, mouse, media, and system reports.
-#[cfg(feature = "host")]
+/// each characteristic's Report Reference descriptor. Android's HID host only
+/// attaches to the first HID service instance, so the reports must not be
+/// spread over multiple service instances; Vial lives here as report id 5.
+#[cfg(feature = "vial")]
 #[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
 pub(crate) struct HidService {
     #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
@@ -82,7 +189,7 @@ pub(crate) struct HidService {
     pub(crate) output_keyboard: [u8; 1],
     #[descriptor(uuid = "2908", read, value = [CompositeReportType::Mouse as u8, 1u8])]
     #[characteristic(uuid = "2a4d", read, notify)]
-    pub(crate) mouse_report: [u8; 5],
+    pub(crate) mouse_report: [u8; MOUSE_REPORT_SIZE],
     #[descriptor(uuid = "2908", read, value = [CompositeReportType::Media as u8, 1u8])]
     #[characteristic(uuid = "2a4d", read, notify)]
     pub(crate) media_report: [u8; 2],
@@ -101,13 +208,13 @@ pub(crate) struct HidService {
 /// each characteristic's Report Reference descriptor. Android's HID host only
 /// attaches to the first HID service instance, so the reports must not be
 /// spread over multiple service instances.
-#[cfg(not(feature = "host"))]
+#[cfg(not(feature = "vial"))]
 #[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
 pub(crate) struct HidService {
     #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
     pub(crate) hid_info: [u8; 4],
-    #[characteristic(uuid = "2a4b", read, value = BleCompositeReport::desc().try_into().expect("Failed to convert BleCompositeReport to [u8; 178]"))]
-    pub(crate) report_map: [u8; 178],
+    #[characteristic(uuid = "2a4b", read, value = BleCompositeReport::desc().try_into().expect("Failed to convert BleCompositeReport to [u8; 177]"))]
+    pub(crate) report_map: [u8; 177],
     #[characteristic(uuid = "2a4c", write_without_response)]
     pub(crate) hid_control_point: u8,
     #[characteristic(uuid = "2a4e", read, write_without_response, value = 1)]
@@ -120,7 +227,7 @@ pub(crate) struct HidService {
     pub(crate) output_keyboard: [u8; 1],
     #[descriptor(uuid = "2908", read, value = [CompositeReportType::Mouse as u8, 1u8])]
     #[characteristic(uuid = "2a4d", read, notify)]
-    pub(crate) mouse_report: [u8; 5],
+    pub(crate) mouse_report: [u8; MOUSE_REPORT_SIZE],
     #[descriptor(uuid = "2908", read, value = [CompositeReportType::Media as u8, 1u8])]
     #[characteristic(uuid = "2a4d", read, notify)]
     pub(crate) media_report: [u8; 2],
@@ -131,7 +238,7 @@ pub(crate) struct HidService {
 
 pub(crate) struct BleHidServer<'stack, 'server, 'conn, P: PacketPool> {
     input_keyboard: Characteristic<[u8; 8]>,
-    mouse_report: Characteristic<[u8; 5]>,
+    mouse_report: Characteristic<[u8; MOUSE_REPORT_SIZE]>,
     media_report: Characteristic<[u8; 2]>,
     system_report: Characteristic<[u8; 1]>,
     conn: &'conn GattConnection<'stack, 'server, P>,

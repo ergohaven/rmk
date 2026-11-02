@@ -3,30 +3,25 @@ name = "rmk-nrf54l15"
 version = "0.1.0"
 authors = ["Haobo Gu <haobogu@outlook.com>"]
 description = "Keyboard firmware written in Rust"
-homepage = "https://github.com/haobogu/rmk"
-repository = "https://github.com/haobogu/rmk"
+homepage = "https://github.com/rmk-rs/rmk"
+repository = "https://github.com/rmk-rs/rmk"
 readme = "../../README.md"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
-[dependencies]
-rmk = { path = "../../../rmk", features = ["async_matrix", "nrf54l15_ble"] }
-nrf-sdc = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", default-features = false, features = [
-     "defmt",
-    "peripheral",
-    "central",
-    "nrf54l15-app-s",
-] }
-nrf-mpsl = { git = "https://github.com/alexmoon/nrf-sdc", rev = "abe49d22ebfc85fae134eb082fbfddf752016a55", default-features = false, features = [
-     "defmt",
-    "critical-section-impl",
-    "nrf54l15-app-s",
-] }
-bt-hci = { version = "0.9", features = ["defmt"] }
+[[bin]]
+name = "rmk-nrf54l15"
+test = false
+bench = false
 
-cortex-m = "0.7.7"
-cortex-m-rt = "0.7.5"
-embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime"] }
+[dependencies]
+rmk = { path = "../../../rmk", default-features = false, features = ["defmt", "storage", "vial", "watchdog", "async_matrix", "nrf54l15_ble"] }
+
+embassy-executor = { version = "0.10", features = [
+    "defmt",
+    "platform-cortex-m",
+    "executor-thread",
+] }
 embassy-nrf = { version = "0.11", features = [
     "defmt",
     "nrf54l15-app-s",
@@ -35,26 +30,31 @@ embassy-nrf = { version = "0.11", features = [
     "unstable-pac",
     "time",
 ] }
-embassy-executor = { version = "0.10", features = [
+embassy-time = { version = "0.5", features = ["defmt", "defmt-timestamp-uptime"] }
+nrf-mpsl = { version = "0.4.0", default-features = false, features = [
     "defmt",
-    "platform-cortex-m",
-    "executor-thread",
+    "critical-section-impl",
+    "nrf54l15-app-s",
 ] }
+nrf-sdc = { version = "0.4.0", default-features = false, features = [
+    "defmt",
+    "peripheral",
+    "central",
+    "nrf54l15-app-s",
+] }
+
+bt-hci = { version = "0.10", features = ["defmt"] }
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
 defmt = "1"
 defmt-rtt = "1"
 panic-probe = { version = "1", features = ["print-defmt"] }
 static_cell = "2"
 
-
 [build-dependencies]
-xz2 = "0.1.7"
-json = "0.12"
 const-gen = "1.6"
-
-[[bin]]
-name = "rmk-nrf54l15"
-test = false
-bench = false
+json = "0.12"
+xz2 = "0.1.7"
 
 [profile.dev]
 codegen-units = 1

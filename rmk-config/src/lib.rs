@@ -8,6 +8,9 @@ use serde_inline_default::serde_inline_default;
 /// Event channel default configuration
 const EVENT_DEFAULT_CONFIG: &str = include_str!("default_config/event_default.toml");
 
+mod battery;
+pub use battery::BatteryTomlConfig;
+
 pub(crate) mod chip;
 pub(crate) mod communication;
 pub mod resolved;
@@ -15,19 +18,20 @@ pub mod resolved;
 pub mod usb_interrupt_map;
 pub(crate) mod behavior;
 pub(crate) mod board;
-pub(crate) mod dfu;
-pub(crate) mod display;
 pub(crate) mod host;
 pub(crate) mod keycode_alias;
-pub(crate) mod layout;
-pub(crate) mod light;
-pub(crate) mod storage;
+pub(crate) mod keymap;
+pub mod layout;
+pub use layout::{STOCK_WIDTHS, layout_blob_from_toml, layout_info_from_toml};
+
+/// Bytes in one persisted macro chunk, shared by configuration and firmware.
+pub const MACRO_CHUNK_SIZE: usize = 32;
 
 /// Protocol-level capacity ceilings for wire-format Vec sizes.
 ///
 /// These define the maximum values any firmware may use for protocol
 /// Vec capacities (`COMBO_SIZE`, `MORSE_SIZE`, etc.). The host tool compiles
-/// against these as upper bounds. Any firmware with `rmk_protocol` enabled
+/// against these as upper bounds. Any firmware with `rynk` enabled
 /// must satisfy `value <= ceiling` at compile time.
 ///
 /// Constant names mirror the generated constants with a `MAX_` prefix:
@@ -37,14 +41,43 @@ pub mod protocol_limits {
     pub const MAX_COMBO_SIZE: usize = 16;
     /// Max pattern entries per morse key — ceiling for `MORSE_SIZE`
     pub const MAX_MORSE_SIZE: usize = 32;
-    /// Max bytes per macro data chunk — ceiling for `MACRO_DATA_SIZE`
-    pub const MAX_MACRO_DATA_SIZE: usize = 256;
-    /// Max items per bulk transfer message — ceiling for `BULK_SIZE`
-    pub const MAX_BULK_SIZE: usize = 16;
+    /// The u8 storage index addresses chunks 0 through 255.
+    pub const MAX_MACRO_SPACE_SIZE: usize = super::MACRO_CHUNK_SIZE * (u8::MAX as usize + 1);
+    /// Max key positions in an unlock challenge.
+    pub const MAX_UNLOCK_KEYS_SIZE: usize = 4;
+}
+
+pub(crate) fn validate_unlock_keys(
+    section: &str,
+    unlock_keys: &[[u8; 2]],
+    layout: Option<&LayoutTomlConfig>,
+) -> Result<(), String> {
+    if unlock_keys.len() > protocol_limits::MAX_UNLOCK_KEYS_SIZE {
+        return Err(format!(
+            "{section}.unlock_keys has {} entries, the max is {}",
+            unlock_keys.len(),
+            protocol_limits::MAX_UNLOCK_KEYS_SIZE
+        ));
+    }
+
+    if let Some(layout) = layout {
+        for key in unlock_keys {
+            let (row, col) = (key[0], key[1]);
+            if row >= layout.rows || col >= layout.cols {
+                return Err(format!(
+                    "{section}.unlock_keys position ({row}, {col}) is outside the {}x{} matrix",
+                    layout.rows, layout.cols
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Configurations for RMK keyboard.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(unused)]
 pub struct KeyboardTomlConfig {
     /// Basic keyboard info
@@ -53,10 +86,10 @@ pub struct KeyboardTomlConfig {
     matrix: Option<MatrixConfig>,
     // Aliases for key maps
     aliases: Option<HashMap<String, String>>,
-    // Layers of key maps
-    layer: Option<Vec<LayerTomlConfig>>,
-    /// Layout config.
-    /// For split keyboard, the total row/col should be defined in this section
+    /// Keymap config: layer count and the per-layer key actions (`[[keymap.layer]]`).
+    keymap: Option<KeymapTomlConfig>,
+    /// Layout config: the physical key arrangement (`map`) plus the rendered layout.
+    /// For split keyboards, the total row/col is defined in this section.
     layout: Option<LayoutTomlConfig>,
     /// Behavior config
     behavior: Option<BehaviorConfig>,
@@ -66,6 +99,8 @@ pub struct KeyboardTomlConfig {
     storage: Option<StorageConfig>,
     /// DFU partition config (embassy-boot)
     dfu: Option<DfuTomlConfig>,
+    /// Battery inputs for a unibody keyboard.
+    pub(crate) battery: Option<BatteryTomlConfig>,
     /// Ble config
     pub(crate) ble: Option<BleConfig>,
     /// Chip-specific configs (e.g., [chip.nrf52840])
@@ -93,6 +128,16 @@ pub struct KeyboardTomlConfig {
     /// Whether the user explicitly set a [storage] section in keyboard.toml.
     #[serde(skip)]
     pub(crate) storage_user_set: bool,
+    /// Whether the user explicitly set `[storage]` `start_addr`/`num_sectors`
+    /// in keyboard.toml (chip defaults don't count).
+    #[serde(skip)]
+    pub(crate) storage_start_addr_user_set: bool,
+    #[serde(skip)]
+    pub(crate) storage_num_sectors_user_set: bool,
+    /// Whether the user explicitly wrote a [dfu] section in keyboard.toml
+    /// (chip defaults contain an empty [dfu] too).
+    #[serde(skip)]
+    pub(crate) dfu_user_set: bool,
 }
 
 impl KeyboardTomlConfig {
@@ -114,16 +159,15 @@ impl KeyboardTomlConfig {
             .unwrap_or_else(|e| panic!("Deserialize {:?} error: {}", path, e))
     }
 
-    /// Load keyboard.toml with event defaults only.
+    /// Load keyboard.toml with event defaults but without chip-specific defaults.
     ///
-    /// This is used in build.rs where we only need [rmk] and [event] constants,
-    /// and should not require `[keyboard.board]`/`[keyboard.chip]`.
+    /// This is used in build.rs to resolve compile-time constants without
+    /// requiring `[keyboard.board]`/`[keyboard.chip]`.
     pub fn new_from_toml_path_with_event_defaults<P: AsRef<Path>>(config_toml_path: P) -> Self {
         let mut config = Self::parse_from_toml_path(config_toml_path, None);
-        config.storage_user_set = config
-            .storage
-            .as_ref()
-            .is_some_and(|s| s.start_addr.is_some() || s.num_sectors.is_some());
+        let storage = config.storage;
+        config.set_storage_user_flags(storage.as_ref());
+        config.dfu_user_set = config.dfu.is_some();
         config.auto_calculate_parameters();
         config
     }
@@ -135,7 +179,10 @@ impl KeyboardTomlConfig {
         // This allows user's keyboard.toml to omit [event] section.
         let user_config = Self::parse_from_toml_path(path, None);
 
-        let default_config_str = user_config.get_chip_model().unwrap().get_default_config_str().unwrap();
+        let default_config_str = user_config
+            .get_chip_model()
+            .and_then(|chip| chip.get_default_config_str())
+            .unwrap_or_else(|e| panic!("❌ keyboard.toml error: {e}"));
 
         // Second pass: load with all three config sources
         // Config priority (later sources override earlier ones):
@@ -143,14 +190,43 @@ impl KeyboardTomlConfig {
         // 2. Chip-specific default config
         // 3. User config (highest priority)
         let mut config = Self::parse_from_toml_path(path, Some(default_config_str));
-        config.storage_user_set = user_config
-            .storage
-            .as_ref()
-            .is_some_and(|s| s.start_addr.is_some() || s.num_sectors.is_some());
+        config.set_storage_user_flags(user_config.storage.as_ref());
+        config.dfu_user_set = user_config.dfu.is_some();
+        // Split battery resolution applies the preset per side; only an explicit
+        // top-level [battery] should reach its validation error.
+        if config.split.is_some() && user_config.battery.is_none() {
+            config.battery = None;
+        }
 
         config.auto_calculate_parameters();
 
         config
+    }
+
+    /// Record which `[storage]` keys the user explicitly set, so DFU-related
+    /// checks can distinguish them from chip default values.
+    fn set_storage_user_flags(&mut self, user_storage: Option<&StorageConfig>) {
+        self.storage_user_set = user_storage.is_some_and(|s| s.start_addr.is_some() || s.num_sectors.is_some());
+        self.storage_start_addr_user_set = user_storage.is_some_and(|s| s.start_addr.is_some());
+        self.storage_num_sectors_user_set = user_storage.is_some_and(|s| s.num_sectors.is_some());
+    }
+
+    /// Detect a `[storage]`/`[dfu]` conflict in the user's keyboard.toml.
+    ///
+    /// While DFU is enabled, the storage region is a partition fixed by the
+    /// bootloader's linker script (`rmk-memory.x`, generated by rmk-boot's
+    /// build.rs): `start_addr` is overridden to the partition start and
+    /// `num_sectors` must match the partition size. Explicit `[storage]`
+    /// values have no effect there, so return which keys the user set.
+    pub fn dfu_storage_conflict(&self) -> Option<DfuStorageConflict> {
+        if !self.dfu_user_set || !self.storage_user_set {
+            return None;
+        }
+        let conflict = DfuStorageConflict {
+            start_addr_set: self.storage_start_addr_user_set,
+            num_sectors_set: self.storage_num_sectors_user_set,
+        };
+        (conflict.start_addr_set || conflict.num_sectors_set).then_some(conflict)
     }
 
     /// Auto calculate some parameters in toml:
@@ -217,6 +293,9 @@ pub(crate) struct RmkConstantsConfig {
     /// Mouse wheel interval (ms) - controls scrolling speed
     #[serde_inline_default(80)]
     pub mouse_wheel_interval: u16,
+    /// The size of the largest custom message.
+    #[serde_inline_default(241)]
+    pub custom_message_max_size: usize,
     /// Maximum number of combos keyboard can store
     #[serde_inline_default(8)]
     #[serde(deserialize_with = "check_combo_max_num")]
@@ -232,12 +311,21 @@ pub(crate) struct RmkConstantsConfig {
     #[serde_inline_default(8)]
     #[serde(deserialize_with = "check_morse_max_num")]
     pub morse_max_num: usize,
+    /// Capacity of the morse profile table (named profiles in `[behavior.morse.profiles]`)
+    #[serde_inline_default(16)]
+    #[serde(deserialize_with = "check_morse_profile_max_num")]
+    pub morse_profile_max_num: usize,
     /// Maximum number of patterns a morse key can handle
     #[serde_inline_default(8)]
     #[serde(deserialize_with = "check_max_patterns_per_key")]
     pub max_patterns_per_key: usize,
-    /// Macro space size in bytes for storing sequences
+    /// Maximum number of macros, default and host-written together
+    #[serde_inline_default(32)]
+    #[serde(deserialize_with = "check_macro_max_num")]
+    pub macro_max_num: usize,
+    /// Bytes of the buffer every macro shares, a multiple of 32
     #[serde_inline_default(256)]
+    #[serde(deserialize_with = "check_macro_space_size")]
     pub macro_space_size: usize,
     /// Default debounce time in ms
     #[serde_inline_default(20)]
@@ -269,17 +357,17 @@ pub(crate) struct RmkConstantsConfig {
     /// BLE Split Central sleep timeout in seconds (0 = disabled)
     #[serde_inline_default(0)]
     pub split_central_sleep_timeout_seconds: u32,
-    /// Maximum number of key actions in a bulk keymap transfer (protocol).
-    /// Smaller values reduce firmware RAM usage but require more round-trips.
-    #[serde_inline_default(8)]
-    pub protocol_max_bulk_size: usize,
-    /// Maximum macro data chunk size for protocol transfers (bytes).
-    /// Smaller values reduce firmware RAM usage but require more round-trips.
-    #[serde_inline_default(64)]
-    pub protocol_macro_chunk_size: usize,
     /// Maximum number of auto mouse layer entries; auto-derived from `[[behavior.auto_mouse_layer]]` if unset.
     #[serde(default)]
     pub auto_mouse_layer_max_num: Option<usize>,
+    /// Exact RAM of each Rynk RX/TX frame buffer (bytes), payload capacity and bulk counts derive from it.
+    /// Default 488 fills exactly two BLE notifications.
+    #[serde_inline_default(488)]
+    pub rynk_buffer_size: usize,
+    /// Length of one dongle pairing window in seconds: repeated while no
+    /// keyboard is bonded, opened once at power-on otherwise (dongle firmware only)
+    #[serde_inline_default(30)]
+    pub dongle_pairing_window_secs: u32,
 }
 
 fn check_combo_max_num<'de, D>(deserializer: D) -> Result<usize, D::Error>
@@ -287,8 +375,37 @@ where
     D: de::Deserializer<'de>,
 {
     let value = Deserialize::deserialize(deserializer)?;
-    if value > 256 {
-        panic!("❌ Parse `keyboard.toml` error: combo_max_num must be between 0 and 256, got {value}");
+    if value > u8::MAX as usize {
+        return Err(de::Error::custom(format!(
+            "combo_max_num must be between 0 and 255, got {value}"
+        )));
+    }
+    Ok(value)
+}
+
+fn check_macro_max_num<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value = Deserialize::deserialize(deserializer)?;
+    if value > u8::MAX as usize {
+        return Err(de::Error::custom(format!(
+            "macro_max_num must be between 0 and 255, got {value}"
+        )));
+    }
+    Ok(value)
+}
+
+fn check_macro_space_size<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value: usize = Deserialize::deserialize(deserializer)?;
+    if !value.is_multiple_of(MACRO_CHUNK_SIZE) || value > protocol_limits::MAX_MACRO_SPACE_SIZE {
+        return Err(de::Error::custom(format!(
+            "macro_space_size must be a multiple of {MACRO_CHUNK_SIZE} between 0 and {}, got {value}",
+            protocol_limits::MAX_MACRO_SPACE_SIZE
+        )));
     }
     Ok(value)
 }
@@ -298,8 +415,24 @@ where
     D: de::Deserializer<'de>,
 {
     let value = Deserialize::deserialize(deserializer)?;
-    if value > 256 {
-        panic!("❌ Parse `keyboard.toml` error: morse_max_num must be between 0 and 256, got {value}");
+    if value > u8::MAX as usize {
+        return Err(de::Error::custom(format!(
+            "morse_max_num must be between 0 and 255, got {value}"
+        )));
+    }
+    Ok(value)
+}
+
+/// The profile index is a `u8` in `KeyAction::TapHold` and an index with no
+/// table entry means "use the default profile", so the table may never cover
+/// the full `u8` range: capacity ≤ 255 keeps at least one index always vacant.
+fn check_morse_profile_max_num<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: de::Deserializer<'de>,
+{
+    let value = Deserialize::deserialize(deserializer)?;
+    if value > 255 {
+        panic!("❌ Parse `keyboard.toml` error: morse_profile_max_num must be between 0 and 255, got {value}");
     }
     Ok(value)
 }
@@ -310,7 +443,9 @@ where
 {
     let value = Deserialize::deserialize(deserializer)?;
     if !(4..=65536).contains(&value) {
-        panic!("❌ Parse `keyboard.toml` error: max_patterns_per_key must be between 4 and 65536, got {value}");
+        return Err(de::Error::custom(format!(
+            "max_patterns_per_key must be between 4 and 65536, got {value}"
+        )));
     }
     Ok(value)
 }
@@ -320,8 +455,10 @@ where
     D: de::Deserializer<'de>,
 {
     let value = Deserialize::deserialize(deserializer)?;
-    if value > 256 {
-        panic!("❌ Parse `keyboard.toml` error: fork_max_num must be between 0 and 256, got {value}");
+    if value > u8::MAX as usize {
+        return Err(de::Error::custom(format!(
+            "fork_max_num must be between 0 and 255, got {value}"
+        )));
     }
     Ok(value)
 }
@@ -332,11 +469,14 @@ impl Default for RmkConstantsConfig {
         Self {
             mouse_key_interval: 20,
             mouse_wheel_interval: 80,
+            custom_message_max_size: 241,
             combo_max_num: 8,
             combo_max_length: 4,
             fork_max_num: 8,
             morse_max_num: 8,
+            morse_profile_max_num: 16,
             max_patterns_per_key: 8,
+            macro_max_num: 32,
             macro_space_size: 256,
             debounce_time: 20,
             report_channel_size: 16,
@@ -348,9 +488,9 @@ impl Default for RmkConstantsConfig {
             ble_reconnect_timeout_seconds: 300,
             ble_pairing_timeout_seconds: 0,
             split_central_sleep_timeout_seconds: 0,
-            protocol_max_bulk_size: 8,
-            protocol_macro_chunk_size: 64,
             auto_mouse_layer_max_num: None,
+            rynk_buffer_size: 488,
+            dongle_pairing_window_secs: 30,
         }
     }
 }
@@ -424,6 +564,7 @@ define_event_config!(
     charging_state,
     // Pointing device events
     pointing,
+    touch,
     // Split events
     peripheral_connected,
     central_connected,
@@ -433,26 +574,79 @@ define_event_config!(
     peripheral_settings,
     peripheral_settings_refresh,
     clear_peer,
+    // Dongle events
+    dongle_state,
     // DFU events
     dfu_status,
+    dfu_cmd,
     // Action events
     action,
+    // Application-defined messages
+    custom_message,
+    custom_message_out,
 );
 
-/// Configurations for keyboard layout
+/// The `[layout]` section: the physical key arrangement plus the rendered layout.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(unused)]
 pub(crate) struct LayoutTomlConfig {
     pub rows: u8,
     pub cols: u8,
-    pub layers: u8,
+    /// The physical arrangement: an ordered map of `(row,col)` positions with
+    /// optional hand, shape (`@2u`), gaps (`[1.5]`), row-steps (`[y=]`), and
+    /// encoders (`(e,0)`). Its order also defines the order of `[[keymap.layer]]`.
+    pub map: Option<String>,
+    // Rendered-layout fields.
+    pub default_variant: Option<String>,
+    pub shapes: Option<HashMap<String, ShapeToml>>,
+    pub variant: Option<Vec<VariantToml>>,
+}
+
+/// A named shape from `[layout.shapes]`. Every field optional; widths/
+/// heights default to 1u, nudges/rotation to 0, and `w2/h2/x2/y2` are an
+/// optional second rectangle for L-shaped caps.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ShapeToml {
+    pub w: Option<f32>,
+    pub h: Option<f32>,
+    pub x: Option<f32>,
+    pub y: Option<f32>,
+    pub r: Option<f32>,
+    pub w2: Option<f32>,
+    pub h2: Option<f32>,
+    pub x2: Option<f32>,
+    pub y2: Option<f32>,
+}
+
+/// One `[[layout.variant]]` render overlay: reshape some keys, hide others.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct VariantToml {
+    pub name: String,
+    pub shapes: Option<HashMap<String, String>>,
+    pub hidden: Option<Vec<String>>,
+}
+
+/// The `[keymap]` section: layer count plus the per-layer key actions.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(unused)]
+pub(crate) struct KeymapTomlConfig {
+    /// Total layer count. Optional — defaults to the number of `[[keymap.layer]]`
+    /// blocks; set it larger to reserve extra empty layers (e.g. for Vial/Rynk).
+    pub layers: Option<u8>,
+    /// First layer index whose padding layers are filled with `No` instead of `_`.
+    /// Defaults to `layers`, i.e. every padding layer stays transparent.
     pub no_action_layer_start: Option<u8>,
-    pub keymap: Option<Vec<Vec<Vec<String>>>>, // Will be deprecated in the future
-    pub matrix_map: Option<String>,            // Temporarily allow both matrix_map and keymap to be set
-    pub encoder_map: Option<Vec<Vec<[String; 2]>>>, // Will be deprecated together with keymap
+    /// Per-layer key actions: `[[keymap.layer]]`.
+    #[serde(default)]
+    pub layer: Vec<LayerTomlConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(unused)]
 pub(crate) struct LayerTomlConfig {
     pub name: Option<String>,
@@ -462,6 +656,7 @@ pub(crate) struct LayerTomlConfig {
 
 /// Configurations for keyboard info
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct KeyboardInfo {
     /// Keyboard name
     pub name: String,
@@ -492,7 +687,16 @@ pub enum MatrixType {
     DirectPin,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DebouncerType {
+    #[default]
+    Default,
+    Fast,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MatrixConfig {
     #[serde(default)]
     pub matrix_type: MatrixType,
@@ -503,8 +707,16 @@ pub struct MatrixConfig {
     pub direct_pin_low_active: bool,
     #[serde(default = "default_false")]
     pub row2col: bool,
-    pub debouncer: Option<String>,
+    #[serde(default)]
+    pub debouncer: DebouncerType,
     pub bootmagic: Option<(u8, u8)>,
+}
+
+/// Which `[storage]` keys the user explicitly set while `[dfu]` is enabled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DfuStorageConflict {
+    pub start_addr_set: bool,
+    pub num_sectors_set: bool,
 }
 
 /// Config for storage
@@ -524,47 +736,72 @@ pub(crate) struct StorageConfig {
     pub clear_layout: Option<bool>,
 }
 
-/// Config for DFU partition layout (embassy-boot).
+/// Config for DFU (embassy-boot).
 ///
-/// These values must match the bootloader's `memory.x` / linker script.
+/// Offsets come from `rmk-memory.x` linker symbols. This section only
+/// configures DFU behaviour (LED, unlock keys).
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct DfuTomlConfig {
-    /// Offset of the boot state partition
-    pub state_offset: Option<u32>,
-    /// Size of the boot state partition
-    pub state_size: Option<u32>,
-    /// Offset of the DFU download partition
-    pub dfu_offset: Option<u32>,
-    /// Size of the DFU download partition
-    pub dfu_size: Option<u32>,
-    /// Flash page size in bytes (e.g. 4096 for RP2040).
-    /// Used with `flash_size` to auto-calculate partition addresses.
-    pub page_size: Option<u32>,
-    /// Total flash size in bytes. When set, DFU partition addresses are
-    /// calculated automatically using the bootymcbootface formula.
-    /// Defaults to 2 MB (2097152) when omitted.
-    pub flash_size: Option<u32>,
+pub struct DfuTomlConfig {
     /// Optional DFU activity LED pin, e.g. `"PIN_16"`. When set, the LED
     /// is lit while a DFU download is in progress.
     pub led: Option<String>,
     /// Unlock keys for DFU lock (optional)
     pub unlock_keys: Option<Vec<[u8; 2]>>,
+    /// External SPI flash configuration for DFU (optional).
+    /// When set, firmware is written to external flash instead of the
+    /// internal DFU partition.
+    pub external_flash: Option<ExternalFlashTomlConfig>,
+}
+
+/// Driver for an external SPI NOR flash chip used as DFU partition.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalFlashDriver {
+    /// Built-in W25Q driver (JEDEC-standard commands).
+    #[default]
+    W25q,
+    /// User-provided driver, initialized via `init_fn`.
+    Custom,
+}
+
+/// TOML configuration for external SPI flash used as DFU partition.
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExternalFlashTomlConfig {
+    /// Flash chip driver. Supports `"w25q"` (built-in) or `"custom"`.
+    pub driver: ExternalFlashDriver,
+    /// Total flash size in bytes (e.g. 8388608 for 8 MB).
+    pub flash_size: u32,
+    /// Size of the DFU download partition in bytes when it is smaller than the
+    /// whole flash chip (e.g. `2097152` for a 2 MB partition on an 8 MB chip).
+    /// Defaults to the full [`flash_size`](Self::flash_size) when unset.
+    pub dfu_partition_size: Option<u32>,
+    /// Path to a user-defined init function.
+    /// Required when `driver = "custom"`. The function must have signature:
+    /// `fn init(spi: impl SpiBus, cs: impl OutputPin, flash_size: u32) -> impl NorFlash`.
+    pub init_fn: Option<String>,
+    /// SPI bus configuration.
+    pub spi: SpiConfig,
 }
 
 #[derive(Clone, Default, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BleConfig {
     pub enabled: bool,
-    pub battery_adc_pin: Option<String>,
-    pub charge_state: Option<PinConfig>,
-    pub charge_led: Option<PinConfig>,
-    pub adc_divider_measured: Option<u32>,
-    pub adc_divider_total: Option<u32>,
     pub default_tx_power: Option<i8>,
     pub use_2m_phy: Option<bool>,
     pub passkey_entry: Option<bool>,
     pub passkey_entry_timeout: Option<u32>,
+    /// nRF only: time the SoftDevice Controller reserves per connection event
+    /// of the central, in microseconds. Unset keeps the controller's 7500.
+    pub central_event_length_us: Option<u32>,
+    /// nRF only: how far apart the central places connections that share an
+    /// interval, in microseconds. Unset keeps the controller's 7500.
+    pub central_acl_event_spacing_us: Option<u32>,
+    /// Advertise to a BLE host (default true). A split central that reaches
+    /// its host over USB only can leave the radio to its split links.
+    pub host_advertising: Option<bool>,
 }
 
 /// Default passkey entry timeout in seconds.
@@ -572,6 +809,15 @@ pub const DEFAULT_PASSKEY_ENTRY_TIMEOUT_SECS: u32 = 120;
 
 /// Minimum passkey entry timeout in seconds.
 pub const MIN_PASSKEY_ENTRY_TIMEOUT_SECS: u32 = 30;
+
+/// nRF52840 DCDC REG0 output voltage
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub enum DcdcReg0Voltage {
+    #[serde(rename = "3V3")]
+    V3_3,
+    #[serde(rename = "1V8")]
+    V1_8,
+}
 
 /// Config for chip-specific settings
 #[derive(Clone, Default, Debug, Deserialize)]
@@ -582,8 +828,7 @@ pub struct ChipConfig {
     /// DCDC regulator 1 enabled (for nrf52840, nrf52833)
     pub dcdc_reg1: Option<bool>,
     /// DCDC regulator 0 voltage (for nrf52840)
-    /// Values: "3V3" or "1V8"
-    pub dcdc_reg0_voltage: Option<String>,
+    pub dcdc_reg0_voltage: Option<DcdcReg0Voltage>,
 }
 
 /// Config for lights
@@ -618,10 +863,9 @@ impl Default for DependencyConfig {
     }
 }
 
-/// Configurations for keyboard layout
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LayoutConfig {
+/// Intermediate resolved keymap grid (rows/cols/layers + per-layer actions).
+/// Built once by `get_keymap_config` and unpacked into `Keymap`; never (de)serialized.
+pub(crate) struct KeymapConfig {
     pub rows: u8,
     pub cols: u8,
     pub layers: u8,
@@ -683,6 +927,7 @@ pub(crate) struct AutoMouseLayerConfig {
 /// Per Key configurations profiles for morse, tap-hold, etc.
 /// overrides the defaults given in TapHoldConfig
 #[derive(Clone, Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MorseProfile {
     pub enable_flow_tap: Option<bool>,
 
@@ -700,6 +945,8 @@ pub(crate) struct MorseProfile {
 
     /// The time elapsed from the last release of a key is longer than this, it will break the morse pattern (in milliseconds)
     pub gap_timeout: Option<DurationMillis>,
+
+    pub quick_tap_timeout: Option<DurationMillis>,
 }
 
 /// Configurations for tri layer
@@ -738,6 +985,7 @@ pub(crate) struct CombosConfig {
 
 /// Configurations for combo
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ComboConfig {
     pub actions: Vec<String>,
     pub output: String,
@@ -753,6 +1001,7 @@ pub(crate) struct MacrosConfig {
 
 /// Configurations for macro
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct MacroConfig {
     pub operations: Vec<MacroOperation>,
 }
@@ -761,11 +1010,24 @@ pub(crate) struct MacroConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "operation", rename_all = "lowercase")]
 pub(crate) enum MacroOperation {
-    Tap { keycode: String },
-    Down { keycode: String },
-    Up { keycode: String },
-    Delay { duration: DurationMillis },
-    Text { text: String },
+    Tap {
+        keycode: String,
+    },
+    Down {
+        keycode: String,
+    },
+    Up {
+        keycode: String,
+    },
+    Delay {
+        duration: DurationMillis,
+    },
+    Text {
+        text: String,
+    },
+    /// The ops before it run on the macro key's press, the ops after it on its release
+    #[serde(rename = "pause_for_release")]
+    PauseForRelease,
 }
 
 /// Configurations for forks
@@ -779,13 +1041,31 @@ pub(crate) struct ForksConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ForkConfig {
-    pub trigger: String,
-    pub negative_output: String,
-    pub positive_output: String,
+    pub trigger: ForkTrigger,
+    pub negative_output: Option<String>,
+    pub positive_output: Option<String>,
     pub match_any: Option<String>,
     pub match_none: Option<String>,
     pub kept_modifiers: Option<String>,
     pub bindable: Option<bool>,
+    pub layers: Option<Vec<u8>>,
+}
+
+/// One trigger key, or a list of them.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub(crate) enum ForkTrigger {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl ForkTrigger {
+    pub(crate) fn keys(&self) -> &[String] {
+        match self {
+            Self::One(key) => std::slice::from_ref(key),
+            Self::Many(keys) => keys,
+        }
+    }
 }
 
 /// Configurations for morse keys
@@ -810,6 +1090,8 @@ pub(crate) struct MorsesConfig {
 
     /// The time elapsed from the last release of a key is longer than this, it will break the morse pattern (in milliseconds)
     pub gap_timeout: Option<DurationMillis>,
+
+    pub quick_tap_timeout: Option<DurationMillis>,
 
     /// these can be used to overrides the defaults given above
     pub profiles: Option<HashMap<String, MorseProfile>>,
@@ -845,18 +1127,42 @@ pub(crate) struct MorseActionPair {
     pub action: String,  // "B"
 }
 
+/// Split connection transport
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitConnection {
+    #[default]
+    Ble,
+    Serial,
+}
+
 /// Configurations for split keyboards
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplitConfig {
-    pub connection: String,
+    pub connection: SplitConnection,
     pub central: SplitBoardConfig,
     pub peripheral: Vec<SplitBoardConfig>,
 }
 
+/// DFU update policy for split peripherals.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdatePolicy {
+    /// Only flash when the firmware hash differs (default).
+    #[default]
+    #[serde(alias = "MatchHash")]
+    MatchHash,
+    /// Always flash, regardless of the current firmware.
+    #[serde(alias = "force")]
+    Force,
+}
+
 /// Configurations for each split board
 ///
-/// Either ble_addr or serial must be set, but not both.
+/// The transport field must match `split.connection`: `serial` is required for
+/// serial splits and forbidden for BLE splits; `ble_addr` is optional for BLE
+/// splits (dongle setups omit it) and forbidden for serial splits.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplitBoardConfig {
@@ -878,26 +1184,31 @@ pub struct SplitBoardConfig {
     pub input_device: Option<InputDeviceConfig>,
     /// Display config for the split board
     pub display: Option<DisplayConfig>,
-    /// Battery ADC pin for this split board
-    pub battery_adc_pin: Option<String>,
-    /// ADC divider measured value for battery
-    pub adc_divider_measured: Option<u32>,
-    /// ADC divider total value for battery
-    pub adc_divider_total: Option<u32>,
+    /// Battery inputs local to this split board.
+    pub battery: Option<BatteryTomlConfig>,
     /// Output Pin config for the split
     pub output: Option<Vec<OutputConfig>>,
+    /// DFU config for this split board.
+    ///
+    /// When set, it completely replaces the global [`dfu`](Self::dfu)
+    /// section for this side. A side without its own `[dfu]` section falls
+    /// back to the global one. This allows e.g. only the central to use an
+    /// external SPI flash (`[dfu.external_flash]`) while the peripheral
+    /// keeps an internal DFU partition, or different SPI pins per board.
+    pub dfu: Option<DfuTomlConfig>,
     /// Path to the peripheral firmware binary for automatic dfu_split update.
     /// Relative to the project's `Cargo.toml`.  When set, the generated code
     /// includes the binary with `include_bytes!` and registers it via
     /// [`set_firmware_update_data`](crate::set_firmware_update_data).
     pub firmware: Option<String>,
-    /// DFU update policy for this peripheral. "MatchHash" (default) only
-    /// flashes when the firmware differs; "force" always flashes.
-    pub update_policy: Option<String>,
+    /// DFU update policy for this peripheral. `"match_hash"` (default) only
+    /// flashes when the firmware differs; `"force"` always flashes.
+    pub update_policy: Option<UpdatePolicy>,
 }
 
 /// Serial port config
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SerialConfig {
     pub instance: String,
     pub tx_pin: String,
@@ -947,20 +1258,32 @@ pub(crate) struct HostConfig {
     /// Whether Vial is enabled
     #[serde_inline_default(true)]
     pub vial_enabled: bool,
-    /// Unlock keys for Vial (optional)
-    pub unlock_keys: Option<Vec<[u8; 2]>>,
-    /// Start Vial unlocked, bypassing the unlock-key combo (default: false).
-    /// Only has effect with the `vial_lock` feature.
+    /// Whether the RMK-native Rynk protocol is enabled. Mutually exclusive
+    /// with `vial_enabled` (the underlying Cargo features conflict).
     #[serde_inline_default(false)]
-    pub vial_insecure: bool,
+    pub rynk_enabled: bool,
+    /// Physical keys (row, col) held simultaneously to unlock (optional).
+    /// Shared by the Vial lock and the Rynk lock gate.
+    pub unlock_keys: Option<Vec<[u8; 2]>>,
+    /// Start (and stay) unlocked, bypassing the unlock-key combo (default:
+    /// false). Renamed from `vial_insecure`; the old name still parses.
+    #[serde(alias = "vial_insecure")]
+    #[serde_inline_default(false)]
+    pub insecure: bool,
+    /// Move the Rynk config-write tier (`SetKeyAction`, `SetMacro`, …) into the
+    /// locked set, so writes also require unlock (default: false).
+    #[serde_inline_default(false)]
+    pub write_requires_unlock: bool,
 }
 
 impl Default for HostConfig {
     fn default() -> Self {
         Self {
             vial_enabled: true,
+            rynk_enabled: false,
             unlock_keys: None,
-            vial_insecure: false,
+            insecure: false,
+            write_requires_unlock: false,
         }
     }
 }
@@ -1049,6 +1372,21 @@ pub struct Pmw3610Config {
     /// Swap X and Y axes
     #[serde(default)]
     pub proc_swap_xy: bool,
+    /// Cursor acceleration in the PointingProcessor. Off unless configured.
+    pub acceleration: Option<PointingAccelerationConfig>,
+    /// Scroll-mode acceleration in the PointingProcessor. Off unless configured.
+    pub scroll_acceleration: Option<PointingAccelerationConfig>,
+}
+
+/// Pointer acceleration for cursor or scroll mode: motion faster than `from` is scaled up in
+/// proportion to its speed, up to `max`; slower motion passes unchanged.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PointingAccelerationConfig {
+    /// Speed where acceleration starts, in sensor counts per second.
+    pub from: u16,
+    /// The most motion is scaled up, in percent (250 = 2.5×).
+    pub max: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -1087,6 +1425,10 @@ pub struct Pmw33xxConfig {
     // Swap X and Y axes
     #[serde(default)]
     pub proc_swap_xy: bool,
+    /// Cursor acceleration in the PointingProcessor. Off unless configured.
+    pub acceleration: Option<PointingAccelerationConfig>,
+    /// Scroll-mode acceleration in the PointingProcessor. Off unless configured.
+    pub scroll_acceleration: Option<PointingAccelerationConfig>,
     /// Report rate (Hz). Motion will be accumulated and emitted at this rate.
     #[serde(default = "default_pointing_report_hz")]
     pub report_hz: u16,
@@ -1116,6 +1458,10 @@ pub struct Iqs5xxConfig {
     /// Swap X and Y in the PointingProcessor.
     #[serde(default)]
     pub proc_swap_xy: bool,
+    /// Cursor acceleration in the PointingProcessor. Off unless configured.
+    pub acceleration: Option<PointingAccelerationConfig>,
+    /// Scroll-mode acceleration in the PointingProcessor. Off unless configured.
+    pub scroll_acceleration: Option<PointingAccelerationConfig>,
 }
 
 /// I²C bus configuration for the IQS5xx. Distinct from the generic `I2cConfig`
@@ -1139,10 +1485,12 @@ pub struct EncoderConfig {
     // Phase is the working mode of the rotary encoders.
     // Available mode:
     // - default: resolution = 1
+    // - e8h7: phase table tuned for E8H7 encoders
     // - resolution: customized resolution, the resolution value and reverse should be specified
     //   A typical [EC11 encoder](https://tech.alpsalpine.com/cms.media/product_catalog_ec_01_ec11e_en_611f078659.pdf)'s resolution is 2
     //   In resolution mode, you can also specify the number of detent and pulses, the resolution will be calculated by `pulse * 4 / detent`
-    pub phase: Option<String>,
+    #[serde(default)]
+    pub phase: EncoderPhase,
     // Resolution
     pub resolution: Option<EncoderResolution>,
     // The number of detent
@@ -1157,6 +1505,16 @@ pub struct EncoderConfig {
     // Debounce interval in milliseconds. Suppresses spurious events from mechanical contact bounce.
     // Defaults to 0 (disabled) if not specified.
     pub debounce_ms: Option<u16>,
+}
+
+/// Rotary encoder phase (decoding) mode
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum EncoderPhase {
+    #[default]
+    Default,
+    E8h7,
+    Resolution,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1188,6 +1546,7 @@ pub enum CommunicationProtocol {
 
 /// SPI config
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SpiConfig {
     pub instance: String,
     pub sck: String,
@@ -1201,6 +1560,7 @@ pub struct SpiConfig {
 
 /// I2C config
 #[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct I2cConfig {
     pub instance: String,
     pub sda: String,
@@ -1296,7 +1656,7 @@ mod tests {
 
         // Check some key default values from event_default.toml
         assert_eq!(config.keyboard.channel_size, 16);
-        assert_eq!(config.keyboard.pubs, 2);
+        assert_eq!(config.keyboard.pubs, 4);
         assert_eq!(config.keyboard.subs, 3);
 
         assert_eq!(config.modifier.channel_size, 8);
@@ -1336,13 +1696,56 @@ channel_size = 32
 
         // User-overridden values
         assert_eq!(config.event.keyboard.channel_size, 32);
-        assert_eq!(config.event.keyboard.pubs, 2);
+        assert_eq!(config.event.keyboard.pubs, 4);
         assert_eq!(config.event.keyboard.subs, 3);
 
         // Non-overridden values should use defaults
         assert_eq!(config.event.modifier.channel_size, 8);
         assert_eq!(config.event.modifier.subs, 2);
         assert_eq!(config.event.layer_change.subs, 1);
+    }
+
+    #[test]
+    fn macro_space_size_matches_chunk_index_capacity() {
+        for size in [0, 32, 256, 1024, 1056, 8160, 8192] {
+            let config: KeyboardTomlConfig = toml::from_str(&format!("[rmk]\nmacro_space_size = {size}\n")).unwrap();
+            assert_eq!(config.build_constants(&[]).unwrap().macro_space_size, size);
+        }
+        for size in [31, 33, 8191, 8193, 8224, 65535] {
+            let error =
+                toml::from_str::<KeyboardTomlConfig>(&format!("[rmk]\nmacro_space_size = {size}\n")).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("macro_space_size must be a multiple of 32 between 0 and 8192")
+            );
+        }
+    }
+
+    #[test]
+    fn rmk_count_limits_fit_u8_capability_fields() {
+        let ok: KeyboardTomlConfig = toml::from_str(
+            r#"
+[rmk]
+combo_max_num = 255
+morse_max_num = 255
+fork_max_num = 255
+"#,
+        )
+        .unwrap();
+        assert_eq!(ok.rmk.combo_max_num, 255);
+        assert_eq!(ok.rmk.morse_max_num, 255);
+        assert_eq!(ok.rmk.fork_max_num, 255);
+
+        for (field, message) in [
+            ("combo_max_num", "combo_max_num must be between 0 and 255"),
+            ("morse_max_num", "morse_max_num must be between 0 and 255"),
+            ("fork_max_num", "fork_max_num must be between 0 and 255"),
+        ] {
+            let toml = format!("[rmk]\n{field} = 256\n");
+            let err = toml::from_str::<KeyboardTomlConfig>(&toml).unwrap_err();
+            assert!(err.to_string().contains(message), "{err}");
+        }
     }
 
     #[test]

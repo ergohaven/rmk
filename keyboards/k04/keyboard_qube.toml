@@ -7,7 +7,10 @@ manufacturer = "Ergohaven"
 chip = "nrf52840"
 
 [host]
-vial_enabled = true
+vial_enabled = false
+rynk_enabled = true
+# Writes need no unlock, as over Vial.
+write_requires_unlock = false
 unlock_keys = [[2, 2], [2, 1]]
 
 [rmk]
@@ -19,11 +22,21 @@ split_central_sleep_timeout_seconds = 300
 combo_max_num = 32
 fork_max_num = 32
 morse_max_num = 32
-macro_space_size = 2048
+# Rynk's encoding takes up to twice Vial's bytes, and a frame holds the whole pool.
+macro_space_size = 4096
+rynk_buffer_size = 4128
 ble_profiles_num = 5
 
 [ble]
 enabled = true
+# The controller's 7.5 ms default puts every other event of the 7.5 ms
+# trackball link on the 15 ms link of the other half. Two 3 ms events
+# spaced 3.75 ms apart fit with 0.75 ms to spare on each side.
+central_event_length_us = 3000
+central_acl_event_spacing_us = 3750
+# The Qube reaches the PC over USB only; host advertising would take radio
+# time from the half links.
+host_advertising = false
 
 [storage]
 # Keep the 128 KiB RMK settings area outside the linked application image.
@@ -99,9 +112,7 @@ internal_pullup = true
 [layout]
 rows = 10
 cols = 6
-layers = 16
-no_action_layer_start = 5
-matrix_map = """
+map = """
 (0,5,L) (0,4,L) (0,3,L) (0,2,L) (0,1,L) (0,0,L)                    (5,0,R) (5,1,R) (5,2,R) (5,3,R) (5,4,R) (5,5,R)
 (1,5,L) (1,4,L) (1,3,L) (1,2,L) (1,1,L) (1,0,L)                    (6,0,R) (6,1,R) (6,2,R) (6,3,R) (6,4,R) (6,5,R)
 (2,5,L) (2,4,L) (2,3,L) (2,2,L) (2,1,L) (2,0,L)                    (7,0,R) (7,1,R) (7,2,R) (7,3,R) (7,4,R) (7,5,R)
@@ -109,7 +120,11 @@ matrix_map = """
                   (4,5,*) (4,4,*) (4,3,*) (4,2,*) (4,1,*)    (9,1,*) (9,2,*) (9,3,*) (9,4,*) (9,5,*)
 """
 
-[[layer]]
+[keymap]
+layers = 16
+no_action_layer_start = 5
+
+[[keymap.layer]]
 name = "Base"
 keys = """
 Grave   Kc1   Kc2   Kc3   Kc4   Kc5   Kc6   Kc7   Kc8   Kc9   Kc0   Backspace
@@ -120,7 +135,7 @@ Delete  LGui  LCtrl MO(1) Space Enter MO(2) RAlt LeftBracket RightBracket
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Nav"
 keys = """
 F1            F2              F3    F4    F5     F6      F7  F8   F9   F10  F11  F12
@@ -131,7 +146,7 @@ PageDown      PageUp          _     _     _      _       MO(3) _    Kc0  _
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Symbols"
 keys = """
 _  _              SHIFTED(Kc2) SHIFTED(Kc4)      SHIFTED(Kc3)  _              _            _                   SHIFTED(Kc6)    _             _              _
@@ -142,7 +157,7 @@ _  _              _              MO(3)           _             _              _ 
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Adjust"
 keys = """
 Bootloader  _      _  _  _  _  User19 User20 User21 User22 User23 User26
@@ -153,7 +168,7 @@ _   _   _              _               _              _   _   _            _    
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Pointing"
 keys = """
 _  _      _          _          _          _      _      _          _          _          _      _

@@ -1,11 +1,12 @@
-use darling::FromMeta;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
+use rmk_config::SplitConnection;
 use rmk_config::resolved::hardware::{BoardConfig, CommunicationConfig};
 use rmk_config::resolved::{Behavior, Hardware, Host};
-use syn::{ItemFn, ItemMod};
+use syn::ItemMod;
 
 use super::override_helper::Overwritten;
+use crate::codegen::chip::flash::expand_dfu_interface;
 use crate::codegen::feature::{get_rmk_features, is_feature_enabled};
 
 #[allow(clippy::too_many_arguments)]
@@ -20,45 +21,27 @@ pub(crate) fn expand_rmk_entry(
     watchdog_task: Option<TokenStream2>,
 ) -> TokenStream2 {
     // If there is a function with `#[Overwritten(entry)]`, override the entry
-    if let Some((_, items)) = &item_mod.content {
-        items
-            .iter()
-            .find_map(|item| {
-                if let syn::Item::Fn(item_fn) = &item
-                    && item_fn.attrs.len() == 1
-                    && let Ok(Overwritten::Entry) = Overwritten::from_meta(&item_fn.attrs[0].meta)
-                {
-                    return Some(override_rmk_entry(item_fn));
-                }
-                None
-            })
-            .unwrap_or(rmk_entry_select(
-                hardware,
-                host,
-                behavior,
-                devices,
-                processors,
-                registered_processors,
-                watchdog_task,
-            ))
-    } else {
-        rmk_entry_select(
-            hardware,
-            host,
-            behavior,
-            devices,
-            processors,
-            registered_processors,
-            watchdog_task,
-        )
-    }
-}
-
-fn override_rmk_entry(item_fn: &ItemFn) -> TokenStream2 {
-    let content = &item_fn.block.stmts;
-    quote! {
-        #(#content)*
-    }
+    let entry_override = item_mod.content.as_ref().and_then(|(_, items)| {
+        items.iter().find_map(|item| {
+            if let syn::Item::Fn(item_fn) = item
+                && let Some(Ok(Overwritten::Entry)) =
+                    super::override_helper::find_overwritten(item_fn)
+            {
+                let content = &item_fn.block.stmts;
+                return Some(quote! { #(#content)* });
+            }
+            None
+        })
+    });
+    entry_override.unwrap_or(rmk_entry_select(
+        hardware,
+        host,
+        behavior,
+        devices,
+        processors,
+        registered_processors,
+        watchdog_task,
+    ))
 }
 
 pub(crate) fn rmk_entry_select(
@@ -101,18 +84,77 @@ pub(crate) fn rmk_entry_select(
         }
     };
 
-    let host_service_task = if host.vial_enabled {
-        Some(quote! { host_service.run() })
-    } else {
-        None
-    };
     let board = &hardware.board;
     let communication = &hardware.communication;
-    let use_2m_phy = communication
-        .get_ble_config()
-        .and_then(|config| config.use_2m_phy)
-        .unwrap_or(true);
-    let (transport_prelude, transport_tasks) = transport_setup(communication);
+    // A BLE split central's transport takes one matrix region per peripheral.
+    // A 125 Hz pointing source needs one connection event per 8 ms report, so
+    // only a peripheral that owns a pointing device gets the pointing cadence;
+    // key-only links keep the standard 15 ms profile.
+    let (split_peripheral_matrices, split_link_profiles) = match board {
+        BoardConfig::Split(split) if matches!(split.connection, SplitConnection::Ble) => {
+            let peripheral_matrices = split.peripheral.iter().map(|p| {
+                let rows = p.rows as u8;
+                let cols = p.cols as u8;
+                let row_offset = p.row_offset as u8;
+                let col_offset = p.col_offset as u8;
+                quote! {
+                    ::rmk::split::PeripheralMatrixConfig {
+                        rows: #rows,
+                        cols: #cols,
+                        row_offset: #row_offset,
+                        col_offset: #col_offset,
+                    }
+                }
+            });
+            let split_link_profiles = if split.peripheral.iter().any(|p| {
+                p.input_device
+                    .as_ref()
+                    .is_some_and(|devices| devices.has_pointing_device())
+            }) {
+                let profiles = split.peripheral.iter().map(|p| {
+                    if p.input_device
+                        .as_ref()
+                        .is_some_and(|devices| devices.has_pointing_device())
+                    {
+                        quote! { ::rmk::split::ble::central::SplitLinkProfile::Pointing }
+                    } else {
+                        quote! { ::rmk::split::ble::central::SplitLinkProfile::Keyboard }
+                    }
+                });
+                quote! { .with_split_link_profiles([#(#profiles),*]) }
+            } else {
+                quote! {}
+            };
+            (
+                quote! { , [#(#peripheral_matrices),*] },
+                split_link_profiles,
+            )
+        }
+        _ => (quote! {}, quote! {}),
+    };
+    // The DFU updater task only attaches to a USB transport. Split centrals
+    // seed the transport's passthrough alt slots from the peripheral count.
+    let communication_uses_usb = matches!(
+        communication,
+        CommunicationConfig::Usb(_) | CommunicationConfig::Both(_, _)
+    );
+    let (dfu_interface, num_peripherals) = if cfg!(feature = "_dfu") && communication_uses_usb {
+        let num_peripherals = match board {
+            BoardConfig::Split(split) => split.peripheral.len(),
+            BoardConfig::UniBody(_) => 0,
+        };
+        (expand_dfu_interface(hardware.dfu.as_ref()), num_peripherals)
+    } else {
+        (quote! {}, 0)
+    };
+    let (transport_prelude, transport_tasks) = transport_setup(
+        host,
+        communication,
+        split_peripheral_matrices,
+        split_link_profiles,
+        &dfu_interface,
+        num_peripherals,
+    );
 
     let entry = match board {
         BoardConfig::Split(split_config) => {
@@ -121,117 +163,92 @@ pub(crate) fn rmk_entry_select(
             };
             let mut tasks = vec![devices_task, keyboard_task];
             tasks.extend(registered_processors);
-            if let Some(t) = host_service_task {
-                tasks.push(t);
-            }
             tasks.extend(transport_tasks);
             if let Some(t) = &watchdog_task {
                 tasks.push(t.clone());
             }
-            if split_config.connection == "ble" {
-                if !processors.is_empty() {
-                    tasks.push(processors_task);
-                };
-                split_config.peripheral.iter().enumerate().for_each(|(idx, p)| {
-                    let row = p.rows;
-                    let col = p.cols;
-                    let row_offset = p.row_offset;
-                    let col_offset = p.col_offset;
-                    // A 125 Hz source needs one connection event per 8 ms
-                    // report. Select that cadence only for the peripheral
-                    // that owns the pointing device; key-only links retain
-                    // the standard 15 ms profile instead of doubling Qube's
-                    // total radio load.
-                    let split_link_profile = if p
-                        .input_device
-                        .as_ref()
-                        .is_some_and(|devices| devices.has_pointing_device())
-                    {
-                        quote! { ::rmk::split::ble::central::SplitLinkProfile::Pointing }
-                    } else {
-                        quote! { ::rmk::split::ble::central::SplitLinkProfile::Keyboard }
+            match split_config.connection {
+                SplitConnection::Ble => {
+                    if !processors.is_empty() {
+                        tasks.push(processors_task);
                     };
                     tasks.push(quote! {
-                        ::rmk::split::central::run_peripheral_manager_with_profile_and_phy::<#row, #col, #row_offset, #col_offset, _>(
-                            #idx,
-                            &peripheral_addrs,
-                            &stack,
-                            #split_link_profile,
-                            #use_2m_phy,
-                        )
+                        ::rmk::split::ble::central::run_split_connection_supervisor()
                     });
-                });
-                let scan_task = quote! {
-                    ::rmk::split::ble::central::scan_peripherals(&stack, &peripheral_addrs)
-                };
-                tasks.push(scan_task);
-                tasks.push(quote! {
-                    ::rmk::split::ble::central::run_split_connection_supervisor()
-                });
-                let joined = join_all_tasks(tasks);
-                quote! {
-                    #transport_prelude
-                    #auto_mouse_layer_prelude
-                    #joined
+                    let joined = join_all_tasks(tasks);
+                    quote! {
+                        #transport_prelude
+                        #auto_mouse_layer_prelude
+                        #joined
+                    }
                 }
-            } else if split_config.connection == "serial" {
-                if !processors.is_empty() {
-                    tasks.push(processors_task);
-                };
-                let central_serials = split_config
-                    .central
-                    .serial
-                    .clone()
-                    .expect("No serial defined for central");
-                split_config.peripheral.iter().enumerate().for_each(|(idx, p)| {
-                    let row = p.rows;
-                    let col = p.cols;
-                    let row_offset = p.row_offset;
-                    let col_offset = p.col_offset;
-                    let uart_instance = format_ident!(
-                        "{}",
-                        central_serials
-                            .get(idx)
-                            .expect("No or not enough serial defined for peripheral in central")
-                            .instance
-                            .to_lowercase()
-                    );
-                    let rmk_features = get_rmk_features();
-                    let dfu_split_enabled = is_feature_enabled(&rmk_features, "dfu_split");
-                    let policy = if dfu_split_enabled {
-                        match p.update_policy.as_deref() {
-                            Some("force") => quote! { ::rmk::split::central::UpdatePolicy::Force },
-                            _ => quote! { ::rmk::split::central::UpdatePolicy::MatchHash },
-                        }
-                    } else {
-                        quote! {}
+                SplitConnection::Serial => {
+                    if !processors.is_empty() {
+                        tasks.push(processors_task);
                     };
-                    tasks.push(quote! {
-                        ::rmk::split::central::run_peripheral_manager::<#row, #col, #row_offset, #col_offset, _>(
-                            #idx,
-                            #uart_instance,
-                            #policy
-                        )
-                    });
-                });
-                let joined = join_all_tasks(tasks);
-                quote! {
-                    #transport_prelude
-                    #auto_mouse_layer_prelude
-                    #joined
+                    let central_serials = split_config
+                        .central
+                        .serial
+                        .clone()
+                        .expect("No serial defined for central");
+                    split_config
+                        .peripheral
+                        .iter()
+                        .enumerate()
+                        .for_each(|(idx, p)| {
+                            let row = p.rows as u8;
+                            let col = p.cols as u8;
+                            let row_offset = p.row_offset as u8;
+                            let col_offset = p.col_offset as u8;
+                            let uart_instance =
+                                format_ident!(
+                            "{}",
+                            central_serials
+                                .get(idx)
+                                .expect("No or not enough serial defined for peripheral in central")
+                                .instance
+                                .to_lowercase()
+                        );
+                            let rmk_features = get_rmk_features();
+                            let dfu_split_enabled = is_feature_enabled(&rmk_features, "dfu_split");
+                            let policy = if dfu_split_enabled {
+                                match p.update_policy {
+                                    Some(rmk_config::UpdatePolicy::Force) => {
+                                        quote! { ::rmk::split::central::UpdatePolicy::Force }
+                                    }
+                                    _ => quote! { ::rmk::split::central::UpdatePolicy::MatchHash },
+                                }
+                            } else {
+                                quote! {}
+                            };
+                            tasks.push(quote! {
+                                ::rmk::split::central::run_peripheral_manager(
+                                    #idx,
+                                    #uart_instance,
+                                    ::rmk::split::PeripheralMatrixConfig {
+                                        rows: #row,
+                                        cols: #col,
+                                        row_offset: #row_offset,
+                                        col_offset: #col_offset,
+                                    },
+                                    #policy
+                                )
+                            });
+                        });
+
+                    let joined = join_all_tasks(tasks);
+                    quote! {
+                        #transport_prelude
+                        #auto_mouse_layer_prelude
+                        #joined
+                    }
                 }
-            } else {
-                panic!(
-                    "Invalid split connection type: {}, only \"ble\" and \"serial\" are supported",
-                    split_config.connection
-                );
             }
         }
         BoardConfig::UniBody(_) => rmk_entry_unibody(
             transport_prelude,
             auto_mouse_layer_prelude,
             transport_tasks,
-            host_service_task,
             devices_task,
             processors_task,
             registered_processors,
@@ -250,7 +267,6 @@ pub(crate) fn rmk_entry_unibody(
     transport_prelude: TokenStream2,
     auto_mouse_layer_prelude: Option<TokenStream2>,
     transport_tasks: Vec<TokenStream2>,
-    host_service_task: Option<TokenStream2>,
     devices_task: TokenStream2,
     processors_task: TokenStream2,
     registered_processors: Vec<TokenStream2>,
@@ -261,9 +277,6 @@ pub(crate) fn rmk_entry_unibody(
     };
 
     let mut tasks = vec![devices_task, keyboard_task];
-    if let Some(t) = host_service_task {
-        tasks.push(t);
-    }
     if !processors_task.is_empty() {
         tasks.push(processors_task);
     }
@@ -280,58 +293,88 @@ pub(crate) fn rmk_entry_unibody(
     }
 }
 
-/// Build (`let mut transport = ...;` prelude, transport `.run()` tasks) for the
-/// active communication config. The prelude must be emitted before the join so
-/// that `transport.run()` can borrow each transport for the lifetime of the
-/// program.
-fn transport_setup(communication: &CommunicationConfig) -> (TokenStream2, Vec<TokenStream2>) {
-    let use_2m_phy = communication
-        .get_ble_config()
-        .and_then(|config| config.use_2m_phy)
-        .unwrap_or(true);
+/// Build (`let transport = ...;` prelude, transport run tasks) for the active
+/// communication config.
+fn transport_setup(
+    host: &Host,
+    communication: &CommunicationConfig,
+    split_peripheral_matrices: TokenStream2,
+    split_link_profiles: TokenStream2,
+    dfu_interface: &TokenStream2,
+    num_peripherals: usize,
+) -> (TokenStream2, Vec<TokenStream2>) {
     let wpm_prelude = quote! {
         let mut wpm_processor = ::rmk::processor::builtin::wpm::WpmProcessor::new();
     };
     let wpm_task = quote! { wpm_processor.run() };
+
+    let host_active = host.vial_enabled || host.rynk_enabled;
+
+    let with_host = if host_active {
+        quote! { .with_host_service(&host_service) }
+    } else {
+        quote! {}
+    };
+
+    let dfu_split_enabled = is_feature_enabled(&get_rmk_features(), "dfu_split");
+    let usb_device_config = if matches!(communication, CommunicationConfig::Both(_, _)) {
+        quote! { rmk_config.device_config.clone() }
+    } else {
+        quote! { rmk_config.device_config }
+    };
+    let dfu_split_arg =
+        (dfu_split_enabled && !dfu_interface.is_empty()).then(|| quote! { , #num_peripherals });
+    let usb_prelude = quote! {
+        #dfu_interface
+        let mut usb_transport = ::rmk::usb::UsbTransport::new(driver, #usb_device_config #dfu_split_arg)#with_host;
+    };
+    // Boards may supply host-link power management through a config function.
+    let host_power_config = std::env::var("RMK_BLE_HOST_POWER_CONFIG_FN")
+        .ok()
+        .and_then(|path| syn::parse_str::<syn::Path>(&path).ok())
+        .map(|path| quote! { .with_host_power_config(#path()) });
+    let ble_prelude = quote! {
+        let mut ble_transport = ::rmk::ble::BleTransport::new(ble_controller, ble_addr, rmk_config #split_peripheral_matrices) #with_host #host_power_config #split_link_profiles;
+    };
+    let ble_task = quote! { ble_transport.run() };
+
+    // The DFU updater task runs alongside the transport it feeds.
+    let dfu_task = if dfu_interface.is_empty() {
+        quote! {}
+    } else {
+        quote! { dfu_iface.run() }
+    };
+
     match communication {
         CommunicationConfig::Usb(_) => {
             let prelude = quote! {
                 #wpm_prelude
-                let mut usb_transport = ::rmk::usb::UsbTransport::new(driver, rmk_config.device_config);
+                #usb_prelude
             };
-            (prelude, vec![quote! { usb_transport.run() }, wpm_task])
+            let mut tasks = vec![quote! { usb_transport.run() }, wpm_task];
+            if !dfu_task.is_empty() {
+                tasks.push(dfu_task);
+            }
+            (prelude, tasks)
         }
         CommunicationConfig::Ble(_) => {
             let prelude = quote! {
                 #wpm_prelude
-                let mut ble_transport = ::rmk::ble::BleTransport::new_with_host_power_and_phy_config(
-                    &stack,
-                    rmk_config,
-                    ble_host_power_config,
-                    #use_2m_phy,
-                ).await;
+                #ble_prelude
             };
-            (prelude, vec![quote! { ble_transport.run() }, wpm_task])
+            (prelude, vec![ble_task, wpm_task])
         }
         CommunicationConfig::Both(_, _) => {
             let prelude = quote! {
                 #wpm_prelude
-                let mut usb_transport = ::rmk::usb::UsbTransport::new(driver, rmk_config.device_config);
-                let mut ble_transport = ::rmk::ble::BleTransport::new_with_host_power_and_phy_config(
-                    &stack,
-                    rmk_config,
-                    ble_host_power_config,
-                    #use_2m_phy,
-                ).await;
+                #usb_prelude
+                #ble_prelude
             };
-            (
-                prelude,
-                vec![
-                    quote! { usb_transport.run() },
-                    quote! { ble_transport.run() },
-                    wpm_task,
-                ],
-            )
+            let mut tasks = vec![quote! { usb_transport.run() }, ble_task, wpm_task];
+            if !dfu_task.is_empty() {
+                tasks.insert(1, dfu_task);
+            }
+            (prelude, tasks)
         }
         CommunicationConfig::None => panic!("USB and BLE are both disabled"),
     }

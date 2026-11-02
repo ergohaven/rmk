@@ -8,19 +8,20 @@ manufacturer = "Ergohaven"
 chip = "nrf52840"
 
 [host]
-# Enable Vial support
-vial_enabled = true
-# Vial unlock positions for the full K:04 matrix.
+# Rynk with Ergohaven's commands; Vial is off.
+vial_enabled = false
+rynk_enabled = true
+# Writes need no unlock, as over Vial.
+write_requires_unlock = false
+# Unlock positions for the full K:04 matrix.
 unlock_keys = [[2, 2], [2, 1]]
 
 [layout]
 rows = 10
 cols = 6
-layers = 16
-no_action_layer_start = 5
-# matrix_map: maps physical (row,col) positions to logical matrix positions
+# map: maps physical (row,col) positions to logical matrix positions
 # Left half rows 0-4, right half rows 5-9.
-matrix_map = """
+map = """
 (0,5,L) (0,4,L) (0,3,L) (0,2,L) (0,1,L) (0,0,L)                    (5,0,R) (5,1,R) (5,2,R) (5,3,R) (5,4,R) (5,5,R)
 (1,5,L) (1,4,L) (1,3,L) (1,2,L) (1,1,L) (1,0,L)                    (6,0,R) (6,1,R) (6,2,R) (6,3,R) (6,4,R) (6,5,R)
 (2,5,L) (2,4,L) (2,3,L) (2,2,L) (2,1,L) (2,0,L)                    (7,0,R) (7,1,R) (7,2,R) (7,3,R) (7,4,R) (7,5,R)
@@ -28,7 +29,11 @@ matrix_map = """
              (4,5,*) (4,4,*) (4,3,*) (4,2,*) (4,1,*)    (9,1,*) (9,2,*) (9,3,*) (9,4,*) (9,5,*)
 """
 
-[[layer]]
+[keymap]
+layers = 16
+no_action_layer_start = 5
+
+[[keymap.layer]]
 name = "Base"
 # Matches the K04 reference layout image.
 keys = """
@@ -41,7 +46,7 @@ Delete  LGui  LCtrl MO(1) Space Enter MO(2) RAlt LeftBracket RightBracket
 # encoders: [central_A1/B1, peripheral_A1/B1]
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Nav"
 # Red layer: F keys, media, navigation, and numpad.
 keys = """
@@ -53,7 +58,7 @@ PageDown      PageUp          _     _     _      _       MO(3) _    Kc0  _
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Symbols"
 # Blue layer: symbols.
 # All shifted chars use SHIFTED() — RMK applies LShift automatically
@@ -66,7 +71,7 @@ _  _              _              MO(3)           _             _              _ 
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Adjust"
 # Yellow layer: firmware, User BT profile, and User output controls.
 keys = """
@@ -78,7 +83,7 @@ _   _   _              _               _              _   _   _            _    
 """
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
-[[layer]]
+[[keymap.layer]]
 name = "Pointing"
 # Green layer: pointing controls.
 keys = """
@@ -176,7 +181,9 @@ split_central_sleep_timeout_seconds = 120
 combo_max_num = 32
 fork_max_num = 32
 morse_max_num = 32
-macro_space_size = 2048
+# Rynk's encoding takes up to twice Vial's bytes, and a frame holds the whole pool.
+macro_space_size = 4096
+rynk_buffer_size = 4128
 ble_profiles_num = 5
 
 [storage]

@@ -23,18 +23,18 @@ use rmk::macros::rmk_peripheral;
 #[rmk_peripheral(id = 1)]
 mod keyboard_peripheral {
     #[cfg(classic_encoder_settings)]
-    #[register_processor(event)]
+    #[register_processor]
     fn encoder_settings_sync() -> crate::encoder_device_settings::EncoderSettingsSync {
         crate::encoder_device_settings::EncoderSettingsSync::new()
     }
 
-    #[register_processor(event)]
+    #[register_processor]
     fn battery() -> crate::battery_nrf::SplitBattery {
         crate::battery_nrf::SplitBattery::new(p.SAADC, p.P0_31)
     }
 
     #[cfg(velvet_pointing)]
-    #[register_processor(event)]
+    #[register_processor]
     fn pointing_settings() -> crate::velvet_pointing::VelvetPointingSettingsSync {
         crate::velvet_pointing::VelvetPointingSettingsSync::new()
     }

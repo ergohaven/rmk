@@ -1,11 +1,12 @@
-use darling::FromMeta;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote};
+use rmk_config::DcdcReg0Voltage;
 use rmk_config::resolved::Hardware;
 use rmk_config::resolved::hardware::{BoardConfig, ChipModel, ChipSeries, CommunicationConfig};
 use syn::{ItemFn, ItemMod};
 
-use crate::codegen::override_helper::Overwritten;
+use crate::codegen::feature::{get_rmk_features, is_feature_enabled};
+use crate::codegen::override_helper::{Overwritten, find_overwritten};
 
 /// Expand chip initialization code
 ///
@@ -22,13 +23,13 @@ pub(crate) fn expand_chip_init(
             .iter()
             .find_map(|item| {
                 if let syn::Item::Fn(item_fn) = &item
-                    && item_fn.attrs.len() == 1
+                    && let Some(Ok(overwritten)) = find_overwritten(item_fn)
                 {
-                    match Overwritten::from_meta(&item_fn.attrs[0].meta) {
-                        Ok(Overwritten::ChipConfig) => {
+                    match overwritten {
+                        Overwritten::ChipConfig => {
                             return Some(override_chip_config(&hardware.chip, item_fn));
                         }
-                        Ok(Overwritten::ChipInit) => {
+                        Overwritten::ChipInit => {
                             // Override the whole chip initialization
                             let stmts = &item_fn.block.stmts;
                             return Some(quote! { #(#stmts)* });
@@ -48,16 +49,7 @@ pub(crate) fn expand_chip_init(
 pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize>) -> TokenStream2 {
     let chip = &hardware.chip;
     let communication = &hardware.communication;
-    let peri_num = hardware.board.get_num_periphreal();
-    let set_io_capabilities = if peripheral_id.is_none() {
-        quote! {
-            if ::rmk::ble::passkey::passkey_entry_enabled() {
-                stack.set_io_capabilities(::rmk::IoCapabilities::KeyboardOnly);
-            }
-        }
-    } else {
-        quote! {}
-    };
+    let peri_num = hardware.board.get_num_peripheral();
     match chip.series {
         ChipSeries::Stm32 => quote! {
                 let config = ::embassy_stm32::Config::default();
@@ -68,16 +60,11 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
             let dcdc_config = if chip.chip == "nrf52840" {
                 let reg0_enabled = chip_cfg.dcdc_reg0.unwrap_or(true);
                 let reg1_enabled = chip_cfg.dcdc_reg1.unwrap_or(true);
-                let reg0_voltage_str = chip_cfg.dcdc_reg0_voltage.as_deref().unwrap_or("3V3");
-                let reg0_voltage = match reg0_voltage_str {
-                    "3V3" => quote! { ::embassy_nrf::config::Reg0Voltage::_3V3 },
-                    "1V8" => quote! { ::embassy_nrf::config::Reg0Voltage::_1V8 },
-                    _ => {
-                        panic!(
-                            "Invalid dcdc_reg0_voltage: {}. Must be \"3V3\" or \"1V8\"",
-                            reg0_voltage_str
-                        );
+                let (reg0_voltage, reg0_voltage_str) = match chip_cfg.dcdc_reg0_voltage {
+                    Some(DcdcReg0Voltage::V1_8) => {
+                        (quote! { ::embassy_nrf::config::Reg0Voltage::_1V8 }, "1V8")
                     }
+                    _ => (quote! { ::embassy_nrf::config::Reg0Voltage::_3V3 }, "3V3"),
                 };
                 quote! {
                     config.dcdc.reg0_voltage = Some(#reg0_voltage);
@@ -87,8 +74,20 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
                 }
             } else if chip.chip == "nrf52833" {
                 let reg1_enabled = chip_cfg.dcdc_reg1.unwrap_or(true);
+                // No DC/DC switch for REG0 on this part, but its output voltage is the same
+                // UICR.REGOUT0 setting as on the nRF52840. Left untouched unless configured.
+                let reg0_voltage = match chip_cfg.dcdc_reg0_voltage {
+                    Some(DcdcReg0Voltage::V1_8) => quote! {
+                        config.dcdc.reg0_voltage = Some(::embassy_nrf::config::Reg0Voltage::_1V8);
+                    },
+                    Some(DcdcReg0Voltage::V3_3) => quote! {
+                        config.dcdc.reg0_voltage = Some(::embassy_nrf::config::Reg0Voltage::_3V3);
+                    },
+                    None => quote! {},
+                };
                 quote! {
                     config.dcdc.reg1 = #reg1_enabled;
+                    #reg0_voltage
                     ::defmt::info!("DCDC config: reg1={}", #reg1_enabled);
                 }
             } else {
@@ -96,14 +95,74 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
             };
             let ble_addr = get_ble_addr(hardware, peripheral_id);
             // Calculate the size of sdc memory pool.
-            // By default it's 6KB, each peripheral increases 2304 bytes
-            let sdc_mem_size = if peripheral_id.is_none() {
-                // For central
-                4096 + peri_num * 2304
+            // Unibody: 4696. Split central: 6080 + (N-1) * 2288 per peripheral.
+            // Base memory sizes for the nrf-sdc memory pool
+            const SDC_MEM_UNIBODY: usize = 4696;
+            const SDC_MEM_SPLIT_BASE: usize = 6080;
+            const SDC_MEM_PER_EXTRA_PERIPHERAL: usize = 2288;
+
+            // Connection subrating adds extra memory per connection
+            const SDC_MEM_SUBRATING_BASE: usize = 136;
+            const SDC_MEM_SUBRATING_PER_PERIPHERAL: usize = 56;
+            const SDC_MEM_SUBRATING_PER_EXTRA_PERIPHERAL: usize = 8;
+
+            let subrating_enabled =
+                peri_num > 0 && is_feature_enabled(&get_rmk_features(), "subrating");
+
+            let sdc_mem_size = if peripheral_id.is_none() && peri_num > 0 {
+                // Split central
+                let base =
+                    SDC_MEM_SPLIT_BASE + peri_num.saturating_sub(1) * SDC_MEM_PER_EXTRA_PERIPHERAL;
+                if subrating_enabled {
+                    base + SDC_MEM_SUBRATING_BASE
+                        + peri_num.saturating_sub(1) * SDC_MEM_SUBRATING_PER_PERIPHERAL
+                        + peri_num.saturating_sub(2) * SDC_MEM_SUBRATING_PER_EXTRA_PERIPHERAL
+                } else {
+                    base
+                }
             } else {
-                // For peripheral
-                6144
+                // Unibody or split peripheral
+                if subrating_enabled {
+                    SDC_MEM_UNIBODY + SDC_MEM_SUBRATING_BASE
+                } else {
+                    SDC_MEM_UNIBODY
+                }
             };
+            // The controller applies both to connections created after this point,
+            // so they run before the stack starts.
+            let ble_config = communication
+                .get_ble_config()
+                .filter(|_| peripheral_id.is_none());
+            let central_scheduling: Vec<TokenStream2> = [
+                (
+                    ble_config
+                        .as_ref()
+                        .and_then(|ble| ble.central_event_length_us),
+                    quote! { NordicEventLengthSet },
+                ),
+                (
+                    ble_config
+                        .as_ref()
+                        .and_then(|ble| ble.central_acl_event_spacing_us),
+                    quote! { NordicCentralAclEventSpacingSet },
+                ),
+            ]
+            .into_iter()
+            .filter_map(|(us, command)| {
+                let us = us?;
+                Some(quote! {
+                    if ::bt_hci::controller::ControllerCmdSync::exec(
+                        &ble_controller,
+                        &::nrf_sdc::vendor::#command::new(#us),
+                    )
+                    .await
+                    .is_err()
+                    {
+                        ::defmt::panic!("SDC rejected {} = {} us", stringify!(#command), #us);
+                    }
+                })
+            })
+            .collect();
             let ble_init = match &communication {
                 CommunicationConfig::Ble(_) | CommunicationConfig::Both(_, _) => quote! {
                     // Initialize nrf-sdc and ble stack
@@ -112,7 +171,9 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
                         source: ::nrf_sdc::mpsl::raw::MPSL_CLOCK_LF_SRC_RC as u8,
                         rc_ctiv: ::nrf_sdc::mpsl::raw::MPSL_RECOMMENDED_RC_CTIV as u8,
                         rc_temp_ctiv: ::nrf_sdc::mpsl::raw::MPSL_RECOMMENDED_RC_TEMP_CTIV as u8,
-                        accuracy_ppm: ::nrf_sdc::mpsl::raw::MPSL_DEFAULT_CLOCK_ACCURACY_PPM as u16,
+                        // nRF52 LFRC is +/-500 ppm after calibration (PS 5.4.4.4); the 250 ppm
+                        // MPSL default understates it and narrows the receive window on the peer.
+                        accuracy_ppm: 500,
                         skip_wait_lfclk_started: ::nrf_sdc::mpsl::raw::MPSL_DEFAULT_SKIP_WAIT_LFCLK_STARTED != 0,
                     };
                     static MPSL: ::static_cell::StaticCell<::nrf_sdc::mpsl::MultiprotocolServiceLayer> = ::static_cell::StaticCell::new();
@@ -130,16 +191,9 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
                     );
                     let mut rng = ::embassy_nrf::rng::Rng::new(p.RNG, Irqs);
                     let mut sdc_mem = ::nrf_sdc::Mem::<#sdc_mem_size>::new();
-                    let sdc = ::defmt::unwrap!(build_sdc(sdc_p, &mut rng, &*mpsl, &mut sdc_mem));
+                    let ble_controller = ::defmt::unwrap!(build_sdc(sdc_p, &mut rng, &*mpsl, &mut sdc_mem));
+                    #(#central_scheduling)*
                     let ble_addr = #ble_addr;
-                    let mut host_resources = ::rmk::HostResources::new();
-                    let stack = ::rmk::ble::build_ble_stack(
-                        sdc,
-                        ble_addr,
-                        &mut host_resources,
-                    )
-                    .await;
-                    #set_io_capabilities
                 },
                 _ => quote! {},
             };
@@ -156,7 +210,8 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
             if communication.ble_enabled() {
                 quote! {
                     let config = ::embassy_rp::config::Config::default();
-                    let p = ::embassy_rp::init(config);
+                    #[allow(unused_mut)]
+                    let mut p = ::embassy_rp::init(config);
 
                     #[cfg(feature = "skip-cyw43-firmware")]
                     let (fw, clm, btfw, nvram) = {
@@ -200,45 +255,39 @@ pub(crate) fn chip_init_default(hardware: &Hardware, peripheral_id: Option<usize
                     spawner.spawn(cyw43_task(runner).unwrap());
                     control.init(clm).await;
 
-                    let controller: ::bt_hci::controller::ExternalController<_, 10> = ::bt_hci::controller::ExternalController::new(bt_device);
+                    let ble_controller: ::bt_hci::controller::ExternalController<_, 10> = ::bt_hci::controller::ExternalController::new(bt_device);
                     let ble_addr = #ble_addr;
-                    let mut host_resources = ::rmk::HostResources::new();
-                    let stack = ::rmk::ble::build_ble_stack(
-                        controller,
-                        ble_addr,
-                        &mut host_resources,
-                    )
-                    .await;
-                    #set_io_capabilities
                 }
             } else {
                 quote! {
                     let config = ::embassy_rp::config::Config::default();
-                    let p = ::embassy_rp::init(config);
+                    #[allow(unused_mut)]
+                    let mut p = ::embassy_rp::init(config);
                 }
             }
         }
         ChipSeries::Esp32 => {
             let ble_addr = get_ble_addr(hardware, peripheral_id);
+            let battery = match peripheral_id {
+                Some(id) => &hardware.peripheral_batteries[id],
+                None => &hardware.battery,
+            };
+            // Battery measurement and the optional ADC entropy source both need ADC1.
+            let adc_entropy_init = if battery.adc.is_none() {
+                quote! { let _trng_source = ::esp_hal::rng::TrngSource::new(p.RNG, p.ADC1); }
+            } else {
+                quote! {}
+            };
             quote! {
                 ::esp_println::logger::init_logger_from_env();
                 let p = ::esp_hal::init(::esp_hal::Config::default().with_cpu_clock(::esp_hal::clock::CpuClock::max()));
                 ::esp_alloc::heap_allocator!(size: 72 * 1024);
                 let timg0 = ::esp_hal::timer::timg::TimerGroup::new(p.TIMG0);
-                let software_interrupt = ::esp_hal::interrupt::software::SoftwareInterruptControl::new(p.SW_INTERRUPT);
-                ::esp_rtos::start(timg0.timer0, software_interrupt.software_interrupt0);
-                let _trng_source = ::esp_hal::rng::TrngSource::new(p.RNG, p.ADC1);
+                ::esp_rtos::start(timg0.timer0, p.FROM_CPU_INTR0);
+                #adc_entropy_init
                 let connector = ::esp_radio::ble::controller::BleConnector::new(p.BT, Default::default()).unwrap();
-                let controller: ::bt_hci::controller::ExternalController<_, 64> = ::bt_hci::controller::ExternalController::new(connector);
+                let ble_controller: ::bt_hci::controller::ExternalController<_, 64> = ::bt_hci::controller::ExternalController::new(connector);
                 let ble_addr = #ble_addr;
-                let mut host_resources = ::rmk::HostResources::new();
-                let stack = ::rmk::ble::build_ble_stack(
-                    controller,
-                    ble_addr,
-                    &mut host_resources,
-                )
-                .await;
-                #set_io_capabilities
             }
         }
     }
@@ -309,6 +358,94 @@ fn get_ble_addr(hardware: &Hardware, peripheral_id: Option<usize>) -> TokenStrea
             [
                 #(#addr),*
             ]
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quote::quote;
+    use rmk_config::KeyboardTomlConfig;
+
+    use super::chip_init_default;
+
+    /// The chip init generated for an nRF52833 keyboard whose `[chip.nrf52833]` holds `chip_section`.
+    fn nrf52833_chip_init(name: &str, chip_section: &str) -> String {
+        nrf52833_chip_init_with(name, &format!("[chip.nrf52833]\n{chip_section}"), None)
+    }
+
+    /// The chip init generated for `peripheral_id` of an nRF52833 keyboard with extra TOML `sections`.
+    fn nrf52833_chip_init_with(name: &str, sections: &str, peripheral_id: Option<usize>) -> String {
+        let path =
+            std::env::temp_dir().join(format!("rmk-macro-{name}-{}.toml", std::process::id()));
+        let toml = format!(
+            r#"
+[keyboard]
+name = "REG0 test"
+vendor_id = 0x4c4b
+product_id = 0x4643
+chip = "nrf52833"
+
+[matrix]
+row_pins = ["P0_02"]
+col_pins = ["P0_03"]
+
+[layout]
+rows = 1
+cols = 1
+
+{sections}
+"#
+        );
+        std::fs::write(&path, toml).unwrap();
+        let hardware = KeyboardTomlConfig::new_from_toml_path(&path).hardware();
+        std::fs::remove_file(&path).ok();
+        chip_init_default(&hardware.unwrap_or_else(|e| panic!("{e}")), peripheral_id).to_string()
+    }
+
+    #[test]
+    fn nrf52833_writes_the_configured_reg0_voltage() {
+        let tokens = nrf52833_chip_init("reg0-3v3", r#"dcdc_reg0_voltage = "3V3""#);
+        let expected =
+            quote! { config.dcdc.reg0_voltage = Some(::embassy_nrf::config::Reg0Voltage::_3V3); };
+        assert!(tokens.contains(&expected.to_string()), "{tokens}");
+
+        let tokens = nrf52833_chip_init("reg0-1v8", r#"dcdc_reg0_voltage = "1V8""#);
+        let expected =
+            quote! { config.dcdc.reg0_voltage = Some(::embassy_nrf::config::Reg0Voltage::_1V8); };
+        assert!(tokens.contains(&expected.to_string()), "{tokens}");
+    }
+
+    #[test]
+    fn nrf52833_leaves_reg0_alone_unless_configured() {
+        let tokens = nrf52833_chip_init("reg0-unset", "dcdc_reg1 = true");
+        assert!(!tokens.contains("reg0_voltage"), "{tokens}");
+    }
+
+    const CENTRAL_SCHEDULING: &str = "[ble]\nenabled = true\ncentral_event_length_us = 3000\ncentral_acl_event_spacing_us = 3750";
+
+    #[test]
+    fn central_applies_the_configured_sdc_scheduling() {
+        let tokens = nrf52833_chip_init_with("sdc-central", CENTRAL_SCHEDULING, None);
+        for expected in [
+            quote! { ::nrf_sdc::vendor::NordicEventLengthSet::new(3000u32) },
+            quote! { ::nrf_sdc::vendor::NordicCentralAclEventSpacingSet::new(3750u32) },
+        ] {
+            assert!(tokens.contains(&expected.to_string()), "{tokens}");
+        }
+    }
+
+    #[test]
+    fn sdc_scheduling_stays_off_peripherals_and_unset_boards() {
+        let peripheral = nrf52833_chip_init_with("sdc-peripheral", CENTRAL_SCHEDULING, Some(0));
+        let unset = nrf52833_chip_init_with("sdc-unset", "[ble]\nenabled = true", None);
+        for tokens in [peripheral, unset] {
+            assert!(tokens.contains("build_sdc"), "{tokens}");
+            assert!(!tokens.contains("NordicEventLengthSet"), "{tokens}");
+            assert!(
+                !tokens.contains("NordicCentralAclEventSpacingSet"),
+                "{tokens}"
+            );
         }
     }
 }

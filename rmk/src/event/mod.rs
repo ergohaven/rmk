@@ -14,9 +14,10 @@
 //! - `battery`: Battery events (ADC, charging, battery status)
 //! - `connection`: Connection events (USB/BLE, BLE status)
 //! - `split`: Split keyboard events (peripheral/central connection)
+//! - `dongle`: Dongle events (the dongle's link to its keyboard)
 
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_sync::pubsub::{ImmediatePublisher, Publisher, Subscriber};
+use embassy_sync::pubsub::{Error as PubSubError, ImmediatePublisher, Publisher, Subscriber};
 use embassy_sync::{channel, watch};
 
 /// Generates `Deref`, `From<Event> for Payload`, and `From<Payload> for Event`
@@ -47,8 +48,10 @@ macro_rules! impl_payload_wrapper {
 mod action;
 mod battery;
 mod connection;
-#[cfg(feature = "dfu")]
+#[cfg(feature = "_dfu")]
 mod dfu;
+#[cfg(feature = "dongle")]
+mod dongle;
 mod input;
 #[cfg(feature = "split")]
 mod split;
@@ -59,20 +62,23 @@ pub use battery::{BatteryAdcEvent, BatteryStatusEvent, ChargingStateEvent};
 #[cfg(feature = "_ble")]
 pub use connection::{BleAdvertisingMode, BleAdvertisingModeEvent};
 pub use connection::{ConnectionStatus, ConnectionStatusChangeEvent, ConnectionType};
-#[cfg(feature = "dfu")]
-pub use dfu::DfuStatusEvent;
+#[cfg(feature = "_dfu")]
+pub use dfu::{DfuCmdEvent, DfuStatusEvent};
+#[cfg(feature = "dongle")]
+pub use dongle::{DongleState, DongleStateEvent};
 pub use input::{
-    AutoMouseLayerConfigEvent, Axis, AxisEvent, AxisValType, KeyPos, KeyboardEvent, KeyboardEventPos, ModifierEvent,
+    AutoMouseLayerConfigEvent, Axis, AxisEvent, AxisValType, KeyPos, KeyboardEvent, KeyboardEventSource, ModifierEvent,
     PointingEvent, PointingProcessorEvent, PointingSetCpiEvent, PointingTransformEvent, RotaryEncoderPos,
+    TOUCH_MAX_CONTACTS, TouchContact, TouchEvent, TouchPos, TouchpadEvent,
 };
 #[cfg(feature = "split")]
 pub use split::{
-    CentralConnectedEvent, PeripheralConnectedEvent, PeripheralSettingsEvent, PeripheralSettingsRefreshEvent,
-    SplitConnectionState, SplitConnectionStateEvent, current_split_connection_state,
+    CentralConnectedEvent, PeripheralBatteryEvent, PeripheralConnectedEvent, PeripheralSettingsEvent,
+    PeripheralSettingsRefreshEvent, SplitConnectionState, SplitConnectionStateEvent, current_split_connection_state,
     set_current_split_connection_state,
 };
 #[cfg(all(feature = "split", feature = "_ble"))]
-pub use split::{ClearPeerEvent, PeripheralBatteryEvent, PeripheralBatteryRefreshEvent};
+pub use split::{ClearPeerEvent, PeripheralBatteryRefreshEvent};
 pub use state::{LayerChangeEvent, LedIndicatorEvent, SleepStateEvent, WpmUpdateEvent};
 
 /// Trait for event publishers
@@ -93,6 +99,15 @@ pub trait EventSubscriber {
     async fn next_event(&mut self) -> Self::Event;
 }
 
+// Timer-only processors keep the same run loops without allocating a channel or subscriber slot.
+impl EventSubscriber for core::future::Pending<core::convert::Infallible> {
+    type Event = core::convert::Infallible;
+
+    async fn next_event(&mut self) -> Self::Event {
+        self.await
+    }
+}
+
 /// Trait for events that can be published.
 pub trait PublishableEvent: Clone + Send {
     type Publisher: EventPublisher<Event = Self>;
@@ -107,7 +122,9 @@ pub trait PublishableEvent: Clone + Send {
 pub trait AsyncPublishableEvent: PublishableEvent {
     type AsyncPublisher: AsyncEventPublisher<Event = Self>;
 
-    fn publisher_async() -> Self::AsyncPublisher;
+    /// Errors when all `pubs` waker slots are taken, which happens only while
+    /// the channel is full and `pubs` publishers are blocked on it.
+    fn publisher_async() -> Result<Self::AsyncPublisher, PubSubError>;
 }
 
 /// Trait for events that can be subscribed to.
@@ -214,6 +231,20 @@ pub fn publish_event<E: PublishableEvent>(e: E) {
 /// Example: `publish_event_async(KeyboardEvent::key(0, 0, true)).await`
 pub async fn publish_event_async<E: AsyncPublishableEvent>(e: E) {
     if !E::PUBLISH_IS_NOOP {
-        E::publisher_async().publish_async(e).await;
+        let publisher = match E::publisher_async() {
+            Ok(p) => p,
+            Err(_) => {
+                // All `pubs` waker slots are held by publishers blocked on a full
+                // channel; there is no waker for a freed slot, so poll briefly.
+                warn!("publisher slots exhausted, consider raising [event] pubs in keyboard.toml");
+                loop {
+                    embassy_time::Timer::after_millis(1).await;
+                    if let Ok(p) = E::publisher_async() {
+                        break p;
+                    }
+                }
+            }
+        };
+        publisher.publish_async(e).await;
     }
 }

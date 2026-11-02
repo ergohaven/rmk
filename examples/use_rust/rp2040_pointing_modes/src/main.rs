@@ -41,7 +41,8 @@ const FLASH_SIZE: usize = 2 * 1024 * 1024;
 async fn main(_spawner: Spawner) {
     info!("RMK start!");
     // Initialize peripherals
-    let p = embassy_rp::init(Default::default());
+    let mut p = embassy_rp::init(Default::default());
+    let serial_number = rmk::config::rp2040_serial_number(p.FLASH.reborrow());
 
     // Create the usb driver, from the HAL
     let driver = Driver::new(p.USB, Irqs);
@@ -56,12 +57,12 @@ async fn main(_spawner: Spawner) {
     let flash = Flash::<_, Async, FLASH_SIZE>::new(p.FLASH, p.DMA_CH0, Irqs);
 
     let keyboard_device_config = DeviceConfig {
+        serial_number,
         vid: 0x4c4b,
         pid: 0x4643,
         manufacturer: "Haobo",
         product_name: "RMK Keyboard",
-        serial_number: "vial:f64c2b3c:000001",
-        device_release: 0x0010,
+        ..DeviceConfig::default()
     };
 
     let vial_config = VialConfig::new(VIAL_KEYBOARD_ID, VIAL_KEYBOARD_DEF, &[(0, 0), (1, 1)]);
@@ -90,10 +91,9 @@ async fn main(_spawner: Spawner) {
     let debouncer = DefaultDebouncer::new();
     let mut matrix = Matrix::<_, _, _, ROW, COL, true>::new(row_pins, col_pins, debouncer);
     let mut keyboard = Keyboard::new(&keymap);
-    let host_ctx = rmk::host::KeyboardContext::new(&keymap);
-    let mut host_service = HostService::new(&host_ctx, &rmk_config);
+    let host_service = HostService::new(&keymap, &rmk_config);
 
-    let mut usb_transport = UsbTransport::new(driver, rmk_config.device_config);
+    let mut usb_transport = UsbTransport::new(driver, rmk_config.device_config).with_host_service(&host_service);
     let mut wpm_processor = WpmProcessor::new();
 
     let mut pointing_controller = PointingProcessorController::new();
@@ -108,7 +108,6 @@ async fn main(_spawner: Spawner) {
         wpm_processor,
         pointing_controller,
         keyboard,
-        host_service,
         watchdog_runner
     )
     .await;

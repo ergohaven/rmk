@@ -34,6 +34,12 @@ A modular split 66-key keyboard
 
 ![zsa-voyager](../../images/zsa-voyager.webp)
 
+## [Lunakbd](https://github.com/gbPagano/lunakbd)
+
+A split wireless keyboard designed from scratch: schematic and PCB in KiCad, case in FreeCAD, and firmware built on RMK running on nice!nano (nRF52840) controllers. The two halves connect over BLE to a central USB dongle.
+
+![Lunakbd](https://raw.githubusercontent.com/gbPagano/lunakbd/main/photos/up-down-4-web.jpg)
+
 ## Show your keyboard!
 
 If you're using RMK to build your keyboard, feel free to open a PR adding your project to this page!

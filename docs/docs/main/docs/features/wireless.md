@@ -1,14 +1,14 @@
 # Wireless
 
-RMK has built-in wireless (BLE) support for nRF52 series, ESP32, and Raspberry Pi Pico W. To use the wireless feature, you need to enable the corresponding feature gate in your `Cargo.toml`:
+RMK has built-in wireless (BLE) support for nRF52 and nRF54 series, ESP32, Raspberry Pi Pico W, and SF32LB52x. To use the wireless feature, you need to enable the corresponding feature gate in your `Cargo.toml`:
 
 ```toml
-rmk = { version = "...", features = [
+rmk = { version = "0.9", features = [
     "nrf52840_ble", # Enable BLE feature for nRF52840
 ] }
 ```
 
-RMK also provides BLE examples; check out [nrf52840_ble](https://github.com/HaoboGu/rmk/tree/main/examples/use_config/nrf52840_ble), [nrf52832_ble](https://github.com/HaoboGu/rmk/tree/main/examples/use_config/nrf52832_ble), [pi_pico_w_ble](https://github.com/HaoboGu/rmk/tree/main/examples/use_config/pi_pico_w_ble), and [esp32c3_ble](https://github.com/HaoboGu/rmk/tree/main/examples/use_config/esp32c3_ble) for more details.
+RMK also provides BLE examples; check out [nrf52840_ble](https://github.com/rmk-rs/rmk/tree/main/examples/use_config/nrf52840_ble), [nrf52832_ble](https://github.com/rmk-rs/rmk/tree/main/examples/use_config/nrf52832_ble), [pi_pico_w_ble](https://github.com/rmk-rs/rmk/tree/main/examples/use_config/pi_pico_w_ble), and [esp32c3_ble](https://github.com/rmk-rs/rmk/tree/main/examples/use_config/esp32c3_ble) for more details.
 
 Since multiple targets are not currently supported by `docs.rs`, API documentation is not available on `docs.rs`. Check the examples for usage.
 
@@ -16,21 +16,34 @@ Since multiple targets are not currently supported by `docs.rs`, API documentati
 
 The following is the list of available feature gates (i.e., supported BLE chips):
 
+- nrf54lm20_ble (Rust API only)
+- nrf54l15_ble (Rust API only)
 - nrf52840_ble
 - nrf52833_ble
 - nrf52832_ble
+- nrf52820_ble
 - nrf52811_ble
 - nrf52810_ble
 - esp32c3_ble
 - esp32c6_ble
+- esp32h2_ble
 - esp32s3_ble
 - pico_w_ble (for Raspberry Pi Pico W and Raspberry Pi Pico 2 W)
+- sf32lb52x_ble (Rust API only)
+
+`keyboard.toml` recognizes `chip` values starting with `stm32`, `nrf52`, `rp2040` or `esp32`, plus the [supported boards](../configuration/keyboard_device#supported-development-boards). Chips marked "Rust API only" have no `keyboard.toml` support yet; start from their `examples/use_rust` projects.
 
 ## Nice!nano Support
 
 RMK has special support for [nice!nano](https://nicekeyboards.com/), a widely used board for building wireless keyboards.
 
-nice!nano has a built-in bootloader that enables flashing a .uf2 format firmware via USB drive. [`examples/use_rust/nrf52840_ble/README.md`](https://github.com/HaoboGu/rmk/blob/main/examples/use_rust/nrf52840_ble/README.md) provides instructions for converting RMK firmware to .uf2 format.
+nice!nano has a built-in bootloader that enables flashing a .uf2 format firmware via USB drive. [`examples/use_rust/nrf52840_ble/README.md`](https://github.com/rmk-rs/rmk/blob/main/examples/use_rust/nrf52840_ble/README.md) provides instructions for converting RMK firmware to .uf2 format.
+
+Enable the `adafruit_bl` Cargo feature so that the `Bootloader` keycode reboots into the Adafruit nRF52 bootloader (the UF2 drive); without it the key only reboots the keyboard. Both `nrf52840_ble` examples enable it:
+
+```toml
+rmk = { version = "0.9", features = ["nrf52840_ble", "adafruit_bl"] }
+```
 
 You can also refer to the [RMK user guide](../user_guide/flash_firmware#use-uf2-bootloader) for the instructions.
 
@@ -40,15 +53,17 @@ RMK has multiple BLE profile support. The number of profiles can be set in the [
 
 Vial user keycodes can be configured to operate wireless profiles. Suppose that you have N BLE profiles, then:
 
-- `User0` - `User(N-1)`: switch to a specific profile
+- `User0` - `User(N-1)`: switch to a specific profile. Hold the key for 5 seconds to clear that profile's bond and pair a new host: the keyboard switches to the cleared profile and advertises openly.
 - `UserN`: switch to the next profile
 - `User(N+1)`: switch to the previous profile
 - `User(N+2)`: clear current profile bond info
 - `User(N+3)`: switch default output between USB/BLE
+- `User(N+4)`: clear the stored split peer bond — hold the key for 5 seconds (BLE split keyboards only)
+- `User(N+5)`: switch to the dongle bond slot, a slot of its own that profile cycling never reaches. Hold the key for 5 seconds to clear that bond and go looking for another dongle. Keyboards built with the `dongle` feature only — see [Dongle](./dongle).
 
-Vial also provides a way to customize the displayed keycode, see `customKeycodes` in [this example](https://github.com/HaoboGu/rmk/blob/main/examples/use_rust/nrf52840_ble/vial.json). If `customKeycodes` are configured, the `User0` ~ `User(N+3)` will be displayed as `BT0`, ..., `Switch Output`.
+Vial also provides a way to customize the displayed keycode, see `customKeycodes` in [this example](https://github.com/rmk-rs/rmk/blob/main/examples/use_rust/nrf52840_ble/vial.json). If `customKeycodes` are configured, the `User0` ~ `User(N+3)` will be displayed as `BT0`, ..., `Switch Output`.
 
-If you've connected a host to a profile, other devices will not be able to connect to this profile without manually clearing it first.
+If you've connected a host to a profile, other devices will not be able to connect to this profile: the keyboard immediately disconnects any device that doesn't match the profile's stored bond. To pair a different host to that profile, clear it first, for example by holding the profile's key for 5 seconds.
 
 ## BLE Passkey Entry
 

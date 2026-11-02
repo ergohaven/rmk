@@ -6,11 +6,12 @@ trackpad modules.
 
 ::: note
 
-- Currently only relative single-finger cursor movement is reported. Gestures,
-  multi-finger absolute positions, pressure, area, and raw channel data are
-  read from the IC but not yet published as RMK events.
-- Scaling is not supported yet; cursor movements will likely feel fast and
-  imprecise.
+- `keyboard.toml` configuration is supported on nRF52 and RP2040 only; other chips
+  need the [Rust API](#rust-configuration).
+- Relative single-finger movement is supported by default. The [Rust API](#rust-configuration)
+  also exposes absolute finger positions through `Iqs5xxMode::RawTouch`.
+  Gesture recognition, pressure, area, and raw channel data are not provided by this driver.
+- Use [Sniper mode](./pointing_processor#sniper) to reduce cursor sensitivity.
 - An `RDY` (ready) pin is strongly recommended. Without it, the driver falls
   back to timed polling and may stall the I²C bus through clock-stretching if
   it polls mid-cycle. See [RDY vs polling](#rdy-vs-polling).
@@ -36,9 +37,10 @@ trackpad modules.
 ```toml
 [[input_device.iqs5xx]]
 name = "trackpad0"
-id = 0 # optional 0-255. Used for debug prints. Defaults to 0.
+id = 0 # optional 0-255 pointing-device id; the generated PointingProcessor
+       # is paired to it. Defaults to 0.
 
-i2c.instance = "I2C0"  # RP2040: I2C0 / I2C1.  nRF52: TWISPI0 / TWISPI1 / TWISPI2.
+i2c.instance = "I2C0"  # RP2040: I2C0 / I2C1.  nRF52: TWISPI0 / TWISPI1.
 i2c.sda = "PIN_4"
 i2c.scl = "PIN_5"
 
@@ -49,6 +51,13 @@ rdy = "PIN_15"
 # proc_invert_x = true
 # proc_invert_y = true
 # proc_swap_xy = true
+# Optional cursor acceleration in PointingProcessor: motion faster than `from`
+# sensor counts per second is scaled up in proportion to its speed, to at most
+# `max` percent. Slower motion passes unchanged. Counts depend on the sensor's
+# resolution, so retune `from` after changing it.
+# acceleration = { from = 1500, max = 250 }
+# The same for scroll mode, applied before the scroll divisor.
+# scroll_acceleration = { from = 1500, max = 300 }
 ```
 
 ### Split
@@ -97,6 +106,8 @@ let proc_config = PointingProcessorConfig {
     // invert_x: true,
     // invert_y: true,
     // swap_xy: true,
+    // acceleration: Some(PointerAcceleration { from_counts_per_s: 1500, max_percent: 250 }),
+    // scroll_acceleration: Some(PointerAcceleration { from_counts_per_s: 1500, max_percent: 300 }),
     ..Default::default()
 };
 let mut trackpad_proc = PointingProcessor::new(&keymap, proc_config);
@@ -106,14 +117,20 @@ run_all!(trackpad, trackpad_proc, /* matrix, ... */);
 
 ::: note
 
-`PointingProcessor` must run on the **central** side, even if the trackpad is
-wired to a peripheral. The peripheral runs the `Iqs5xx` device and forwards
-events over the split link; the central converts them to USB/BLE HID reports.
+In the default pointing mode, `PointingProcessor` must run on the **central**
+side, even if the trackpad is wired to a peripheral. The peripheral runs the
+`Iqs5xx` device and forwards events over the split link; the central converts
+them to USB/BLE HID reports.
 
 You can switch between Cursor, Scroll, Sniper and Caret modes per layer.
 See the [PointingProcessor](./pointing_processor) page for all options.
 
 :::
+
+For raw touch input, use `.with_mode(Iqs5xxMode::RawTouch)` and a processor
+that subscribes to `TouchEvent` on the same board. Set `[event.touch].subs`
+to the number of subscribers (it defaults to `0`). Raw touch events stay
+on that board; the processor can publish keyboard or pointing events for the split link.
 
 ## RDY vs polling
 

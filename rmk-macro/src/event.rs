@@ -109,8 +109,8 @@ fn generate_mpsc_channel(
                 { #cap }
             >;
 
-            fn publisher_async() -> Self::AsyncPublisher {
-                #channel_name.sender()
+            fn publisher_async() -> Result<Self::AsyncPublisher, ::embassy_sync::pubsub::Error> {
+                Ok(#channel_name.sender())
             }
         }
     };
@@ -149,6 +149,15 @@ fn generate_pubsub_channel(
         > = ::embassy_sync::pubsub::PubSubChannel::new();
     };
 
+    let empty_method = quote! {
+        impl #type_name #ty_generics {
+            /// Returns `true` when every subscriber has consumed every published message.
+            pub(crate) fn empty() -> bool {
+                #channel_name.is_empty()
+            }
+        }
+    };
+
     let trait_impls = quote! {
         impl #impl_generics ::rmk::event::PublishableEvent for #type_name #ty_generics #where_clause {
             type Publisher = ::embassy_sync::pubsub::ImmediatePublisher<
@@ -181,7 +190,7 @@ fn generate_pubsub_channel(
                     concat!(
                         "Failed to create subscriber for ",
                         stringify!(#type_name),
-                        ". The 'subs' limit has been exceeded. Increase the 'subs' parameter in #[event(subs = N)]."
+                        ". The 'subs' limit has been exceeded. Increase 'subs' for this event in keyboard.toml [event] (or #[event(subs = N)] for custom events)."
                     )
                 )
             }
@@ -197,19 +206,13 @@ fn generate_pubsub_channel(
                 { #pubs_val }
             >;
 
-            fn publisher_async() -> Self::AsyncPublisher {
-                #channel_name.publisher().expect(
-                    concat!(
-                        "Failed to create async publisher for ",
-                        stringify!(#type_name),
-                        ". The 'pubs' limit has been exceeded. Increase the 'pubs' parameter in #[event(pubs = N)]."
-                    )
-                )
+            fn publisher_async() -> Result<Self::AsyncPublisher, ::embassy_sync::pubsub::Error> {
+                #channel_name.publisher()
             }
         }
     };
 
-    (channel_static, trait_impls)
+    (channel_static, quote! { #empty_method #trait_impls })
 }
 
 /// Implementation of the unified `#[event]` macro.

@@ -1,5 +1,5 @@
 use quote::{format_ident, quote};
-use rmk_config::resolved::hardware::{BleConfig, ChipSeries, JoystickConfig};
+use rmk_config::resolved::hardware::{BatteryAdcConfig, ChipSeries, JoystickConfig};
 
 use super::Initializer;
 
@@ -7,7 +7,7 @@ use super::Initializer;
 /// Returns (device initializers, processor initializers)
 pub(crate) fn expand_adc_device(
     joystick_config: Vec<JoystickConfig>,
-    ble_config: Option<BleConfig>,
+    battery_adc: Option<&BatteryAdcConfig>,
     chip_model: ChipSeries,
 ) -> (Vec<Initializer>, Vec<Initializer>) {
     match chip_model {
@@ -22,10 +22,8 @@ pub(crate) fn expand_adc_device(
             let mut devices = vec![];
             let mut processors = vec![];
 
-            if let Some(ble) = ble_config
-                && ble.enabled
-                && let Some(adc_pin) = ble.battery_adc_pin
-            {
+            if let Some(adc) = battery_adc {
+                let adc_pin = &adc.pin;
                 let adc_pin_def = if adc_pin == "vddh" {
                     quote! {
                         saadc::ChannelConfig::single_ended(saadc::VddhDiv5Input.degrade_saadc())
@@ -42,23 +40,6 @@ pub(crate) fn expand_adc_device(
                 });
                 // Battery event slot: device_id unused, fill with 0
                 event_device_ids.push(0u8);
-
-                let (adc_divider_measured, adc_divider_total) = if adc_pin == "vddh" {
-                    (1, 5)
-                } else {
-                    (
-                        ble.adc_divider_measured.unwrap_or(1),
-                        ble.adc_divider_total.unwrap_or(1),
-                    )
-                };
-                let bat_ident = format_ident!("battery_processor");
-                let battery_processor = Initializer {
-                    initializer: quote! {
-                        let mut #bat_ident = ::rmk::input_device::battery::BatteryProcessor::new(#adc_divider_measured, #adc_divider_total);
-                    },
-                    var_name: bat_ident,
-                };
-                processors.push(battery_processor);
             }
 
             // polling interval with joystick
@@ -102,7 +83,7 @@ pub(crate) fn expand_adc_device(
                 processors.push(joystick_processor);
             }
 
-            if !processors.is_empty() {
+            if !channel_cfg.is_empty() {
                 let light_sleep_option = if let Some(light_sleep_interval) = light_sleep {
                     quote! {Some(Duration::from_millis(#light_sleep_interval as u64))}
                 } else {
@@ -139,6 +120,60 @@ pub(crate) fn expand_adc_device(
                 (Vec::new(), Vec::new())
             }
         }
-        _ => (Vec::new(), Vec::new()),
+        ChipSeries::Rp2040 => {
+            let Some(adc) = battery_adc else {
+                return (Vec::new(), Vec::new());
+            };
+            let pin = format_ident!("{}", adc.pin);
+            (
+                vec![Initializer {
+                    initializer: quote! {
+                        let mut adc_device = {
+                            use ::embassy_rp::adc::{Adc, Channel, Config, InterruptHandler};
+                            ::embassy_rp::bind_interrupts!(struct BatteryAdcIrqs {
+                                ADC_IRQ_FIFO => InterruptHandler;
+                            });
+                            let adc = Adc::new(p.ADC, BatteryAdcIrqs, Config::default());
+                            let pin = Channel::new_pin(p.#pin, ::embassy_rp::gpio::Pull::None);
+                            ::rmk::input_device::adc::rp2040::Rp2040BatteryAdc::new(
+                                adc, pin, ::rmk::embassy_time::Duration::from_secs(30),
+                            )
+                        };
+                    },
+                    var_name: format_ident!("adc_device"),
+                }],
+                Vec::new(),
+            )
+        }
+        ChipSeries::Esp32 => {
+            let Some(adc) = battery_adc else {
+                return (Vec::new(), Vec::new());
+            };
+            let pin = format_ident!("{}", adc.pin);
+            (
+                vec![Initializer {
+                    initializer: quote! {
+                        let mut adc_device = {
+                            use ::esp_hal::analog::adc::{Adc, AdcConfig, AdcCalLine, Attenuation};
+                            let mut config = AdcConfig::new();
+                            let pin = config.enable_pin_with_cal::<_, AdcCalLine<_>>(p.#pin, Attenuation::_11dB);
+                            let adc = Adc::new(p.ADC1, config).into_async();
+                            ::rmk::input_device::adc::esp32::Esp32BatteryAdc::new(
+                                adc, pin, ::rmk::embassy_time::Duration::from_secs(30),
+                            )
+                        };
+                    },
+                    var_name: format_ident!("adc_device"),
+                }],
+                Vec::new(),
+            )
+        }
+        _ => {
+            assert!(
+                battery_adc.is_none(),
+                "Automatic battery ADC setup is not available for this chip"
+            );
+            (Vec::new(), Vec::new())
+        }
     }
 }
