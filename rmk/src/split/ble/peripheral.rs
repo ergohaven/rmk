@@ -441,7 +441,15 @@ async fn split_peripheral_advertise<'a, 'b, C: Controller + ExtAdvCmds>(
         && directed_secs > 0
     {
         let directed = Adv::Directed(Address::random(addr));
-        match advertise(peripheral, &server.server, directed, None, Duration::from_secs(directed_secs)).await {
+        match advertise(
+            peripheral,
+            &server.server,
+            directed,
+            None,
+            Duration::from_secs(directed_secs),
+        )
+        .await
+        {
             Err(BleHostError::BleHost(Error::Timeout)) => {
                 warn!("[adv] directed split reconnect timeout, falling back to seeking advertising");
                 // Cancelling the accept does not guarantee that nrf-sdc has
@@ -456,9 +464,15 @@ async fn split_peripheral_advertise<'a, 'b, C: Controller + ExtAdvCmds>(
         id: id as u8,
         product_id: crate::SPLIT_PRODUCT_ID,
     };
-    advertise(peripheral, &server.server, seeking, None, Duration::from_secs(seeking_secs))
-        .await
-        .map(|conn| (conn, true))
+    advertise(
+        peripheral,
+        &server.server,
+        seeking,
+        None,
+        Duration::from_secs(seeking_secs),
+    )
+    .await
+    .map(|conn| (conn, true))
 }
 
 /// Directed and seeking advertising windows in seconds. A configured split
