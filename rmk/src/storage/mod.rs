@@ -40,6 +40,9 @@ use crate::config::StorageConfig;
 #[cfg(all(feature = "_ble", feature = "split"))]
 use crate::split::ble::PeerAddress;
 
+mod timeout_flash;
+use timeout_flash::{TimeoutFlash, TimeoutFlashError};
+
 /// An operation request to the `Storage` task.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
@@ -106,9 +109,9 @@ pub(crate) fn reset() -> impl Future<Output = ()> {
     FLASH_CHANNEL.send((FlashOperationMessage::Reset, None))
 }
 
-/// Quiet period before draining staged keymap writes to flash. Host replies are
-/// sent as soon as the live keymap is updated, so a bulk keymap upload never
-/// waits on flash and cannot back-pressure the host service.
+/// Quiet period before draining staged keymap and board settings writes to flash.
+/// Host replies are sent as soon as the live state is updated, so a bulk keymap
+/// upload never waits on flash and cannot back-pressure the host service.
 #[cfg(feature = "host")]
 const KEYMAP_FLASH_SETTLE_TIMEOUT: Duration = Duration::from_millis(500);
 
@@ -203,6 +206,7 @@ pub(crate) async fn flush_staged_writes() {
     let drained = async {
         while !KEYMAP_FLASH_PENDING.lock(|pending| pending.borrow().is_empty())
             || !MACRO_FLASH_PENDING.lock(|pending| pending.borrow().is_empty())
+            || DEVICE_SETTINGS_FLASH_PENDING.lock(|pending| pending.borrow().is_some())
         {
             Timer::after_millis(10).await;
         }
@@ -230,6 +234,22 @@ pub(crate) fn queue_keymap_flash_write(layer: u8, row: u8, col: u8, action: KeyA
         KEYMAP_FLASH_SIGNAL.signal(());
     }
     queued
+}
+
+/// The board settings block a host wrote last, not in flash yet.
+#[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
+static DEVICE_SETTINGS_FLASH_PENDING: embassy_sync::blocking_mutex::Mutex<
+    crate::RawMutex,
+    RefCell<Option<config::VialDeviceSettingsData>>,
+> = embassy_sync::blocking_mutex::Mutex::new(RefCell::new(None));
+
+/// Stage the board settings block without waiting for flash. Every setting a host
+/// changes rewrites the whole block, and an editor slider sends one every few tens
+/// of milliseconds, so only the latest block is written, after the keymap's quiet period.
+#[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
+pub(crate) fn queue_device_settings_flash_write(data: config::VialDeviceSettingsData) {
+    DEVICE_SETTINGS_FLASH_PENDING.lock(|pending| *pending.borrow_mut() = Some(data));
+    KEYMAP_FLASH_SIGNAL.signal(());
 }
 
 #[cfg(feature = "host")]
@@ -557,12 +577,10 @@ pub(crate) const SCHEMA_HASH: u32 = {
     hash
 };
 
+type StorageCache = Cache<CalculatedPageStates, ArrayPagePointers<32>, ArrayKeyPointers<StorageKey, 32>, StorageKey>;
+
 pub struct Storage<F: AsyncNorFlash> {
-    pub(crate) flash: MapStorage<
-        StorageKey,
-        F,
-        Cache<CalculatedPageStates, ArrayPagePointers<32>, ArrayKeyPointers<StorageKey, 32>, StorageKey>,
-    >,
+    pub(crate) flash: MapStorage<StorageKey, TimeoutFlash<F>, StorageCache>,
     pub(crate) buffer: [u8; BUFFER_SIZE],
     #[cfg(feature = "host")]
     pub(crate) clear_layout: bool,
@@ -589,11 +607,11 @@ impl<F: AsyncNorFlash> Storage<F> {
         self.flash
             .fetch_item(&mut self.buffer, &key)
             .await
-            .map_err(|e| print_storage_error::<F>(e))
+            .map_err(print_storage_error)
     }
 
     // Like `store`: split first so the future holds the pair, not the pair and `item`.
-    fn put(&mut self, item: StorageItem) -> impl Future<Output = Result<(), SSError<F::Error>>> {
+    fn put(&mut self, item: StorageItem) -> impl Future<Output = Result<(), SSError<TimeoutFlashError<F::Error>>>> {
         let (key, value) = item.split();
         #[cfg(feature = "host")]
         let key = match key {
@@ -655,7 +673,7 @@ impl<F: AsyncNorFlash> Storage<F> {
             )
         };
         let mut storage = Self {
-            flash: MapStorage::new(flash, MapConfig::new(storage_range.clone()), cache()),
+            flash: MapStorage::new(TimeoutFlash(flash), MapConfig::new(storage_range.clone()), cache()),
             buffer: [0; BUFFER_SIZE],
             #[cfg(feature = "host")]
             clear_layout: false,
@@ -702,7 +720,7 @@ impl<F: AsyncNorFlash> Storage<F> {
     ) {
         let mut put = async |item| {
             if let Err(e) = self.put(item).await {
-                print_storage_error::<F>(e);
+                print_storage_error(e);
             }
         };
         put(StorageItem::BehaviorConfig(behavior.into())).await;
@@ -796,26 +814,38 @@ impl<F: AsyncNorFlash> crate::core_traits::Runnable for Storage<F> {
                     continue;
                 }
                 Either6::Third(()) => {
-                    let next = KEYMAP_FLASH_PENDING.lock(|pending| {
-                        let mut pending = pending.borrow_mut();
-                        let next = pending.take_next();
-                        (next, !pending.is_empty())
-                    });
-                    let (Some((index, action)), more) = next else {
-                        keymap_deadline = None;
-                        continue;
-                    };
-                    keymap_deadline = more.then(Instant::now);
-                    let layer_size = crate::KEYMAP_ROWS * crate::KEYMAP_COLS;
-                    // KEYMAP_COLS is 1 in a build without keyboard.toml.
-                    #[allow(clippy::modulo_one)]
-                    let item = StorageItem::Keymap {
-                        layer: (index / layer_size) as u8,
-                        row: (index % layer_size / crate::KEYMAP_COLS) as u8,
-                        col: (index % crate::KEYMAP_COLS) as u8,
-                        action,
-                    };
-                    (FlashOperationMessage::Store(item), None, true)
+                    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
+                    let settings = DEVICE_SETTINGS_FLASH_PENDING
+                        .lock(|pending| pending.borrow_mut().take())
+                        .map(StorageItem::DeviceSettings);
+                    #[cfg(not(any(feature = "vial", feature = "ergohaven_rynk")))]
+                    let settings = None;
+                    if let Some(item) = settings {
+                        // Come straight back for keys staged alongside.
+                        keymap_deadline = Some(Instant::now());
+                        (FlashOperationMessage::Store(item), None, true)
+                    } else {
+                        let next = KEYMAP_FLASH_PENDING.lock(|pending| {
+                            let mut pending = pending.borrow_mut();
+                            let next = pending.take_next();
+                            (next, !pending.is_empty())
+                        });
+                        let (Some((index, action)), more) = next else {
+                            keymap_deadline = None;
+                            continue;
+                        };
+                        keymap_deadline = more.then(Instant::now);
+                        let layer_size = crate::KEYMAP_ROWS * crate::KEYMAP_COLS;
+                        // KEYMAP_COLS is 1 in a build without keyboard.toml.
+                        #[allow(clippy::modulo_one)]
+                        let item = StorageItem::Keymap {
+                            layer: (index / layer_size) as u8,
+                            row: (index % layer_size / crate::KEYMAP_COLS) as u8,
+                            col: (index % crate::KEYMAP_COLS) as u8,
+                            action,
+                        };
+                        (FlashOperationMessage::Store(item), None, true)
+                    }
                 }
                 Either6::Fourth(()) => {
                     macro_deadline = Some(Instant::now() + MACRO_FLASH_SETTLE_TIMEOUT);
@@ -845,9 +875,7 @@ impl<F: AsyncNorFlash> crate::core_traits::Runnable for Storage<F> {
             #[cfg(not(feature = "host"))]
             let (message, reply_id) = FLASH_CHANNEL.receive().await;
             let result = match message {
-                FlashOperationMessage::Store(item) => {
-                    self.put(item).await.map(|_| None).map_err(print_storage_error::<F>)
-                }
+                FlashOperationMessage::Store(item) => self.put(item).await.map(|_| None).map_err(print_storage_error),
                 FlashOperationMessage::Read(key) => self.fetch(key).await,
                 FlashOperationMessage::Reset => {
                     let _ = self.flash.erase_all().await;
@@ -867,7 +895,7 @@ impl<F: AsyncNorFlash> crate::core_traits::Runnable for Storage<F> {
     }
 }
 
-pub(crate) fn print_storage_error<F: AsyncNorFlash>(e: SSError<F::Error>) {
+pub(crate) fn print_storage_error<E: Debug>(e: SSError<E>) {
     match e {
         #[cfg(feature = "defmt")]
         SSError::Storage { value: e } => error!("Flash error: {:?}", defmt::Debug2Format(&e)),
@@ -1108,7 +1136,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            let (flash, _) = storage.flash.destroy();
+            let (TimeoutFlash(flash), _) = storage.flash.destroy();
             let mut fresh =
                 MapStorage::<StorageKey, _, _>::new(flash, MapConfig::new(STORAGE_RANGE), Cache::new_uncached());
             let mut buffer = [0u8; 256];
@@ -1192,7 +1220,7 @@ mod tests {
                 .unwrap();
 
             // A reboot into a firmware compiled with the other keymap: the stored edit still wins.
-            let (flash, _) = storage.flash.destroy();
+            let (TimeoutFlash(flash), _) = storage.flash.destroy();
             let mut storage = new_storage(flash).await;
             let mut data = KeymapData::new([[[b]]]);
             storage.read_layout(&mut data, &mut behavior).await.unwrap();
@@ -1203,7 +1231,7 @@ mod tests {
                 clear_layout: true,
                 ..RuntimeStorageConfig::default()
             };
-            let (flash, _) = storage.flash.destroy();
+            let (TimeoutFlash(flash), _) = storage.flash.destroy();
             let mut storage = new_storage_configured(flash, &clear_layout).await;
             assert!(storage.clear_layout, "a matching schema arms the layout rewrite");
             storage.write_layout(&mut KeymapData::new([[[b]]]), &behavior).await;
@@ -1245,7 +1273,7 @@ mod tests {
         block_on(async {
             // The first boot writes this firmware's schema, so the second honours `clear_layout`.
             let storage = new_storage(async_flash_wrapper(Part::new())).await;
-            let (flash, _) = storage.flash.destroy();
+            let (TimeoutFlash(flash), _) = storage.flash.destroy();
             let mut storage = new_storage_configured(flash, &clear_layout).await;
             let mut data = KeymapData::new([[[KeyAction::No]]]);
             let mut b = behavior();
@@ -1268,7 +1296,7 @@ mod tests {
                 Either::Second(bytes) => bytes,
             };
 
-            let (flash, _) = storage.flash.destroy();
+            let (TimeoutFlash(flash), _) = storage.flash.destroy();
             let mut storage = new_storage(flash).await;
             let mut data = KeymapData::new([[[KeyAction::No]]]);
             let mut b = behavior();
@@ -1290,6 +1318,39 @@ mod tests {
             reset().await;
             Timer::after(MACRO_FLASH_SETTLE_TIMEOUT * 2).await;
             assert_eq!(part.writes(), before);
+        });
+    }
+
+    /// An editor slider sends a full settings block per step. The steps must cost one
+    /// write once the host goes quiet, not one write each while it is still sending.
+    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
+    #[test]
+    fn staged_device_settings_collapse_to_the_latest_block() {
+        let block = |value: u8| {
+            let mut settings = config::VialDeviceSettingsData::empty();
+            settings.len = 1;
+            settings.data[0] = value;
+            settings
+        };
+        let part = Part::new();
+        with_storage_task(part.clone(), async {
+            let before = part.writes();
+            queue_device_settings_flash_write(block(0));
+            flush_staged_writes().await;
+            let one_block = part.writes() - before;
+
+            let before = part.writes();
+            for value in 1..=7 {
+                queue_device_settings_flash_write(block(value));
+                Timer::after_millis(50).await;
+            }
+            assert_eq!(part.writes(), before, "nothing is written while the host keeps sending");
+            Timer::after(KEYMAP_FLASH_SETTLE_TIMEOUT * 2).await;
+            assert_eq!(part.writes() - before, one_block);
+            assert!(matches!(
+                read(StorageKey::DeviceSettings).await,
+                Ok(Some(StorageValue::DeviceSettings(stored))) if stored.data[0] == 7
+            ));
         });
     }
 
@@ -1538,6 +1599,91 @@ mod tests {
             let read = storage.read_device_settings().await.unwrap().unwrap();
             assert_eq!(read.len, 3);
             assert_eq!(read.data, settings.data);
+        });
+    }
+
+    /// While set, `StallingFlash` erases and writes never finish, like a radio timeslot
+    /// that is never granted.
+    static STALL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    struct StallingFlash(TestFlash);
+
+    impl embedded_storage_async::nor_flash::ErrorType for StallingFlash {
+        type Error = <TestFlash as embedded_storage_async::nor_flash::ErrorType>::Error;
+    }
+
+    impl embedded_storage_async::nor_flash::ReadNorFlash for StallingFlash {
+        const READ_SIZE: usize = <TestFlash as embedded_storage_async::nor_flash::ReadNorFlash>::READ_SIZE;
+
+        async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), Self::Error> {
+            embedded_storage_async::nor_flash::ReadNorFlash::read(&mut self.0, offset, bytes).await
+        }
+
+        fn capacity(&self) -> usize {
+            embedded_storage_async::nor_flash::ReadNorFlash::capacity(&self.0)
+        }
+    }
+
+    impl AsyncNorFlash for StallingFlash {
+        const WRITE_SIZE: usize = <TestFlash as AsyncNorFlash>::WRITE_SIZE;
+        const ERASE_SIZE: usize = <TestFlash as AsyncNorFlash>::ERASE_SIZE;
+
+        async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
+            if STALL.load(core::sync::atomic::Ordering::Relaxed) {
+                core::future::pending::<()>().await;
+            }
+            AsyncNorFlash::erase(&mut self.0, from, to).await
+        }
+
+        async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
+            if STALL.load(core::sync::atomic::Ordering::Relaxed) {
+                core::future::pending::<()>().await;
+            }
+            AsyncNorFlash::write(&mut self.0, offset, bytes).await
+        }
+    }
+
+    /// A write that times out fails on its own: the map keeps what was stored before,
+    /// takes the next write, and a fresh map over the same flash reads the same.
+    #[test]
+    fn a_timed_out_write_leaves_the_map_usable() {
+        let part = Part::new();
+        block_on(async {
+            let config = RuntimeStorageConfig::default();
+            let mut storage = Box::pin(Storage::new(StallingFlash(async_flash_wrapper(part.clone())), &config)).await;
+            storage.put(StorageItem::LayoutOption(1)).await.unwrap();
+
+            STALL.store(true, core::sync::atomic::Ordering::Relaxed);
+            let start = embassy_time::Instant::now();
+            assert!(matches!(
+                storage.put(StorageItem::DefaultLayer(2)).await,
+                Err(SSError::Storage {
+                    value: TimeoutFlashError::Timeout
+                })
+            ));
+            assert!(start.elapsed() >= timeout_flash::FLASH_OP_TIMEOUT_PER_PAGE);
+            STALL.store(false, core::sync::atomic::Ordering::Relaxed);
+
+            storage.put(StorageItem::DefaultLayer(3)).await.unwrap();
+            assert!(matches!(
+                storage.fetch(StorageKey::LayoutOption).await,
+                Ok(Some(StorageValue::LayoutOption(1)))
+            ));
+            assert!(matches!(
+                storage.fetch(StorageKey::DefaultLayer).await,
+                Ok(Some(StorageValue::DefaultLayer(3)))
+            ));
+
+            let (TimeoutFlash(StallingFlash(flash)), _) = storage.flash.destroy();
+            let mut storage = new_storage(flash).await;
+            assert!(matches!(
+                storage.fetch(StorageKey::LayoutOption).await,
+                Ok(Some(StorageValue::LayoutOption(1)))
+            ));
+            assert!(matches!(
+                storage.fetch(StorageKey::DefaultLayer).await,
+                Ok(Some(StorageValue::DefaultLayer(3)))
+            ));
         });
     }
 }

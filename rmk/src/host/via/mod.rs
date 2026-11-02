@@ -1025,7 +1025,7 @@ mod tests {
             }
 
             let (flash, _) = storage.flash.destroy();
-            let mut storage = Box::pin(Storage::new(flash, &config)).await;
+            let mut storage = Box::pin(Storage::new(flash.0, &config)).await;
             let mut data = KeymapData::new([[[KeyAction::No]]]);
             let mut behavior = BehaviorConfig::default();
             let keymap = KeyMap::new_from_storage(&mut data, Some(&mut storage), &mut behavior, &positional).await;
