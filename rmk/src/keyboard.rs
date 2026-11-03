@@ -2427,6 +2427,66 @@ mod test {
         block_on(main);
     }
 
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[test]
+    fn universal_macros_execute_on_release_including_tap_hold() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN};
+            let mut keyboard = create_test_keyboard();
+            let english = State::default();
+            let mut russian = english;
+            russian.handle(USER_SET_RUSSIAN, None);
+            // RU then EN in separate slots. Actual layout switching uses the
+            // normal Universal report path, including its mock-clock delays.
+            keyboard
+                .keymap
+                .write_macro_buffer(0, &[1, 5, 0x83, 0x7E, 0, 1, 5, 0x82, 0x7E, 0, 1, 5, 0x80, 0x7E, 0]);
+            keyboard.execute_macro(0, KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.execute_macro(0, KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            keyboard.execute_macro(1, KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.execute_macro(0, KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            // A native tap-hold with the macro on its hold branch: crossing the
+            // threshold selects it, but it must execute only once on release.
+            keyboard.keymap.set_action_by_flat_index(
+                0,
+                KeyAction::TapHold(Action::No, Action::TriggerMacro(2), Default::default()),
+            );
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.execute_macro(2, KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.execute_macro(2, KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+
+            use rmk_types::morse::{Morse, MorseProfile};
+            keyboard
+                .keymap
+                .with_morse_mut(0, |morse| {
+                    *morse = Morse::new_from_vial(
+                        Action::No,
+                        Action::TriggerMacro(2),
+                        Action::No,
+                        Action::TriggerMacro(2),
+                        MorseProfile::const_default(),
+                    );
+                })
+                .expect("dynamic Morse slot");
+            keyboard.keymap.set_action_by_flat_index(0, KeyAction::Morse(0));
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+        });
+    }
+
     #[test]
     fn test_modifier_key() {
         let main = async {
