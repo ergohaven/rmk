@@ -25,6 +25,16 @@ commands act on press and ignore release, so a tap executes once and a
 release operation alone has no effect. Existing layout synchronization and
 platform settings continue to apply.
 
+If all six keyboard report slots are occupied, a layout switch is skipped
+without changing the firmware's layout state. Release a key and run the
+command again to switch layouts.
+
+Like other macro key actions, Universal steps consume pending one-shot
+modifiers and layers, including language controls that do not type a key.
+Entropy offers Universal choices for Tap steps because each action runs
+to completion on press; a separate Up step has no effect. Existing macro
+bytes using extended press or release operations still decode unchanged.
+
 Macro slots can also be selected by native Tap-Hold and Morse actions.
 Macros execute on key release: crossing the hold threshold selects the
 hold action, then releasing the key runs its macro. This capability does
