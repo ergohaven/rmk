@@ -89,6 +89,12 @@ fn request(mut message: FlashOperationMessage) -> impl Future<Output = Result<Op
     }
 }
 
+#[cfg(test)]
+pub(crate) fn universal_test_flash_channel()
+-> &'static Channel<crate::RawMutex, (FlashOperationMessage, Option<u8>), { crate::FLASH_CHANNEL_SIZE }> {
+    &FLASH_CHANNEL
+}
+
 /// Write `item`, resolving once it has landed on flash.
 pub(crate) fn store(item: StorageItem) -> impl Future<Output = Result<Option<StorageValue>, ()>> {
     request(FlashOperationMessage::Store(item))
@@ -347,6 +353,8 @@ pub(crate) enum StorageKey {
         layer: u8,
         idx: u8,
     },
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    UniversalSymbolsPlatform,
 }
 
 /// A Storage item is actually a storage (key, value) pair.
@@ -403,11 +411,18 @@ pub(crate) enum StorageItem {
     },
     #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     DeviceSettings(config::VialDeviceSettingsData),
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    UniversalSymbolsPlatform(bool),
 }
 
 impl StorageItem {
     fn split(self) -> (StorageKey, StorageValue) {
         match self {
+            #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+            Self::UniversalSymbolsPlatform(v) => (
+                StorageKey::UniversalSymbolsPlatform,
+                StorageValue::UniversalSymbolsPlatform(v),
+            ),
             Self::StorageConfig(v) => (StorageKey::StorageConfig, StorageValue::StorageConfig(v)),
             Self::DefaultLayer(v) => (StorageKey::DefaultLayer, StorageValue::DefaultLayer(v)),
             Self::LayoutOption(v) => (StorageKey::LayoutOption, StorageValue::LayoutOption(v)),
@@ -492,6 +507,8 @@ pub(crate) enum StorageValue {
     UserData(heapless::Vec<u8, USER_DATA_MAX_SIZE>),
     #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     DeviceSettings(config::VialDeviceSettingsData),
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    UniversalSymbolsPlatform(bool),
 }
 
 impl<'a> PostcardValue<'a> for StorageValue {}
@@ -701,6 +718,19 @@ impl<F: AsyncNorFlash> Storage<F> {
             }
         }
 
+        #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+        {
+            let mac = matches!(
+                storage.fetch(StorageKey::UniversalSymbolsPlatform).await,
+                Ok(Some(StorageValue::UniversalSymbolsPlatform(true)))
+            );
+            crate::universal_symbols::restore_platform(mac);
+            let options = match storage.fetch(StorageKey::LayoutOption).await {
+                Ok(Some(StorageValue::LayoutOption(options))) => options,
+                _ => 0,
+            };
+            crate::universal_symbols::set_layout_options(options);
+        }
         storage
     }
 
@@ -1072,6 +1102,129 @@ mod tests {
                 Either::Second(out) => out,
             }
         })
+    }
+
+    #[cfg(all(feature = "vial", feature = "universal_symbols_iso"))]
+    #[test]
+    fn universal_context_ack_and_same_build_restore_preserve_layout() {
+        use crate::universal_symbols::{Command, Platform, State, USER_SYMBOL_START};
+        let part = Part::new();
+        let mask = crate::universal_symbols::tests::ISO_LAYOUT_OPTION_MASK;
+        with_storage_task(part.clone(), async {
+            let mut data = crate::keymap::KeymapData::new([[[KeyAction::No]]]);
+            let mut behavior = RuntimeBehaviorConfig::default();
+            let positional = crate::config::PositionalConfig::<1, 1>::default();
+            let keymap = crate::keymap::KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let ctx = crate::host::context::KeyboardContext::new(&keymap);
+            store(StorageItem::DefaultLayer(7)).await.unwrap();
+            store(StorageItem::Keymap {
+                layer: 0,
+                row: 0,
+                col: 0,
+                action: KeyAction::Transparent,
+            })
+            .await
+            .unwrap();
+            store(StorageItem::UniversalSymbolsPlatform(true)).await.unwrap();
+            let options = 7 | mask;
+            ctx.set_layout_options(options).await.unwrap();
+            assert_eq!(ctx.layout_options(), options);
+            assert!(
+                matches!(read(StorageKey::LayoutOption).await, Ok(Some(StorageValue::LayoutOption(v))) if v == options)
+            );
+            let mut s = State::default();
+            s.handle(crate::universal_symbols::USER_TOGGLE_MACOS, None);
+            let Some(Command::Type(grave)) = s.handle(USER_SYMBOL_START + 7, None) else {
+                panic!()
+            };
+            assert_eq!(grave.stroke.keycode, rmk_types::keycode::HidKeyCode::NonusBackslash);
+            part.fail_writes(true);
+            assert!(
+                ctx.set_layout_options(0).await.is_err(),
+                "failed persistence must not ACK success"
+            );
+            assert_eq!(
+                ctx.layout_options(),
+                0,
+                "accepted live keymap behavior is retained on failure"
+            );
+            part.fail_writes(false);
+        });
+        block_on(async {
+            crate::universal_symbols::restore_platform(false);
+            crate::universal_symbols::set_layout_options(0);
+            let before = part.writes();
+            let mut storage = new_storage(async_flash_wrapper(part.clone())).await;
+            assert_eq!(part.writes(), before, "same-build boot must not rewrite flash");
+            assert_eq!(State::default().platform(), Platform::Mac);
+            let Some(Command::Type(grave)) = State::default().handle(USER_SYMBOL_START + 7, None) else {
+                panic!()
+            };
+            assert_eq!(grave.stroke.keycode, rmk_types::keycode::HidKeyCode::NonusBackslash);
+            let mut data = crate::keymap::KeymapData::new([[[KeyAction::No]]]);
+            let mut behavior = RuntimeBehaviorConfig::default();
+            storage.read_layout(&mut data, &mut behavior).await.unwrap();
+            assert_eq!(data.keymap[0][0][0], KeyAction::Transparent);
+            assert_eq!(behavior.default_layer, 7);
+            assert_eq!(data.layout_option, 7 | mask);
+            storage.put(StorageItem::UniversalSymbolsPlatform(false)).await.unwrap();
+            storage.put(StorageItem::LayoutOption(7 & !mask)).await.unwrap();
+            crate::universal_symbols::restore_platform(true);
+            crate::universal_symbols::set_layout_options(mask);
+            let before = part.writes();
+            let mut storage = new_storage(async_flash_wrapper(part.clone())).await;
+            assert_eq!(part.writes(), before);
+            assert_eq!(State::default().platform(), Platform::Pc);
+            assert!(matches!(storage.fetch(StorageKey::LayoutOption).await,
+                Ok(Some(StorageValue::LayoutOption(v))) if v == 7 & !mask));
+            let mut s = State::default();
+            s.handle(crate::universal_symbols::USER_TOGGLE_MACOS, None);
+            let Some(Command::Type(grave)) = s.handle(USER_SYMBOL_START + 7, None) else {
+                panic!()
+            };
+            assert_eq!(grave.stroke.keycode, rmk_types::keycode::HidKeyCode::Grave);
+        });
+    }
+
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[test]
+    fn universal_storage_records_follow_the_target_tail_variants() {
+        let mut buf = [0u8; 32];
+        let last = postcard::to_slice(&StorageKey::EncoderTailV3 { layer: 0, idx: 0 }, &mut buf).unwrap()[0];
+        assert_eq!(
+            postcard::to_slice(&StorageKey::UniversalSymbolsPlatform, &mut buf).unwrap()[0],
+            last + 1
+        );
+        let last = postcard::to_slice(
+            &StorageValue::DeviceSettings(config::VialDeviceSettingsData::empty()),
+            &mut [0u8; 512],
+        )
+        .unwrap()[0];
+        assert_eq!(
+            postcard::to_slice(&StorageValue::UniversalSymbolsPlatform(true), &mut buf).unwrap()[0],
+            last + 1
+        );
+    }
+
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[test]
+    fn universal_absent_platform_defaults_pc_without_rewriting_flash() {
+        let part = Part::new();
+        block_on(async {
+            let _ = new_storage(async_flash_wrapper(part.clone())).await;
+            let before = part.writes();
+            crate::universal_symbols::restore_platform(true);
+            let mut storage = new_storage(async_flash_wrapper(part.clone())).await;
+            assert_eq!(
+                crate::universal_symbols::State::default().platform(),
+                crate::universal_symbols::Platform::Pc
+            );
+            assert!(matches!(
+                storage.fetch(StorageKey::UniversalSymbolsPlatform).await,
+                Ok(None)
+            ));
+            assert_eq!(part.writes(), before);
+        });
     }
 
     #[test]

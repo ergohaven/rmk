@@ -709,6 +709,20 @@ impl<'a> KeyMap<'a> {
         self.inner.borrow().behavior.morse.default_profile
     }
 
+    /// The Vial profile resolver exposes raw optional fields, not merged defaults.
+    #[cfg(feature = "vial")]
+    pub(crate) fn morse_profile_resolution(&self, idx: u8) -> (MorseProfile, MorseProfile, bool, u16) {
+        let resolved = self.morse_profile(idx);
+        let inner = self.inner.borrow();
+        let morse = &inner.behavior.morse;
+        (
+            resolved,
+            morse.default_profile,
+            morse.profiles.get(idx as usize).is_some(),
+            morse.profiles.len() as u16,
+        )
+    }
+
     /// Resolve a per-key morse profile by its table index: the table entry if
     /// present, otherwise the user-configured default profile. Fields left
     /// `None` by the resolved profile are still filled in per-field by the

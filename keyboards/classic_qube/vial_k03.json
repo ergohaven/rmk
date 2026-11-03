@@ -1,0 +1,626 @@
+{
+    "name": "Ergohaven K:03",
+    "manufacturer": "Ergohaven",
+    "vendorId": "0xE126",
+    "productId": "0x0070",
+    "entropy": {
+        "firmwareUpdate": {
+            "asset": "k03"
+        },
+        "batteryHalves": true
+    },
+    "firmware": {
+        "name": "RMK",
+        "version": "0.2.0"
+    },
+    "firmwareVersion": "0.2.0",
+    "lighting": "none",
+    "matrix": {
+        "rows": 10,
+        "cols": 6
+    },
+    "customKeycodes": [
+        {
+            "name": "BT0",
+            "title": "Bluetooth Profile 0",
+            "shortName": "BT0"
+        },
+        {
+            "name": "BT1",
+            "title": "Bluetooth Profile 1",
+            "shortName": "BT1"
+        },
+        {
+            "name": "BT2",
+            "title": "Bluetooth Profile 2",
+            "shortName": "BT2"
+        },
+        {
+            "name": "BT3",
+            "title": "Bluetooth Profile 3",
+            "shortName": "BT3"
+        },
+        {
+            "name": "BT4",
+            "title": "Bluetooth Profile 4",
+            "shortName": "BT4"
+        },
+        {
+            "name": "BT_NEXT",
+            "title": "Next BT Profile",
+            "shortName": "BT\nNext"
+        },
+        {
+            "name": "BT_PREV",
+            "title": "Previous BT Profile",
+            "shortName": "BT\nPrev"
+        },
+        {
+            "name": "BT_CLR",
+            "title": "Clear BT bond",
+            "shortName": "BT\nClr"
+        },
+        {
+            "name": "BT_TOG",
+            "title": "Toggle BT connection",
+            "shortName": "BT\nTog"
+        },
+        {
+            "name": "BT_PEER",
+            "title": "Clear split peer",
+            "shortName": "Peer\nClr"
+        }
+    ],
+    "layouts": {
+        "keymap": [
+            [
+                {
+                    "rx": 1,
+                    "y": 0.4
+                },
+                "0,5",
+                "0,4",
+                {
+                    "y": -0.45
+                },
+                "0,3",
+                {
+                    "y": -0.1
+                },
+                "0,2",
+                {
+                    "y": 0.1
+                },
+                "0,1",
+                {
+                    "y": 0.15
+                },
+                "0,0"
+            ],
+            [
+                {
+                    "y": 0.3
+                },
+                "1,5",
+                "1,4",
+                {
+                    "y": -0.45
+                },
+                "1,3",
+                {
+                    "y": -0.1
+                },
+                "1,2",
+                {
+                    "y": 0.1
+                },
+                "1,1",
+                {
+                    "y": 0.15
+                },
+                "1,0"
+            ],
+            [
+                {
+                    "y": 0.3
+                },
+                "2,5",
+                "2,4",
+                {
+                    "y": -0.45
+                },
+                "2,3",
+                {
+                    "y": -0.1
+                },
+                "2,2",
+                {
+                    "y": 0.1
+                },
+                "2,1",
+                {
+                    "y": 0.15
+                },
+                "2,0"
+            ],
+            [
+                {
+                    "y": 0.3
+                },
+                "3,5",
+                "3,4",
+                {
+                    "y": -0.45
+                },
+                "3,3",
+                {
+                    "y": -0.1
+                },
+                "3,2",
+                {
+                    "y": 0.1
+                },
+                "3,1",
+                {
+                    "y": 0.15
+                },
+                "3,0",
+                "4,0"
+            ],
+            [
+                {
+                    "x": 2,
+                    "y": -0.15
+                },
+                "4,5",
+                {
+                    "y": -0.1
+                },
+                "4,4"
+            ],
+            [
+                {
+                    "r": 20,
+                    "rx": 5.3,
+                    "ry": 4.0
+                },
+                "4,3",
+                {
+                    "y": -0.2
+                },
+                "4,2",
+                {
+                    "y": -0.2
+                },
+                "4,1"
+            ],
+            [
+                {
+                    "r": 0,
+                    "rx": 8,
+                    "ry": 2.6
+                },
+                "0,1\n\n\n\n\n\n\n\n\ne",
+                {
+                    "y": 1.0,
+                    "x": -1
+                },
+                "0,0\n\n\n\n\n\n\n\n\ne"
+            ],
+            [
+                {
+                    "rx": 7,
+                    "ry": -0.4
+                },
+                "1,1\n\n\n\n\n\n\n\n\ne",
+                {
+                    "y": 1.0,
+                    "x": -1
+                },
+                "1,0\n\n\n\n\n\n\n\n\ne"
+            ],
+            [
+                {
+                    "rx": 0,
+                    "ry": -0.1
+                },
+                "2,1\n\n\n\n\n\n\n\n\ne",
+                {
+                    "y": 1.0,
+                    "x": -1
+                },
+                "2,0\n\n\n\n\n\n\n\n\ne"
+            ],
+            [
+                {
+                    "r": 0,
+                    "rx": 12,
+                    "ry": 0.1
+                },
+                "5,0",
+                {
+                    "y": -0.15
+                },
+                "5,1",
+                {
+                    "y": -0.1
+                },
+                "5,2",
+                {
+                    "y": 0.1
+                },
+                "5,3",
+                {
+                    "y": 0.45
+                },
+                "5,4",
+                "5,5"
+            ],
+            [
+                {
+                    "y": -0.3
+                },
+                "6,0",
+                {
+                    "y": -0.15
+                },
+                "6,1",
+                {
+                    "y": -0.1
+                },
+                "6,2",
+                {
+                    "y": 0.1
+                },
+                "6,3",
+                {
+                    "y": 0.45
+                },
+                "6,4",
+                "6,5"
+            ],
+            [
+                {
+                    "y": -0.3
+                },
+                "7,0",
+                {
+                    "y": -0.15
+                },
+                "7,1",
+                {
+                    "y": -0.1
+                },
+                "7,2",
+                {
+                    "y": 0.1
+                },
+                "7,3",
+                {
+                    "y": 0.45
+                },
+                "7,4",
+                "7,5"
+            ],
+            [
+                {
+                    "x": -1,
+                    "y": -0.3
+                },
+                "9,0",
+                "8,0",
+                {
+                    "y": -0.15
+                },
+                "8,1",
+                {
+                    "y": -0.1
+                },
+                "8,2",
+                {
+                    "y": 0.1
+                },
+                "8,3",
+                {
+                    "y": 0.45
+                },
+                "8,4",
+                "8,5"
+            ],
+            [
+                {
+                    "x": 2.0,
+                    "y": -0.6
+                },
+                "9,4",
+                {
+                    "y": 0.15
+                },
+                "9,5"
+            ],
+            [
+                {
+                    "r": -20,
+                    "rx": 10.76,
+                    "ry": 4.65
+                },
+                "9,1",
+                {
+                    "y": 0.2
+                },
+                "9,2",
+                {
+                    "y": 0.2
+                },
+                "9,3"
+            ],
+            [
+                {
+                    "r": 0,
+                    "rx": 10,
+                    "ry": 2.6
+                },
+                "3,1\n\n\n\n\n\n\n\n\ne",
+                {
+                    "x": -1,
+                    "y": 1
+                },
+                "3,0\n\n\n\n\n\n\n\n\ne"
+            ],
+            [
+                {
+                    "rx": 11,
+                    "ry": -0.4
+                },
+                "4,1\n\n\n\n\n\n\n\n\ne",
+                {
+                    "y": 1.0,
+                    "x": -1
+                },
+                "4,0\n\n\n\n\n\n\n\n\ne"
+            ],
+            [
+                {
+                    "rx": 18,
+                    "ry": -0.1
+                },
+                "5,1\n\n\n\n\n\n\n\n\ne",
+                {
+                    "y": 1.0,
+                    "x": -1
+                },
+                "5,0\n\n\n\n\n\n\n\n\ne"
+            ]
+        ]
+    },
+    "settings": [
+        {
+            "name": "Left encoder 1 (ID 0)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 1 interval",
+                    "qsid": 340,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 1 steps",
+                    "qsid": 341,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Left encoder 2 (ID 1)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 2 interval",
+                    "qsid": 342,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 2 steps",
+                    "qsid": 343,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Left encoder 3 (ID 2)",
+            "side": "left",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 3 interval",
+                    "qsid": 344,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 3 steps",
+                    "qsid": 345,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder 1 (ID 3)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 1 interval",
+                    "qsid": 346,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 1 steps",
+                    "qsid": 347,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder 2 (ID 4)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 2 interval",
+                    "qsid": 348,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 2 steps",
+                    "qsid": 349,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "Right encoder 3 (ID 5)",
+            "side": "right",
+            "fields": [
+                {
+                    "type": "select",
+                    "title": "Encoder 3 interval",
+                    "qsid": 350,
+                    "variants": [
+                        "0 ms",
+                        "5 ms",
+                        "10 ms",
+                        "15 ms",
+                        "20 ms",
+                        "30 ms",
+                        "40 ms",
+                        "60 ms",
+                        "80 ms",
+                        "100 ms"
+                    ]
+                },
+                {
+                    "type": "select",
+                    "title": "Encoder 3 steps",
+                    "qsid": 351,
+                    "variants": [
+                        "1",
+                        "2",
+                        "3",
+                        "4",
+                        "5",
+                        "6",
+                        "7",
+                        "8"
+                    ]
+                }
+            ]
+        }
+    ]
+}

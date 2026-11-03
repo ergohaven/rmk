@@ -7,6 +7,28 @@ use const_gen::*;
 use xz2::read::XzEncoder;
 
 fn main() {
+    let active = std::env::vars()
+        .filter_map(|(name, _)| {
+            name.strip_prefix("CARGO_FEATURE_")
+                .map(|feature| feature.to_lowercase())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    println!("cargo:rustc-env=RMK_BOARD_FEATURES={active}");
+    let rynk = std::env::var_os("CARGO_FEATURE_PROTOCOL_RYNK").is_some();
+    let vial = std::env::var_os("CARGO_FEATURE_PROTOCOL_VIAL").is_some();
+    assert!(
+        rynk ^ vial,
+        "select exactly one protocol: protocol_rynk or protocol_vial (use --no-default-features --features vial_standalone for Vial)"
+    );
+    assert!(
+        !vial || std::env::var_os("CARGO_FEATURE_VIAL_STANDALONE").is_some(),
+        "Vial requires vial_standalone to preserve standalone build options"
+    );
+    assert!(
+        std::env::var_os("CARGO_FEATURE_UNIVERSAL_MAC_ISO").is_none() || vial,
+        "universal_mac_iso is only supported by the Vial standalone profile"
+    );
     // VIA and USB encode only numeric major/minor/patch components. The full
     // release identity remains embedded in the selected Vial JSON.
     const STANDALONE_RELEASE_VERSION: &str = "0.2.0";
@@ -86,6 +108,13 @@ fn generate_vial_config(vial_path: &Path) -> u16 {
     };
 
     let parsed = json::parse(&content).unwrap_or_else(|e| panic!("Cannot parse {}: {e}", vial_path.display()));
+    if env::var_os("CARGO_FEATURE_UNIVERSAL_MAC_ISO").is_some() {
+        assert_eq!(
+            parsed["layouts"]["labels"][0][0].as_str(),
+            Some("Universal Symbols geometry"),
+            "universal_mac_iso requires the matching *_universal.json definition; Mini/Qube are excluded"
+        );
+    }
     let product_id = parsed["productId"]
         .as_str()
         .and_then(parse_hex_u16)

@@ -49,8 +49,18 @@ def factory_df_positions(config):
 class FactoryUnlockTests(unittest.TestCase):
     def test_all_production_profiles_unlock_on_factory_d_and_f(self):
         profiles = release_profiles()
-        self.assertEqual(len(profiles), 17)
-        self.assertEqual(len({profile["output_name"] for profile in profiles}), 17)
+        # Exact legacy + selectable-Vial contract: no silent omissions, duplicates,
+        # renames or accidental extra profiles may bypass factory D/F validation.
+        expected_profiles = {
+            "k03", "k04_series_k04", "k04_series_mini", "k04_series_micro",
+            "imperial44", "op36", "velvet", "phenom", "phenom_mini", "phenom_micro",
+            "op36_qube", "k03_qube", "velvet_qube", "imperial44_qube",
+            "k04_qube_k04", "k04_qube_mini", "k04_qube_micro",
+            "k03_vial", "k04_series_k04_vial", "k04_series_micro_vial",
+            "imperial44_vial", "op36_vial", "velvet_vial",
+        }
+        self.assertEqual({profile["output_name"] for profile in profiles}, expected_profiles)
+        self.assertEqual(len(profiles), len(expected_profiles))
         for profile in profiles:
             path = ROOT / "keyboards" / profile["keyboard"] / profile["keyboard_toml"]
             with self.subTest(profile=profile["output_name"], path=str(path.relative_to(ROOT))):

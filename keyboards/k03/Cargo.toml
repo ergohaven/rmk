@@ -11,14 +11,17 @@ autobenches = false
 autoexamples = false
 
 [features]
-default = []
+default = ["protocol_rynk"]
+protocol_rynk = ["rmk/ergohaven_rynk"]
+protocol_vial = ["rmk/vial", "rmk/host_lock"]
+vial_standalone = ["protocol_vial"]
+universal_mac_iso = ["rmk/universal_symbols_iso_bit0"]
 
 [dependencies]
 embedded-storage = "0.3"
 rmk = { path = "../../rmk", default-features = false, features = [
     "usb_log",
     "storage",
-    "ergohaven_rynk",
     "universal_symbols",
     "nrf52840_ble",
     "split",

@@ -33,6 +33,7 @@ const ERGOHAVEN_CUSTOM_NEXT_NATIVE_KEY_ACTION: u8 = 0x04;
 const ERGOHAVEN_CUSTOM_NATIVE_DYNAMIC_ACTION: u8 = 0x05;
 const ERGOHAVEN_CUSTOM_NEXT_NATIVE_DYNAMIC_ACTION: u8 = 0x06;
 const ERGOHAVEN_CUSTOM_COMBO_LAYER: u8 = 0x07;
+const ERGOHAVEN_CUSTOM_PROFILE_RESOLUTION: u8 = 0x08;
 // v2: postcard layout of `KeyAction` follows upstream rmk-types
 // (`KeyboardAction` variants dropped, `TapHold` carries a profile index).
 const ERGOHAVEN_NATIVE_KEY_ACTION_VERSION: u8 = 0x02;
@@ -44,6 +45,8 @@ const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_MORSE_ACTIONS: u16 = 0x0010;
 const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_COMBO_LAYER: u16 = 0x0020;
 const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_VIAL_MACRO_EXT: u16 = 0x0040;
 const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_REPEAT_KEY: u16 = 0x0080;
+const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_NUMERO: u16 = 0x0100;
+const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_PROFILE_RESOLUTION: u16 = 0x0200;
 const NATIVE_DYNAMIC_ACTION_KIND_COMBO_OUTPUT: u8 = 0x00;
 const NATIVE_DYNAMIC_ACTION_KIND_MORSE: u8 = 0x01;
 const NATIVE_KEY_ACTION_STATUS_OK: u8 = 0x00;
@@ -106,11 +109,13 @@ const fn native_key_action_capabilities() -> u16 {
         | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_MORSE_ACTIONS
         | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_COMBO_LAYER
         | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_VIAL_MACRO_EXT
-        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_REPEAT_KEY;
+        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_REPEAT_KEY
+        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_PROFILE_RESOLUTION;
     #[cfg(feature = "universal_symbols")]
     let capabilities = capabilities
         | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_SYMBOLS
-        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_RUSSIAN_LETTERS;
+        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_RUSSIAN_LETTERS
+        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_NUMERO;
     capabilities
 }
 
@@ -122,6 +127,23 @@ fn native_dynamic_morse_pattern(field: u8) -> Option<MorsePattern> {
         3 => Some(HOLD_AFTER_TAP),
         _ => None,
     }
+}
+
+fn process_profile_resolution_get(report: &mut ViaReport, ctx: &KeyboardContext<'_>) {
+    let version = report.output_data[3];
+    let index = report.output_data[4];
+    init_native_key_action_response(report, ERGOHAVEN_CUSTOM_PROFILE_RESOLUTION);
+    report.input_data[5] = index;
+    if version != ERGOHAVEN_NATIVE_KEY_ACTION_VERSION {
+        report.input_data[4] = NATIVE_KEY_ACTION_STATUS_UNSUPPORTED_VERSION;
+        return;
+    }
+    let (resolved, default, present, count) = ctx.keymap.morse_profile_resolution(index);
+    report.input_data[4] = NATIVE_KEY_ACTION_STATUS_OK;
+    report.input_data[6] = u8::from(present);
+    LittleEndian::write_u64(&mut report.input_data[8..16], resolved.into());
+    LittleEndian::write_u64(&mut report.input_data[16..24], default.into());
+    LittleEndian::write_u16(&mut report.input_data[24..26], count);
 }
 
 fn native_dynamic_action_get(ctx: &KeyboardContext<'_>, kind: u8, index: u8, field: u8) -> Option<KeyAction> {
@@ -563,6 +585,10 @@ impl<'a> VialService<'a> {
                 {
                     init_native_key_action_response(report, ERGOHAVEN_CUSTOM_NATIVE_KEY_ACTION_CAPS);
                     LittleEndian::write_u16(&mut report.input_data[4..6], native_key_action_capabilities());
+                } else if report.output_data[1] == ERGOHAVEN_CUSTOM_NAMESPACE
+                    && report.output_data[2] == ERGOHAVEN_CUSTOM_PROFILE_RESOLUTION
+                {
+                    process_profile_resolution_get(report, &self.ctx);
                 } else if report.output_data[1] == ERGOHAVEN_CUSTOM_NAMESPACE
                     && report.output_data[2] == ERGOHAVEN_CUSTOM_NATIVE_KEY_ACTION
                 {
@@ -1130,6 +1156,81 @@ mod tests {
                 0
             );
         });
+    }
+
+    #[test]
+    fn universal_numero_capability_matches_actual_resolver() {
+        with_service(|service| {
+            let mut report = custom_report(ViaCommand::CustomGetValue, ERGOHAVEN_CUSTOM_NATIVE_KEY_ACTION_CAPS);
+            process(service, &mut report);
+            let caps = LittleEndian::read_u16(&report.input_data[4..6]);
+            let legacy = if cfg!(feature = "universal_symbols") {
+                0x00ff
+            } else {
+                0x00f9
+            };
+            assert_eq!(caps & !0x0300, legacy, "existing capabilities must not change");
+            assert_ne!(caps & 0x0200, 0, "Vial profile resolution is independent of symbols");
+            assert_eq!(caps & 0x0100 != 0, cfg!(feature = "universal_symbols"));
+            assert_eq!(
+                report.input_data[3], 0x02,
+                "preserve the target's postcard wire revision"
+            );
+            #[cfg(feature = "universal_symbols")]
+            {
+                use crate::universal_symbols::{Command, State, USER_NUMERO};
+                assert!(matches!(
+                    State::default().handle(USER_NUMERO, None),
+                    Some(Command::Type(_))
+                ));
+            }
+        });
+    }
+
+    #[test]
+    fn universal_profile_resolution_dispatch_is_lossless_and_read_only() {
+        use rmk_types::morse::MorseProfile;
+        let mut data = KeymapData::new([[[KeyAction::No]]]);
+        let mut behavior = BehaviorConfig::default();
+        let default = MorseProfile::new(Some(false), None, Some(321), None).with_quick_tap_timeout_ms(Some(1234));
+        let a = MorseProfile::new(None, None, Some(111), None).with_quick_tap_timeout_ms(Some(6000));
+        let b = MorseProfile::new(None, None, Some(222), None);
+        behavior.morse.default_profile = default;
+        behavior.morse.profiles.push(a).unwrap();
+        behavior.morse.profiles.push(b).unwrap();
+        let positional = PositionalConfig::<1, 1>::default();
+        let keymap = block_on(KeyMap::new(&mut data, &mut behavior, &positional));
+        let mut service = VialService::new(&keymap, &RmkConfig::default());
+        #[cfg(feature = "storage")]
+        crate::storage::universal_test_flash_channel().clear();
+        assert!(u64::from(a) > u32::MAX as u64, "fixture must cover high quick-tap bits");
+        for (index, present, expected) in [(0, 1, a), (1, 1, b), (2, 0, default), (255, 0, default)] {
+            let mut report = custom_report(ViaCommand::CustomGetValue, 0x08);
+            report.input_data.fill(0xa5);
+            report.output_data[3] = 0x02;
+            report.output_data[4] = index;
+            process(&mut service, &mut report);
+            assert_eq!(&report.input_data[..8], &[0x08, 0xe8, 0x08, 0x02, 0, index, present, 0]);
+            assert_eq!(LittleEndian::read_u64(&report.input_data[8..16]), u64::from(expected));
+            assert_eq!(
+                LittleEndian::read_u64(&report.input_data[8..16]),
+                u64::from(keymap.morse_profile(index))
+            );
+            assert_eq!(LittleEndian::read_u64(&report.input_data[16..24]), u64::from(default));
+            assert_eq!(LittleEndian::read_u16(&report.input_data[24..26]), 2);
+            assert_eq!(&report.input_data[26..], &[0; 6]);
+        }
+        let mut report = custom_report(ViaCommand::CustomGetValue, 0x08);
+        report.output_data[3] = 0x01;
+        report.output_data[4] = 255;
+        process(&mut service, &mut report);
+        assert_eq!(&report.input_data[..8], &[0x08, 0xe8, 0x08, 0x02, 2, 255, 0, 0]);
+        assert_eq!(&report.input_data[8..], &[0; 24]);
+        assert_eq!(u64::from(keymap.morse_profile(0)), u64::from(a));
+        assert_eq!(u64::from(keymap.morse_profile(1)), u64::from(b));
+        assert_eq!(u64::from(keymap.morse_default_profile()), u64::from(default));
+        #[cfg(feature = "storage")]
+        assert!(crate::storage::universal_test_flash_channel().try_receive().is_err());
     }
 
     #[test]

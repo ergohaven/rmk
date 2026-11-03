@@ -27,11 +27,17 @@ for feats in "${RMK_TEST_FEATURESETS[@]}"; do
         cargo +stable "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features --features "$feats"
     fi
 done
+# Selectable Vial profiles: masks 4 (K:04/Micro), 1 (K:03/I44/OP36), 2 (Velvet).
+for geometry in universal_symbols_iso universal_symbols_iso_bit0 universal_symbols_iso_bit1; do
+    cargo +stable "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features \
+        --features "split,vial,host_lock,storage,async_matrix,_ble,$geometry" \
+        --lib -E 'test(universal) or test(layout_options) or test(unbound) or test(a_timed_out) or test(staged)'
+done
 # The pointing executor tests size their event buses from a real K:04 profile;
 # the other modules' tests assume the default sizes, so only pointing runs here.
 KEYBOARD_TOML_PATH="$repo_root/keyboards/k04/keyboard.toml" CARGO_TARGET_DIR="$target_root/test-k04" \
     cargo +stable "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features \
-    --features "$RMK_K04_STANDALONE_FEATURES" -E 'test(/^input_device::pointing::/)'
+    --features "$RMK_K04_STANDALONE_FEATURES" -E 'test(/^input_device::pointing::/) or test(unbound_key_preserves)'
 # The K:04 firmware bins set `test = false`, so build its dependency-free
 # modules as standalone test harnesses.
 k04_tests="$target_root/k04-tests"

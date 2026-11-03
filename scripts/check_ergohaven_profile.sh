@@ -139,9 +139,55 @@ wired_profiles=(
 )
 
 for file in "${live_matrix_cargo_manifests[@]}"; do
-    # `ergohaven_rynk` brings host_lock through `rynk`.
-    rg -Fq '"host_lock"' "$file" || rg -Fq '"ergohaven_rynk"' "$file" \
-        || fail "$file: live matrix support requires host_lock"
+    # Check active feature closures, not tokens in unused aliases or comments.
+    python3 - "$file" <<'PY' || fail "$file: live matrix protocol selections require host_lock"
+from pathlib import Path
+import sys
+import tomllib
+
+path = Path(sys.argv[1])
+board = tomllib.loads(path.read_text())
+dependency = board["dependencies"]["rmk"]
+rmk = tomllib.loads((path.parent / dependency["path"] / "Cargo.toml").read_text())
+board_features = board.get("features", {})
+rmk_features = rmk["features"]
+
+
+def closure(selection):
+    pending = [("board", feature) for feature in selection]
+    pending += [("rmk", feature) for feature in dependency.get("features", [])]
+    if dependency.get("default-features", True):
+        pending.append(("rmk", "default"))
+    seen = set()
+    while pending:
+        owner, feature = pending.pop()
+        if (owner, feature) in seen:
+            continue
+        seen.add((owner, feature))
+        if owner == "board" and feature.startswith("rmk/"):
+            pending.append(("rmk", feature.split("/", 1)[1]))
+        elif "/" not in feature and not feature.startswith("dep:"):
+            features = board_features if owner == "board" else rmk_features
+            # Cargo permits an absent default feature group.
+            assert feature == "default" or feature in features, (owner, feature)
+            pending += [(owner, child) for child in features.get(feature, [])]
+    return {feature for owner, feature in seen if owner == "rmk"}
+
+
+selectable = any(name in board_features for name in
+                 ("protocol_rynk", "protocol_vial", "vial_standalone"))
+selections = {"default": (["default"], {"rynk"} if selectable else None)}
+if selectable:
+    selections.update(protocol_rynk=(["protocol_rynk"], {"rynk"}),
+                      protocol_vial=(["protocol_vial"], {"vial"}),
+                      vial_standalone=(["vial_standalone"], {"vial"}))
+for name, (selection, expected) in selections.items():
+    active = closure(selection)
+    protocols = active & {"vial", "rynk"}
+    assert "host_lock" in active, f"{name}: live matrix support requires host_lock"
+    assert len(protocols) == 1, f"{name}: expected exactly one host protocol, got {protocols}"
+    assert expected is None or protocols == expected, (name, protocols, expected)
+PY
 done
 
 mapfile -t keyboard_manifests < <(git ls-files 'keyboards/*/Cargo.toml')
@@ -485,16 +531,22 @@ python3 - <<'PY' || fail "K:04 standalone CI must build the production profile"
 from pathlib import Path
 
 workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
-for output_name in ("k04_series_k04", "k04_series_mini", "k04_series_micro"):
+expected_features = {
+    "k04_series_k04": "production_v30g",
+    "k04_series_mini": "production_v30g",
+    "k04_series_micro": "production_v30g",
+}
+for output_name, features in expected_features.items():
     marker = f"output_name: {output_name}"
     start = workflow.index(marker)
     end = workflow.find("          - keyboard:", start + len(marker))
     stanza = workflow[start:] if end == -1 else workflow[start:end]
-    assert 'build_features: "--features production_v30g"' in stanza, output_name
+    assert f'build_features: "--features {features}"' in stanza, output_name
 
 assert "cargo build --release --bin central ${{ matrix.build_features }}" in workflow
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
 assert workflow.count('build_features: "--features production_v30g"') == 3
+assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 2
 PY
 
 python3 - <<'PY' || fail "K:04 local build instructions drifted from the production profile"

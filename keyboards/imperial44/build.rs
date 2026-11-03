@@ -6,6 +6,28 @@ use std::{env, fs};
 use xz2::read::XzEncoder;
 
 fn main() {
+    let active = std::env::vars()
+        .filter_map(|(name, _)| {
+            name.strip_prefix("CARGO_FEATURE_")
+                .map(|feature| feature.to_lowercase())
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    println!("cargo:rustc-env=RMK_BOARD_FEATURES={active}");
+    let rynk = std::env::var_os("CARGO_FEATURE_PROTOCOL_RYNK").is_some();
+    let vial = std::env::var_os("CARGO_FEATURE_PROTOCOL_VIAL").is_some();
+    assert!(
+        rynk ^ vial,
+        "select exactly one protocol: protocol_rynk or protocol_vial (use --no-default-features --features vial_standalone for Vial)"
+    );
+    assert!(
+        !vial || std::env::var_os("CARGO_FEATURE_VIAL_STANDALONE").is_some(),
+        "Vial requires vial_standalone to preserve standalone build options"
+    );
+    assert!(
+        std::env::var_os("CARGO_FEATURE_UNIVERSAL_MAC_ISO").is_none() || vial,
+        "universal_mac_iso is only supported by the Vial standalone profile"
+    );
     // Test-only cache-busting version for the runtime encoder settings build.
     const FIRMWARE_VERSION: &str = "0.2.0";
     const FIRMWARE_VERSION_BCD: &str = "0x0200";
@@ -36,7 +58,12 @@ fn main() {
 fn generate_vial_config() {
     let out_file = Path::new(&env::var_os("OUT_DIR").unwrap()).join("config_generated.rs");
 
-    let p = Path::new("vial.json");
+    let path = env::var_os("VIAL_JSON_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("vial.json"));
+    println!("cargo:rerun-if-env-changed=VIAL_JSON_PATH");
+    println!("cargo:rerun-if-changed={}", path.display());
+    let p = path.as_path();
     let mut content = String::new();
     match File::open(p) {
         Ok(mut file) => {
@@ -45,7 +72,15 @@ fn generate_vial_config() {
         Err(e) => println!("Cannot find vial.json {:?}: {}", p, e),
     };
 
-    let vial_cfg = json::stringify(json::parse(&content).unwrap());
+    let parsed = json::parse(&content).unwrap();
+    if env::var_os("CARGO_FEATURE_UNIVERSAL_MAC_ISO").is_some() {
+        assert_eq!(
+            parsed["layouts"]["labels"][0][0].as_str(),
+            Some("Universal Symbols geometry"),
+            "universal_mac_iso requires the matching *_universal.json definition"
+        );
+    }
+    let vial_cfg = json::stringify(parsed);
     let mut keyboard_def_compressed: Vec<u8> = Vec::new();
     XzEncoder::new(vial_cfg.as_bytes(), 6)
         .read_to_end(&mut keyboard_def_compressed)

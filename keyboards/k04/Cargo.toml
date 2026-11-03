@@ -12,7 +12,10 @@ autobenches = false
 autoexamples = false
 
 [features]
-default = ["standalone"]
+default = ["standalone", "protocol_rynk"]
+protocol_rynk = ["rmk/ergohaven_rynk"]
+protocol_vial = ["rmk/vial", "rmk/host_lock"]
+vial_standalone = ["protocol_vial", "standalone"]
 standalone = ["rmk/defmt", "rmk/k04_standalone_timeout_14"]
 usb_debug = ["rmk/usb_log"]
 usb_debug_force_ble = ["usb_debug"]
@@ -24,6 +27,8 @@ host_fixed_15ms = ["rtt_diag", "rmk/host_fixed_15ms"]
 pmw_axes_600 = []
 production_v22 = ["mouse_vector_preserve", "pmw_axes_600", "right_uf2_cleanup"]
 production_v30g = ["production_v22", "fixed_mouse_pacing_15ms", "rmk/host_first_split_wake"]
+# Full-size TEST1 definition advertises ISO in bit 2. Keep other profiles opt-in.
+universal_mac_iso = ["rmk/universal_symbols_iso"]
 pmw_force_awake_diag = ["mouse_interval_control", "rtt_diag"]
 pmw_smart_off_diag = ["mouse_interval_control", "rtt_diag"]
 pmw_raw_600_diag = ["mouse_interval_control", "rtt_diag"]
@@ -32,6 +37,7 @@ pmw_axes_600_diag = ["mouse_vector_preserve", "pmw_axes_600", "rtt_diag"]
 right_uf2_cleanup = []
 # Qube dongle ST7789 UI (only for --bin qube).
 qube = [
+    "protocol_rynk",
     "rmk/usb_log",
     "rmk/st7789",
     "dep:lcd-async",
@@ -42,12 +48,11 @@ qube = [
 ]
 # Diagnostic Qube halves use RTT/defmt. Enabling usb_log at the same time asks
 # trouble-host for mutually exclusive `log` and `defmt` backends.
-qube-half = ["rmk/defmt"]
+qube-half = ["protocol_rynk", "rmk/defmt"]
 
 [dependencies]
 rmk = { path = "../../rmk", default-features = false, features = [
     "storage",
-    "ergohaven_rynk",
     "universal_symbols",
     "nrf52840_ble",
     "split",

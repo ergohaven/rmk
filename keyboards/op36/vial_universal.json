@@ -1,0 +1,231 @@
+{
+    "name": "Ergohaven OP36",
+    "manufacturer": "Ergohaven",
+    "vendorId": "0xE126",
+    "productId": "0x0036",
+    "entropy": {
+        "firmwareUpdate": { "asset": "op36" },
+        "batteryHalves": true
+    },
+    "firmware": {
+        "name": "RMK",
+        "version": "0.2.0"
+    },
+    "firmwareVersion": "0.2.0",
+    "lighting": "none",
+    "matrix": {
+        "rows": 6,
+        "cols": 6
+    },
+    "customKeycodes": [
+        {
+            "name": "BT0",
+            "title": "Bluetooth Channel 0",
+            "shortName": "BT0"
+        },
+        {
+            "name": "BT1",
+            "title": "Bluetooth Channel 1",
+            "shortName": "BT1"
+        },
+        {
+            "name": "BT2",
+            "title": "Bluetooth Channel 2",
+            "shortName": "BT2"
+        },
+        {
+            "name": "BT3",
+            "title": "Bluetooth Channel 3",
+            "shortName": "BT3"
+        },
+        {
+            "name": "BT4",
+            "title": "Bluetooth Channel 4",
+            "shortName": "BT4"
+        },
+        {
+            "name": "BT_NEXT",
+            "title": "Switch to next BT channel",
+            "shortName": "Next\nBT"
+        },
+        {
+            "name": "BT_PREV",
+            "title": "Switch to prev BT channel",
+            "shortName": "Prev\nBT"
+        },
+        {
+            "name": "BT_CLR",
+            "title": "Clear BT bond info",
+            "shortName": "Clear\nBT"
+        },
+        {
+            "name": "BT_TOG",
+            "title": "Switch USB/BLE output",
+            "shortName": "Switch\nOutput"
+        },
+        {
+            "name": "BT_PEER",
+            "title": "Clear split peer",
+            "shortName": "Clear\nPeer"
+        }
+    ],
+    "layouts": {
+    "labels": [["Universal Symbols geometry", "ANSI", "ISO"]],
+        "keymap": [
+            [
+                {
+                    "y": 0.375,
+                    "x": 1
+                },
+                "0,4",
+                {
+                    "y": -0.25
+                },
+                "0,3",
+                {
+                    "y": -0.125
+                },
+                "0,2",
+                {
+                    "y": 0.125
+                },
+                "0,1",
+                {
+                    "y": 0.125
+                },
+                "0,0",
+                {
+                    "x": 3
+                },
+                "3,0",
+                {
+                    "y": -0.125
+                },
+                "3,1",
+                {
+                    "y": -0.125
+                },
+                "3,2",
+                {
+                    "y": 0.125
+                },
+                "3,3",
+                {
+                    "y": 0.25
+                },
+                "3,4"
+            ],
+            [
+                {
+                    "x": 1
+                },
+                "1,4",
+                {
+                    "y": -0.25
+                },
+                "1,3",
+                {
+                    "y": -0.125
+                },
+                "1,2",
+                {
+                    "y": 0.125
+                },
+                "1,1",
+                {
+                    "y": 0.125
+                },
+                "1,0",
+                {
+                    "x": 3
+                },
+                "4,0",
+                {
+                    "y": -0.125
+                },
+                "4,1",
+                {
+                    "y": -0.125
+                },
+                "4,2",
+                {
+                    "y": 0.125
+                },
+                "4,3",
+                {
+                    "y": 0.25
+                },
+                "4,4"
+            ],
+            [
+                {
+                    "x": 1
+                },
+                "2,4",
+                {
+                    "y": -0.25
+                },
+                "2,3",
+                {
+                    "y": -0.125
+                },
+                "2,2",
+                {
+                    "y": 0.125
+                },
+                "2,1",
+                {
+                    "y": 0.125
+                },
+                "2,0",
+                {
+                    "x": 3
+                },
+                "5,0",
+                {
+                    "y": -0.125
+                },
+                "5,1",
+                {
+                    "y": -0.125
+                },
+                "5,2",
+                {
+                    "y": 0.125
+                },
+                "5,3",
+                {
+                    "y": 0.25
+                },
+                "5,4"
+            ],
+            [
+                {
+                    "y": -0.125,
+                    "x": 4
+                },
+                "0,5",
+                {
+                    "y": 0.25
+                },
+                "1,5",
+                {
+                    "y": 0.25
+                },
+                "2,5",
+                {
+                    "x": 1
+                },
+                "5,5",
+                {
+                    "y": -0.25
+                },
+                "4,5",
+                {
+                    "y": -0.25
+                },
+                "3,5"
+            ]
+        ]
+    }
+}
