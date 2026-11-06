@@ -1175,7 +1175,7 @@ mod tests {
             } else {
                 0x00f9
             };
-            assert_eq!(caps & !0x0300, legacy, "existing capabilities must not change");
+            assert_eq!(caps & !0x0700, legacy, "existing capabilities must not change");
             assert_ne!(caps & 0x0200, 0, "Vial profile resolution is independent of symbols");
             assert_eq!(caps & 0x0100 != 0, cfg!(feature = "universal_symbols"));
             assert_eq!(

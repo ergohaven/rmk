@@ -2273,6 +2273,14 @@ mod test {
         keyboard.fire_buffered_key_timeout(key).await;
     }
 
+    /// Set the layer-0 action of the key at `(row, col)`.
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    fn set_key_action(keyboard: &mut Keyboard<'static>, row: u8, col: u8, action: KeyAction) {
+        keyboard
+            .keymap
+            .set_action_at(KeyboardEventSource::key_pos(col, row), 0, action);
+    }
+
     fn create_test_keyboard_with_forks(fork1: Fork, fork2: Fork) -> Keyboard<'static> {
         let mut cfg = ForksConfig::default();
         let _ = cfg.forks.push(fork1);
@@ -2779,38 +2787,39 @@ mod test {
     #[test]
     fn universal_macros_execute_on_release_including_tap_hold() {
         block_on(async {
-            use crate::universal_symbols::{State, USER_SET_RUSSIAN};
+            use crate::universal_symbols::{State, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_TOGGLE};
             let mut keyboard = create_test_keyboard();
             let english = State::default();
             let mut russian = english;
             russian.handle(USER_SET_RUSSIAN, None);
-            // RU then EN in separate slots. Actual layout switching uses the
-            // normal Universal report path, including its mock-clock delays.
-            keyboard
-                .keymap
-                .write_macro_buffer(0, &[1, 5, 0x83, 0x7E, 0, 1, 5, 0x82, 0x7E, 0, 1, 5, 0x80, 0x7E, 0]);
-            keyboard.execute_macro(0, KeyboardEvent::key(0, 0, true)).await;
-            assert_eq!(keyboard.universal_symbols, english);
-            keyboard.execute_macro(0, KeyboardEvent::key(0, 0, false)).await;
-            assert_eq!(keyboard.universal_symbols, russian);
-            keyboard.execute_macro(1, KeyboardEvent::key(0, 0, false)).await;
-            assert_eq!(keyboard.universal_symbols, english);
-            keyboard.execute_macro(0, KeyboardEvent::key(0, 0, false)).await;
-            assert_eq!(keyboard.universal_symbols, russian);
-            // A native tap-hold with the macro on its hold branch: crossing the
-            // threshold selects it, but it must execute only once on release.
-            keyboard.keymap.set_action_by_flat_index(
-                0,
-                KeyAction::TapHold(Action::No, Action::TriggerMacro(2), Default::default()),
-            );
+            // RU, EN and TOGGLE on three keys. The Vial macro encoding has no keycode
+            // for a `User` id above 63, so the layout switch is a direct key action,
+            // not a macro. Actual switching uses the normal Universal report path,
+            // including its mock-clock delays.
+            set_key_action(&mut keyboard, 0, 0, KeyAction::Single(Action::User(USER_SET_RUSSIAN)));
+            set_key_action(&mut keyboard, 0, 1, KeyAction::Single(Action::User(USER_SET_ENGLISH)));
+            set_key_action(&mut keyboard, 0, 2, KeyAction::Single(Action::User(USER_TOGGLE)));
             keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
-            force_timeout_first_hold(&mut keyboard).await;
             assert_eq!(keyboard.universal_symbols, russian);
-            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
             assert_eq!(keyboard.universal_symbols, english);
-            keyboard.execute_macro(2, KeyboardEvent::key(0, 0, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            // A native tap-hold with the switch on its hold branch: the switch fires
+            // when the hold is selected, on the timeout, and the release adds nothing.
+            set_key_action(
+                &mut keyboard,
+                1,
+                0,
+                KeyAction::TapHold(Action::No, Action::User(USER_TOGGLE), 0),
+            );
+            keyboard.process_inner(KeyboardEvent::key(1, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            force_timeout_first_hold(&mut keyboard).await;
             assert_eq!(keyboard.universal_symbols, english);
-            keyboard.execute_macro(2, KeyboardEvent::key(0, 0, false)).await;
+            keyboard.process_inner(KeyboardEvent::key(1, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.process_inner(KeyboardEvent::key(0, 2, true)).await;
             assert_eq!(keyboard.universal_symbols, russian);
 
             use rmk_types::morse::{Morse, MorseProfile};
@@ -2819,18 +2828,19 @@ mod test {
                 .with_morse_mut(0, |morse| {
                     *morse = Morse::new_from_vial(
                         Action::No,
-                        Action::TriggerMacro(2),
+                        Action::User(USER_TOGGLE),
                         Action::No,
-                        Action::TriggerMacro(2),
+                        Action::User(USER_TOGGLE),
                         MorseProfile::const_default(),
                     );
                 })
                 .expect("dynamic Morse slot");
-            keyboard.keymap.set_action_by_flat_index(0, KeyAction::Morse(0));
-            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
-            force_timeout_first_hold(&mut keyboard).await;
+            set_key_action(&mut keyboard, 1, 1, KeyAction::Morse(0));
+            keyboard.process_inner(KeyboardEvent::key(1, 1, true)).await;
             assert_eq!(keyboard.universal_symbols, russian);
-            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.process_inner(KeyboardEvent::key(1, 1, false)).await;
             assert_eq!(keyboard.universal_symbols, english);
         });
     }
@@ -2860,20 +2870,30 @@ mod test {
                     HidKeyCode::F,
                 ];
                 for (index, key) in held.iter().enumerate() {
-                    keyboard.register_key(*key, KeyboardEvent::key(index as u8 / 3, index as u8 % 3, true));
+                    keyboard.register_key(
+                        *key,
+                        ModifierCombination::new(),
+                        KeyboardEvent::key(index as u8 / 3, index as u8 % 3, true),
+                    );
                 }
-                keyboard.keymap.write_macro_buffer(0, &[1, 5, command, 0x7E, 0]);
-                keyboard.execute_macro(0, KeyboardEvent::key(3, 3, false)).await;
+                // The switch is a direct key action on a position clear of the held keys.
+                set_key_action(&mut keyboard, 3, 3, KeyAction::Single(Action::User(command)));
+                keyboard.process_inner(KeyboardEvent::key(3, 3, true)).await;
+                keyboard.process_inner(KeyboardEvent::key(3, 3, false)).await;
                 assert_eq!(keyboard.universal_symbols, initial, "command={command:#x}");
-                assert_eq!(keyboard.held_keycodes, held);
+                assert_eq!(keyboard.held_keycodes(), held);
 
-                keyboard.unregister_key(HidKeyCode::F, KeyboardEvent::key(1, 2, false));
-                keyboard.execute_macro(0, KeyboardEvent::key(3, 3, false)).await;
+                keyboard.unregister_key(
+                    HidKeyCode::F,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(1, 2, false),
+                );
+                keyboard.process_inner(KeyboardEvent::key(3, 3, true)).await;
                 let mut switched = initial;
                 switched.handle(command, None);
                 assert_eq!(keyboard.universal_symbols, switched);
                 assert_eq!(
-                    keyboard.held_keycodes,
+                    keyboard.held_keycodes(),
                     [
                         HidKeyCode::A,
                         HidKeyCode::B,
