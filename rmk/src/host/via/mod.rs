@@ -47,6 +47,7 @@ const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_VIAL_MACRO_EXT: u16 = 0x0040;
 const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_REPEAT_KEY: u16 = 0x0080;
 const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_NUMERO: u16 = 0x0100;
 const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_PROFILE_RESOLUTION: u16 = 0x0200;
+const ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_MACROS: u16 = 0x0400;
 const NATIVE_DYNAMIC_ACTION_KIND_COMBO_OUTPUT: u8 = 0x00;
 const NATIVE_DYNAMIC_ACTION_KIND_MORSE: u8 = 0x01;
 const NATIVE_KEY_ACTION_STATUS_OK: u8 = 0x00;
@@ -115,7 +116,8 @@ const fn native_key_action_capabilities() -> u16 {
     let capabilities = capabilities
         | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_SYMBOLS
         | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_RUSSIAN_LETTERS
-        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_NUMERO;
+        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_NUMERO
+        | ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_MACROS;
     capabilities
 }
 
@@ -1155,6 +1157,10 @@ mod tests {
                 native_key_action_capabilities() & ERGOHAVEN_NATIVE_KEY_ACTION_CAP_REPEAT_KEY,
                 0
             );
+            assert_eq!(
+                native_key_action_capabilities() & ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_MACROS != 0,
+                cfg!(feature = "universal_symbols")
+            );
         });
     }
 
@@ -1169,7 +1175,7 @@ mod tests {
             } else {
                 0x00f9
             };
-            assert_eq!(caps & !0x0300, legacy, "existing capabilities must not change");
+            assert_eq!(caps & !0x0700, legacy, "existing capabilities must not change");
             assert_ne!(caps & 0x0200, 0, "Vial profile resolution is independent of symbols");
             assert_eq!(caps & 0x0100 != 0, cfg!(feature = "universal_symbols"));
             assert_eq!(

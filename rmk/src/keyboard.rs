@@ -1919,6 +1919,7 @@ impl<'a> Keyboard<'a> {
         let host_layout = crate::host_data::snapshot().layout;
         #[cfg(all(feature = "vial", feature = "storage"))]
         let previous_platform = self.universal_symbols.platform();
+        let previous_state = self.universal_symbols;
         let Some(command) = self.universal_symbols.handle(user_id, host_layout) else {
             return false;
         };
@@ -1934,8 +1935,11 @@ impl<'a> Keyboard<'a> {
         match command {
             crate::universal_symbols::Command::None => false,
             crate::universal_symbols::Command::SwitchLayout => {
-                self.send_universal_symbols_layout_switch(platform).await;
-                true
+                let sent = self.send_universal_symbols_layout_switch(platform).await;
+                if !sent {
+                    self.universal_symbols = previous_state;
+                }
+                sent
             }
             crate::universal_symbols::Command::Type(resolved) => {
                 if resolved.temporary_layout_switch {
@@ -1972,10 +1976,10 @@ impl<'a> Keyboard<'a> {
     }
 
     #[cfg(feature = "universal_symbols")]
-    async fn send_universal_symbols_layout_switch(&mut self, platform: crate::universal_symbols::Platform) {
+    async fn send_universal_symbols_layout_switch(&mut self, platform: crate::universal_symbols::Platform) -> bool {
         let Some((pressed_keys, released_keys)) = self.universal_symbols_key_reports(HidKeyCode::Space) else {
             warn!("Universal Symbols: no free 6KRO slot for layout switch");
-            return;
+            return false;
         };
         let modifier = match platform {
             crate::universal_symbols::Platform::Pc => ModifierCombination::LGUI,
@@ -2014,6 +2018,7 @@ impl<'a> Keyboard<'a> {
         })
         .await;
         self.send_keyboard_report_with_resolved_modifiers(false).await;
+        true
     }
 
     #[cfg(feature = "universal_symbols")]
@@ -2266,6 +2271,14 @@ mod test {
         let key = keyboard.next_buffered_key().unwrap();
         embassy_time::Timer::at(key.timeout_time).await;
         keyboard.fire_buffered_key_timeout(key).await;
+    }
+
+    /// Set the layer-0 action of the key at `(row, col)`.
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    fn set_key_action(keyboard: &mut Keyboard<'static>, row: u8, col: u8, action: KeyAction) {
+        keyboard
+            .keymap
+            .set_action_at(KeyboardEventSource::key_pos(col, row), 0, action);
     }
 
     fn create_test_keyboard_with_forks(fork1: Fork, fork2: Fork) -> Keyboard<'static> {
@@ -2768,6 +2781,130 @@ mod test {
             assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::No);
         };
         block_on(main);
+    }
+
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[test]
+    fn universal_macros_execute_on_release_including_tap_hold() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_TOGGLE};
+            let mut keyboard = create_test_keyboard();
+            let english = State::default();
+            let mut russian = english;
+            russian.handle(USER_SET_RUSSIAN, None);
+            // RU, EN and TOGGLE on three keys. The Vial macro encoding has no keycode
+            // for a `User` id above 63, so the layout switch is a direct key action,
+            // not a macro. Actual switching uses the normal Universal report path,
+            // including its mock-clock delays.
+            set_key_action(&mut keyboard, 0, 0, KeyAction::Single(Action::User(USER_SET_RUSSIAN)));
+            set_key_action(&mut keyboard, 0, 1, KeyAction::Single(Action::User(USER_SET_ENGLISH)));
+            set_key_action(&mut keyboard, 0, 2, KeyAction::Single(Action::User(USER_TOGGLE)));
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            // A native tap-hold with the switch on its hold branch: the switch fires
+            // when the hold is selected, on the timeout, and the release adds nothing.
+            set_key_action(
+                &mut keyboard,
+                1,
+                0,
+                KeyAction::TapHold(Action::No, Action::User(USER_TOGGLE), 0),
+            );
+            keyboard.process_inner(KeyboardEvent::key(1, 0, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            force_timeout_first_hold(&mut keyboard).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.process_inner(KeyboardEvent::key(1, 0, false)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.process_inner(KeyboardEvent::key(0, 2, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+
+            use rmk_types::morse::{Morse, MorseProfile};
+            keyboard
+                .keymap
+                .with_morse_mut(0, |morse| {
+                    *morse = Morse::new_from_vial(
+                        Action::No,
+                        Action::User(USER_TOGGLE),
+                        Action::No,
+                        Action::User(USER_TOGGLE),
+                        MorseProfile::const_default(),
+                    );
+                })
+                .expect("dynamic Morse slot");
+            set_key_action(&mut keyboard, 1, 1, KeyAction::Morse(0));
+            keyboard.process_inner(KeyboardEvent::key(1, 1, true)).await;
+            assert_eq!(keyboard.universal_symbols, russian);
+            force_timeout_first_hold(&mut keyboard).await;
+            assert_eq!(keyboard.universal_symbols, english);
+            keyboard.process_inner(KeyboardEvent::key(1, 1, false)).await;
+            assert_eq!(keyboard.universal_symbols, english);
+        });
+    }
+
+    #[test]
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    fn universal_macro_layout_switch_with_full_report_keeps_layout_state() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_TOGGLE};
+            for (starts_russian, command) in [
+                (false, USER_SET_RUSSIAN),
+                (true, USER_SET_ENGLISH),
+                (false, USER_TOGGLE),
+            ] {
+                let mut keyboard = create_test_keyboard();
+                let mut initial = State::default();
+                if starts_russian {
+                    initial.handle(USER_SET_RUSSIAN, None);
+                }
+                keyboard.universal_symbols = initial;
+                let held = [
+                    HidKeyCode::A,
+                    HidKeyCode::B,
+                    HidKeyCode::C,
+                    HidKeyCode::D,
+                    HidKeyCode::E,
+                    HidKeyCode::F,
+                ];
+                for (index, key) in held.iter().enumerate() {
+                    keyboard.register_key(
+                        *key,
+                        ModifierCombination::new(),
+                        KeyboardEvent::key(index as u8 / 3, index as u8 % 3, true),
+                    );
+                }
+                // The switch is a direct key action on a position clear of the held keys.
+                set_key_action(&mut keyboard, 3, 3, KeyAction::Single(Action::User(command)));
+                keyboard.process_inner(KeyboardEvent::key(3, 3, true)).await;
+                keyboard.process_inner(KeyboardEvent::key(3, 3, false)).await;
+                assert_eq!(keyboard.universal_symbols, initial, "command={command:#x}");
+                assert_eq!(keyboard.held_keycodes(), held);
+
+                keyboard.unregister_key(
+                    HidKeyCode::F,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(1, 2, false),
+                );
+                keyboard.process_inner(KeyboardEvent::key(3, 3, true)).await;
+                let mut switched = initial;
+                switched.handle(command, None);
+                assert_eq!(keyboard.universal_symbols, switched);
+                assert_eq!(
+                    keyboard.held_keycodes(),
+                    [
+                        HidKeyCode::A,
+                        HidKeyCode::B,
+                        HidKeyCode::C,
+                        HidKeyCode::D,
+                        HidKeyCode::E,
+                        HidKeyCode::No
+                    ]
+                );
+            }
+        });
     }
 
     #[test]

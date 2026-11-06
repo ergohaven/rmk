@@ -81,8 +81,16 @@ pub(crate) fn expand_flash_init(hardware: &Hardware, dfu: Option<&DfuConfig>) ->
             #[cfg(not(feature = "dfu_nrf"))]
             {
                 hardware.storage.as_ref().map(|_| {
-                    quote! {
-                        let storage_partition = ::nrf_mpsl::Flash::take(mpsl, p.NVMC);
+                    if hardware.communication.ble_enabled() {
+                        quote! {
+                            let storage_partition = ::nrf_mpsl::Flash::take(mpsl, p.NVMC);
+                        }
+                    } else {
+                        quote! {
+                            let storage_partition = ::rmk::storage::async_flash_wrapper(
+                                ::embassy_nrf::nvmc::Nvmc::new(p.NVMC)
+                            );
+                        }
                     }
                 })
             }
@@ -126,10 +134,10 @@ pub(crate) fn expand_flash_init(hardware: &Hardware, dfu: Option<&DfuConfig>) ->
         }
         ChipSeries::Esp32 => {
             hardware.storage.as_ref().map(|_| {
-                // ESP32 and ESP32-S3 are dual-core. Flash writes must auto-park it to avoid
+                // Dual-core chips must park the other core during flash writes to avoid
                 // `FlashStorageError::OtherCoreRunning`.
                 let chip_name = hardware.chip.chip.to_lowercase();
-                if chip_name == "esp32s3" {
+                if matches!(chip_name.as_str(), "esp32s3" | "esp32s31") {
                     quote! {
                         let storage_partition = ::rmk::storage::async_flash_wrapper(
                             ::esp_storage::FlashStorage::new(p.FLASH).multicore_auto_park()
@@ -147,27 +155,6 @@ pub(crate) fn expand_flash_init(hardware: &Hardware, dfu: Option<&DfuConfig>) ->
     quote! {
         #storage_config
         #flash_init
-    }
-}
-
-/// The internal flash driver expression wrapped by the DFU flash mutex.
-///
-/// nRF takes the raw `NVMC` directly; RP2040 needs the blocking `Flash`
-/// wrapper sized by `rmk::dfu::FLASH_SIZE` (16 MB, matching the memory.x
-/// conventions).
-#[cfg(feature = "_dfu")]
-fn expand_dfu_flash_driver(
-    chip_series: &ChipSeries,
-    flash_peripheral: &TokenStream2,
-) -> TokenStream2 {
-    match chip_series {
-        ChipSeries::Nrf52 => quote! {
-            ::embassy_nrf::nvmc::Nvmc::new(#flash_peripheral)
-        },
-        ChipSeries::Rp2040 => quote! {
-            ::embassy_rp::flash::Flash::<_, ::embassy_rp::flash::Blocking, {::rmk::dfu::FLASH_SIZE}>::new_blocking(#flash_peripheral)
-        },
-        _ => panic!("Internal flash DFU is only supported on nRF52 and RP2040"),
     }
 }
 
@@ -194,12 +181,14 @@ fn expand_dfu_partitions(
     external_dfu: Option<&TokenStream2>,
     emit_storage_flash: bool,
 ) -> TokenStream2 {
-    let flash_peripheral = match chip_series {
-        ChipSeries::Nrf52 => quote! { p.NVMC },
-        ChipSeries::Rp2040 => quote! { p.FLASH },
+    // nRF uses NVMC directly; RP2040's memory.x layout uses a blocking 16 MB flash driver.
+    let driver = match chip_series {
+        ChipSeries::Nrf52 => quote! { ::embassy_nrf::nvmc::Nvmc::new(p.NVMC) },
+        ChipSeries::Rp2040 => quote! {
+            ::embassy_rp::flash::Flash::<_, ::embassy_rp::flash::Blocking, {::rmk::dfu::FLASH_SIZE}>::new_blocking(p.FLASH)
+        },
         _ => panic!("Internal flash DFU is only supported on nRF52 and RP2040"),
     };
-    let driver = expand_dfu_flash_driver(chip_series, &flash_peripheral);
     let storage_binding = if emit_storage_flash {
         quote! { storage_partition }
     } else {
