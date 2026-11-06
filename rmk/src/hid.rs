@@ -437,15 +437,18 @@ pub(crate) const BLE_REPORT_MAP_LEN: usize = 206;
 /// unnumbered Vial interface. BLE assigns Vial report id 5 so the entire
 /// composite report map follows the HID requirement that report id 0 cannot be
 /// mixed with numbered reports.
-#[cfg(all(feature = "_ble", feature = "vial"))]
+/// Keep the keyboard collection first, before the vendor-specific Vial usage.
+/// This ordering was reported to fix macOS Caps Lock input-source switching
+/// also toggling letter case on K03 Wireless.
+#[cfg(all(feature = "_ble", feature = "host"))]
 pub(crate) fn ble_report_map() -> [u8; BLE_REPORT_MAP_LEN] {
     let composite = BleCompositeReport::desc();
     let vial = BleViaReport::desc();
     assert_eq!(composite.len() + vial.len(), BLE_REPORT_MAP_LEN);
 
     let mut report_map = [0u8; BLE_REPORT_MAP_LEN];
-    report_map[..vial.len()].copy_from_slice(vial);
-    report_map[vial.len()..].copy_from_slice(composite);
+    report_map[..composite.len()].copy_from_slice(composite);
+    report_map[composite.len()..].copy_from_slice(vial);
     report_map
 }
 
@@ -484,6 +487,13 @@ mod ble_report_map_tests {
         }
 
         assert_eq!(desc.len(), BLE_REPORT_MAP_LEN);
+        assert!(
+            desc.starts_with(&[0x05, 0x01, 0x09, 0x06, 0xa1, 0x01]),
+            "BLE primary application must be Generic Desktop / Keyboard, not Vial"
+        );
+        let composite = BleCompositeReport::desc();
+        assert_eq!(&desc[..composite.len()], composite);
+        assert_eq!(&desc[composite.len()..], BleViaReport::desc());
         let vial_usage = find(&desc, &[0x06, 0x60, 0xff, 0x09, 0x61]).expect("missing Vial application usage");
         let vial_report_id = find(&desc, &[0x85, CompositeReportType::Vial as u8]).expect("missing Vial ReportID");
         assert!(
