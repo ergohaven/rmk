@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "dfu_split")]
 use serde::{Deserializer, Serializer};
 
+use crate::event::{BatteryStatusEvent, KeyboardEvent, PointingEvent};
 #[cfg(feature = "_ble")]
-use crate::event::{BatteryStatusEvent, BleAdvertisingMode};
-use crate::event::{KeyboardEvent, PointingEvent};
+use crate::event::BleAdvertisingMode;
 
 #[cfg(feature = "_ble")]
 pub mod ble;
@@ -62,7 +62,6 @@ pub(crate) enum SplitMessage {
     ///
     /// Keep this above display-gated variants so postcard enum discriminants do
     /// not change when a dongle is built with `display` and halves are not.
-    #[cfg(feature = "_ble")]
     BatteryStatus(BatteryStatusEvent),
     /// Battery refresh request, from central to peripheral.
     #[cfg(feature = "_ble")]

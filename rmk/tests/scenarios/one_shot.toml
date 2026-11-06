@@ -417,3 +417,17 @@ steps = [
   { release = [0, 2] },
 ]
 expect = [["A"], ["LShift", "A"], ["A"], []]
+
+# Releasing a key that was pressed before the OSL does not disarm it: the
+# one-shot stays armed and still applies to the next key (C, on layer 1).
+[[test]]
+name = "releasing_earlier_key_keeps_osl_armed"
+steps = [
+  { press = [0, 2] },
+  { press = [0, 1] },
+  { release = [0, 2] },
+  { release = [0, 1] },
+  { tap = { pos = [0, 2], duration = 10 } },
+  { tap = { pos = [0, 2], duration = 10 } },
+]
+expect = [["A"], [], ["C"], [], ["A"], []]
