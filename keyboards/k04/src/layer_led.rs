@@ -16,7 +16,6 @@ use crate::module_settings::{self, Rgb};
 const LED_COUNT: usize = 1;
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const LOW_BATTERY_MAX: u8 = 20;
-const CHARGED_BATTERY_MIN: u8 = 95;
 const BATTERY_PULSE_INTERVAL_MS: u64 = 2_000;
 const BATTERY_PULSE_ON_MS: u64 = 120;
 const INDICATOR_DURATION_MS: u64 = 1_000;
@@ -338,8 +337,8 @@ impl LayerLed {
             return (color_off(), 0);
         }
 
-        // Split acquisition takes priority over charge indication. A cable
-        // used for UF2 must not turn the Searching blink into solid yellow.
+        // Split acquisition takes priority over USB power indication. A cable
+        // used for UF2 must not turn the Searching blink into steady cyan.
         if self.split_state == SplitConnectionState::Searching {
             let elapsed_ms = now.duration_since(self.indicator_phase_started).as_millis();
             return (split_missing_blink_color(elapsed_ms), 1);
@@ -352,11 +351,8 @@ impl LayerLed {
         }
 
         if self.current_layer == Some(0) && vbus_status.0 && module_settings::charge_indicator_enabled() {
-            return if self.latest_battery.is_some_and(|level| level >= CHARGED_BATTERY_MIN) {
-                (color_green(), 3)
-            } else {
-                (color_yellow(), 3)
-            };
+            // VBUS confirms USB power, not battery connection or charge state.
+            return (color_cyan(), 3);
         }
 
         // USB_OUT is an explicit host-transport choice. BLE may keep

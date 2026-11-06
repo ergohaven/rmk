@@ -37,7 +37,7 @@ class WorkflowGraphTests(unittest.TestCase):
         # Intentional future
         # coverage edits must review/update these baselines, not drop this test.
         expected = {
-            'build.yml': '2c2399cc754e81e15be948175d744963aede98e73359f341f9d56ee3b51313ad',
+            'build.yml': 'c3770e949c766d6020680bbbf718af3acb569746ce1d81fa99a3a2566afdffb5',
             'ci.yml': 'dee219c3ea51a3eaa0e2d5a9dca401e5350e86814d52edfa2ccd24596f7f3356',
         }
         for name, (_, owners) in OWNERS.items():
