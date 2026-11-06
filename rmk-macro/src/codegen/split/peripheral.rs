@@ -826,6 +826,7 @@ mod tests {
             0,
             &features,
             None,
+            Vec::new(),
         )
         .to_string();
         assert!(ble.contains("build_sdc"));
@@ -850,6 +851,7 @@ mod tests {
                 0,
                 &features,
                 None,
+                Vec::new(),
             )
             .to_string();
             assert!(irqs.contains("USBD"));
