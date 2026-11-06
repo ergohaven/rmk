@@ -698,7 +698,13 @@ impl<'a> KeyMap<'a> {
     }
 
     pub(crate) fn morse_enable_flow_tap(&self) -> bool {
-        self.inner.borrow().behavior.morse.enable_flow_tap
+        let inner = self.inner.borrow();
+        inner
+            .behavior
+            .morse
+            .default_profile
+            .enable_flow_tap()
+            .unwrap_or(inner.behavior.morse.enable_flow_tap)
     }
 
     pub(crate) fn morse_prior_idle_time(&self) -> Duration {
