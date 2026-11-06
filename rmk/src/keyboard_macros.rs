@@ -134,6 +134,12 @@ fn decode_vial_macro_action(wire: [u8; 2]) -> Option<Action> {
     if keycode > 0xFF00 {
         keycode = (keycode & 0x00FF) << 8;
     }
+    // Macro-only aliases for native Universal actions. Normal Vial keymap
+    // conversion keeps its 64 user keys and the native-action protocol intact.
+    #[cfg(feature = "universal_symbols")]
+    if matches!(keycode, 0x7E80..=0x7E84 | 0x7E90..=0x7EB3) {
+        return Some(Action::User(keycode as u8));
+    }
     match crate::host::via::keycode_convert::from_via_keycode(keycode) {
         KeyAction::Single(Action::TriggerMacro(_)) => None,
         KeyAction::Single(action) => Some(action),
@@ -143,7 +149,11 @@ fn decode_vial_macro_action(wire: [u8; 2]) -> Option<Action> {
 
 #[cfg(feature = "vial")]
 fn serialize_vial_macro_action(opcode: u8, action: Action) -> heapless::Vec<u8, 4> {
-    let keycode = crate::host::via::keycode_convert::to_via_keycode(KeyAction::Single(action));
+    let keycode = match action {
+        #[cfg(feature = "universal_symbols")]
+        Action::User(id @ (0x80..=0x84 | 0x90..=0xB3)) => 0x7E00 | u16::from(id),
+        _ => crate::host::via::keycode_convert::to_via_keycode(KeyAction::Single(action)),
+    };
     let wire_keycode = if keycode & 0x00FF == 0 {
         0xFF00 | (keycode >> 8)
     } else {
@@ -281,6 +291,35 @@ mod test {
     use rmk_types::action::Action;
 
     use super::*;
+
+    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[test]
+    fn universal_macro_actions_round_trip_without_changing_keymap_codes() {
+        for id in (0x80..=0x84).chain(0x90..=0xB3) {
+            for opcode in 5..=7 {
+                let bytes = [1, opcode, id, 0x7E, 0];
+                let (operation, offset) = MacroOperation::get_next_macro_operation(&bytes, 0, 0);
+                assert_eq!(offset, 4);
+                assert!(
+                    match &operation {
+                        MacroOperation::ExtendedTap(Action::User(value)) => opcode == 5 && *value == id,
+                        MacroOperation::ExtendedPress(Action::User(value)) => opcode == 6 && *value == id,
+                        MacroOperation::ExtendedRelease(Action::User(value)) => opcode == 7 && *value == id,
+                        _ => false,
+                    },
+                    "id={id:#x}, opcode={opcode}: {operation:?}"
+                );
+                assert_eq!(serialize(&operation).as_slice(), &bytes[..4]);
+                assert_eq!(
+                    crate::host::via::keycode_convert::to_via_keycode(KeyAction::Single(Action::User(id))),
+                    0
+                );
+            }
+        }
+        for id in [0x7F, 0x85, 0x8F, 0xB4, 0xFF] {
+            assert!(decode_vial_macro_action([id, 0x7E]).is_none());
+        }
+    }
 
     #[test]
     fn test_define_one_macro_sequence_manual() {
