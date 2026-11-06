@@ -3,6 +3,8 @@ set -euo pipefail
 # shellcheck source=_lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/_lib.sh"
 
+export CARGO_BUILD_TARGET="${CARGO_BUILD_TARGET:-x86_64-unknown-linux-gnu}"
+
 mode="${1:-all}"
 case "$mode" in all|stable|nightly) ;; *) exit 2 ;; esac
 
