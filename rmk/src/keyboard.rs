@@ -1615,10 +1615,29 @@ impl<'a> Keyboard<'a> {
             return;
         }
 
+        let before = self.resolve_modifiers(event.pressed);
         if event.pressed {
+            let held = self.keyboard_report_keycodes();
             self.register_key(key, mods, event);
+            let after = self.resolve_modifiers(true);
+            if mods.into_bits() != 0 && after != before {
+                // Establish shortcut modifiers before macOS dispatches the key-down.
+                self.send_report(Report::KeyboardReport(KeyboardReport {
+                    modifier: after.into_bits(),
+                    reserved: 0,
+                    leds: LOCK_LED_STATES.load(core::sync::atomic::Ordering::Relaxed),
+                    keycodes: held,
+                }))
+                .await;
+                yield_now().await;
+            }
         } else {
             self.unregister_key(key, mods, event);
+            let after = self.resolve_modifiers(false);
+            if mods.into_bits() != 0 && before != after {
+                // Release the letter while its shortcut modifiers are still held.
+                self.send_keyboard_report(before).await;
+            }
         }
 
         self.send_keyboard_report_with_resolved_modifiers(event.pressed).await;
@@ -1878,13 +1897,7 @@ impl<'a> Keyboard<'a> {
         self.send_keyboard_report(modifiers).await;
     }
 
-    /// Send the keyboard report for the held keycodes with exactly `modifiers`.
-    ///
-    /// Multiple slots can hold the same HID usage, but the host only tracks
-    /// each usage as up or down, so duplicates are collapsed to the first slot
-    /// that holds them. This keeps the shared usage down until the last holder
-    /// releases it.
-    async fn send_keyboard_report(&mut self, modifiers: ModifierCombination) {
+    fn keyboard_report_keycodes(&self) -> [u8; 6] {
         let mut keycodes = [0u8; 6];
         let mut n = 0;
         for k in self.registered.iter().filter(|k| k.keycode != HidKeyCode::No) {
@@ -1894,6 +1907,17 @@ impl<'a> Keyboard<'a> {
                 n += 1;
             }
         }
+        keycodes
+    }
+
+    /// Send the keyboard report for the held keycodes with exactly `modifiers`.
+    ///
+    /// Multiple slots can hold the same HID usage, but the host only tracks
+    /// each usage as up or down, so duplicates are collapsed to the first slot
+    /// that holds them. This keeps the shared usage down until the last holder
+    /// releases it.
+    async fn send_keyboard_report(&mut self, modifiers: ModifierCombination) {
+        let keycodes = self.keyboard_report_keycodes();
         info!(
             "Sending keyboard report, modifiers: {:?}, keycodes: {:?}",
             modifiers, keycodes

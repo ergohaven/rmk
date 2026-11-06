@@ -364,7 +364,7 @@ steps = [
   { delay = 80 },
   { tap = { pos = [1, 5], duration = 80 } },
 ]
-expect = [["LCtrl", "LShift", "R"], [], ["R"], []]
+expect = [["LCtrl", "LShift"], ["LCtrl", "LShift", "R"], ["LCtrl", "LShift"], [], ["R"], []]
 
 # Same, but releasing R first (rolling off the chord) — the ordering that most
 # obviously exposed the stranded-R behavior before the fix.
@@ -387,7 +387,7 @@ steps = [
   { delay = 80 },
   { tap = { pos = [1, 5], duration = 80 } },
 ]
-expect = [["LCtrl", "LShift", "R"], [], ["R"], []]
+expect = [["LCtrl", "LShift"], ["LCtrl", "LShift", "R"], ["LCtrl", "LShift"], [], ["R"], []]
 
 # Regression for the stuck mouse-wheel bug: when the combo fires it discards
 # the buffered WheelUp press, so it must also consume the WheelUp release —

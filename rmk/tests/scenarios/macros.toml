@@ -83,7 +83,7 @@ behavior.macro = { macros = [{ operations = [{ operation = "tap", keycode = "WM(
 steps = [
   { tap = { pos = [0, 6], duration = 100 } },
 ]
-expect = [["LCtrl", "A"], []]
+expect = [["LCtrl"], ["LCtrl", "A"], ["LCtrl"], []]
 
 # A layer action is a layer key held for the macro: layer 1 stays on from the
 # `down` until the `up` after the pause.
