@@ -61,6 +61,9 @@ jobs:
       - name: Test K:04 host connection parameter negotiation
         run: python3 scripts/test_k04_host_params.py
 
+      - name: Test K:04 USB power indication
+        run: python3 scripts/test_k04_usb_power_indicator.py
+
   build:
     needs: [plan]
     if: needs.plan.outputs.run == 'true'

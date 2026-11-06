@@ -69,3 +69,30 @@ The repository build matrix builds all six profiles:
 
 The halves use `src/battery_nrf.rs`, which samples `P0_31` without
 `calibrate().await` and re-publishes `BatteryStatusEvent` periodically.
+
+## USB power indication
+
+On the base layer, a steady cyan LED means USB power is present. It does not
+confirm that the battery is connected, charging, or full. This applies to
+K:04, Mini, and Micro, both standalone and with Qube. The battery percentage
+does not change this color; the former yellow/green charging indication is
+no longer used. Cyan blinking means Bluetooth pairing when that indication
+is visible. As before, USB indication takes priority over pairing and battery
+overlays on the base layer. A custom layer color can match the USB color.
+
+The existing `Charge indicator` toggle (QSID 331) enables this USB power
+indication. Its label and stored bit are retained for compatibility with
+configurators that discover it by that name. Brightness, sleep, split-search,
+connection overlays, and non-base-layer indication keep their existing rules.
+
+For charging, leave each half's physical power switch ON, as required by the
+[K:04 guide](https://docs.eh.works/device/k04/#зарядка-мониторинг-заряда).
+The firmware reads USB VBUS but has no configured input for the physical
+switch or charger status, so it cannot distinguish actual charging from USB
+power alone. Battery levels remain based on unplugged measurements to avoid
+false full readings from charging voltage.
+
+Run `python3 scripts/test_k04_usb_power_indicator.py` from the repository root
+to check both LED implementations on the host. It exercises their USB color
+branches, brightness scaling, and layer/VBUS/toggle gates; it does not verify
+the physical switch, charge current, or the LED's appearance on hardware.

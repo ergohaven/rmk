@@ -109,6 +109,7 @@ pub fn led_brightness() -> u8 {
 }
 
 pub fn charge_indicator_enabled() -> bool {
+    // Keep the legacy setting name/QSID; it now controls USB power indication.
     byte(IDX_AUTO_FLAGS) & AUTO_FLAG_CHARGE_INDICATOR_DISABLED == 0
 }
 
