@@ -250,6 +250,12 @@ A profile contains the following fields:
   - Setting `quick_tap_timeout = "0ms"` explicitly disables quick-tap for that profile, even if a non-zero global default is configured. This lets you opt out on a per-profile basis. Omitting the field entirely causes the profile to inherit the global default.
   - A re-press within the window resolves as a tap even if a `double_tap` action is configured, so double-tapping faster than `quick_tap_timeout` produces two taps instead of the `double_tap` action.
 
+When configuring through Vial or Entropy, the Flow Tap / Fast typing window setting (QSID 27) controls both the window and its default enable state: a nonzero value enables Flow Tap by default, and `0` disables that default. The setting reads as `0` when the default is disabled. These choices persist across restarts. Explicit per-key `enable_flow_tap` overrides still take priority; disabling the default preserves the previous window for keys that explicitly enable Flow Tap.
+
+With a 150ms window and `hold_on_other_press` enabled, a layer-tap Space remains a Space during recent typing, while after an idle period another key press activates its layer without waiting for the hold timeout. The default also applies to Morse and tap-dance keys that inherit it; give those keys an explicit `enable_flow_tap = false` profile if their multi-tap sequences must remain available during typing.
+
+Older firmware reported the stored window even when Flow Tap was disabled. Restoring an older settings backup with a nonzero QSID 27 value now enables Flow Tap by default; set it to `0` to disable that default again.
+
 #### Default profile for Morse/TapDance/TapHold
 
 In the `[behavior.morse]` sub-table you can configure the default profile. If there's no explicit profile applied to a morse key, default profile will be used.
