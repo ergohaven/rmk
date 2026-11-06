@@ -440,7 +440,7 @@ pub(crate) const BLE_REPORT_MAP_LEN: usize = 206;
 /// Keep the keyboard collection first, before the vendor-specific Vial usage.
 /// This ordering was reported to fix macOS Caps Lock input-source switching
 /// also toggling letter case on K03 Wireless.
-#[cfg(all(feature = "_ble", feature = "host"))]
+#[cfg(all(feature = "_ble", feature = "vial"))]
 pub(crate) fn ble_report_map() -> [u8; BLE_REPORT_MAP_LEN] {
     let composite = BleCompositeReport::desc();
     let vial = BleViaReport::desc();
