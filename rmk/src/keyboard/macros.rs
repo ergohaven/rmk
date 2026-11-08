@@ -384,7 +384,14 @@ pub(crate) mod codec {
 
     /// `None` for a keycode with no action here.
     fn key_op(kind: u8, keycode: u16) -> Option<MacroOp> {
-        match from_via_keycode(keycode).to_action() {
+        // These aliases belong to macro payloads only; ordinary keymap codes
+        // retain their existing USER00..USER63 encoding.
+        let action = match keycode {
+            #[cfg(feature = "universal_symbols")]
+            0x7E80..=0x7E84 | 0x7E90..=0x7EB3 => Action::User(keycode as u8),
+            _ => from_via_keycode(keycode).to_action(),
+        };
+        match action {
             Action::No => None,
             action => Some(match kind {
                 1 => MacroOp::Tap(action),
@@ -425,7 +432,11 @@ pub(crate) mod codec {
     /// `01 kind kc` for a keycode Vial keeps in one byte, `01 kind+4 lo hi` for
     /// the rest; nothing for an action Vial has no keycode for.
     fn render_key(out: &mut heapless::Vec<u8, 8>, kind: u8, action: Action) {
-        let keycode = to_via_keycode(KeyAction::Single(action));
+        let keycode = match action {
+            #[cfg(feature = "universal_symbols")]
+            Action::User(id @ (0x80..=0x84 | 0x90..=0xB3)) => 0x7E00 | u16::from(id),
+            _ => to_via_keycode(KeyAction::Single(action)),
+        };
         if keycode == 0 {
             return;
         }
@@ -477,6 +488,39 @@ pub(crate) mod codec {
                 bytes = &bytes[len..];
             }
             ops
+        }
+
+        #[cfg(feature = "universal_symbols")]
+        #[test]
+        fn universal_macro_aliases_round_trip_without_changing_keymap_codes() {
+            for id in (0x80..=0x84).chain(0x90..=0xB3) {
+                for (opcode, op) in [
+                    (5, MacroOp::Tap(Action::User(id))),
+                    (6, MacroOp::Press(Action::User(id))),
+                    (7, MacroOp::Release(Action::User(id))),
+                ] {
+                    let wire = [1, opcode, id, 0x7E];
+                    assert_eq!(ops(&wire), [op], "id={id:#x}, opcode={opcode}");
+                    assert_eq!(bytes(&[op]), wire);
+                }
+                assert_eq!(to_via_keycode(KeyAction::Single(Action::User(id))), 0);
+            }
+            for id in [0x7F, 0x85, 0x8F, 0xB4, 0xFF] {
+                assert!(ops(&[1, 5, id, 0x7E]).is_empty());
+            }
+        }
+
+        #[cfg(feature = "universal_symbols")]
+        #[test]
+        fn uploaded_universal_macro_queues_actions_for_playback() {
+            let mut buffer = [0u8; 128];
+            let mut macros = super::super::Macros::new(&[], &mut buffer, false);
+            macros.write_upload(0, &[1, 5, 0x82, 0x7E, 1, 6, 0x90, 0x7E, 1, 7, 0x90, 0x7E, 0]);
+            assert!(macros.queue(0, true, false));
+            assert_eq!(macros.next_op(), Some(MacroOp::Tap(Action::User(0x82))));
+            assert_eq!(macros.next_op(), Some(MacroOp::Press(Action::User(0x90))));
+            assert_eq!(macros.next_op(), Some(MacroOp::Release(Action::User(0x90))));
+            assert_eq!(macros.next_op(), None);
         }
 
         #[test]
