@@ -797,6 +797,8 @@ const QUBE_TEXT_THRESHOLD: i32 = 1;
 const QUBE_TOUCH_CLICK_MS: u64 = 40;
 const QUBE_TOUCH_LEFT_BUTTON: u8 = 1 << 0;
 const QUBE_TOUCH_RIGHT_BUTTON: u8 = 1 << 1;
+const QUBE_TOUCH_HOLD_STATE: i16 = 0x100;
+const QUBE_TOUCH_HOLD_TIMEOUT_MS: u32 = 500;
 #[cfg(feature = "k04_standalone_timeout_14")]
 const QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE: [u32; 14] =
     [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 750, 1000, 1250, 1500];
@@ -1033,6 +1035,8 @@ enum QubeModeKeyScope {
 
 #[derive(Clone, Copy)]
 struct QubePointingSideState {
+    touch_buttons: u8,
+    touch_last_report_ms: u32,
     mode_key: PointingModeKeyState<QubePointingMode>,
     // Origin of the current override, not a second mode state. Equal values
     // selected by independent side keys must remain independent on reset.
@@ -1040,16 +1044,22 @@ struct QubePointingSideState {
     remainder_x: i32,
     remainder_y: i32,
     text_last_motion_ms: u32,
+    last_ball_motion: Option<Instant>,
+    last_ball_interval: Duration,
 }
 
 impl QubePointingSideState {
     const fn new() -> Self {
         Self {
+            touch_buttons: 0,
+            touch_last_report_ms: 0,
             mode_key: PointingModeKeyState::new(),
             mode_key_scope: QubeModeKeyScope::Side,
             remainder_x: 0,
             remainder_y: 0,
             text_last_motion_ms: 0,
+            last_ball_motion: None,
+            last_ball_interval: Duration::from_ticks(0),
         }
     }
 
@@ -1248,6 +1258,7 @@ impl<'a> QubePointingModeProcessor<'a> {
         let mut wheel = 0i16;
         let mut pan = 0i16;
         let mut gesture_buttons = 0u8;
+        let mut hold_buttons = None;
 
         for axis_event in event.axes.iter() {
             match axis_event.axis {
@@ -1255,10 +1266,23 @@ impl<'a> QubePointingModeProcessor<'a> {
                 Axis::Y => y = axis_event.value,
                 Axis::V => wheel = axis_event.value,
                 Axis::H => pan = axis_event.value,
-                Axis::Z if source.kind == QubePointingKind::Touch => {
-                    gesture_buttons = qube_touch_gesture_buttons(axis_event.value)
-                }
+                Axis::Z if source.kind == QubePointingKind::Touch => match axis_event.value {
+                    QUBE_TOUCH_HOLD_STATE => hold_buttons = Some(0),
+                    value if value == QUBE_TOUCH_HOLD_STATE | 1 => hold_buttons = Some(1),
+                    value => gesture_buttons = qube_touch_gesture_buttons(value),
+                },
                 _ => {}
+            }
+        }
+
+        if let Some(buttons) = hold_buttons {
+            let state = &mut self.sides[source.side];
+            let changed = state.touch_buttons != buttons;
+            state.touch_buttons = buttons;
+            state.touch_last_report_ms = now_ms_u32();
+            self.sync_touch_buttons();
+            if changed {
+                send_mouse_report_unchecked(self.keymap.mouse_buttons(), 0, 0, 0, 0).await;
             }
         }
 
@@ -1294,9 +1318,29 @@ impl<'a> QubePointingModeProcessor<'a> {
         if !is_touch_drag {
             self.sync_auto_layer_for_motion(mode, source, x, y);
         }
+        // Track each ball independently, including while acceleration is off.
+        // Touchpad events must not shorten a ball's measured report interval.
+        let ball_elapsed = if source.kind == QubePointingKind::Ball {
+            let now = Instant::now();
+            let state = &mut self.sides[source.side];
+            state.last_ball_motion.replace(now).and_then(|previous| {
+                let elapsed = now.duration_since(previous);
+                let previous_interval = core::mem::replace(&mut state.last_ball_interval, elapsed);
+                // A delayed report compresses the next receipt gap. Use the
+                // longer adjacent interval rather than turning that into speed.
+                (elapsed.as_ticks() != 0).then_some(elapsed.max(previous_interval))
+            })
+        } else {
+            None
+        };
         if self.settings.acceleration(source.side) && !is_touch_drag {
-            x = accelerate_axis(x);
-            y = accelerate_axis(y);
+            if source.kind == QubePointingKind::Ball {
+                x = accelerate_ball_axis(x, ball_elapsed);
+                y = accelerate_ball_axis(y, ball_elapsed);
+            } else {
+                x = accelerate_axis(x);
+                y = accelerate_axis(y);
+            }
         }
 
         let state = &mut self.sides[source.side];
@@ -1346,12 +1390,33 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     async fn poll(&mut self) {
-        if self.active_auto_layer == QUBE_AUTO_LAYER_NONE || self.auto_layer_held_keys != 0 {
+        let mut released = false;
+        for side in &mut self.sides {
+            if side.touch_buttons != 0
+                && now_ms_u32().wrapping_sub(side.touch_last_report_ms) >= QUBE_TOUCH_HOLD_TIMEOUT_MS
+            {
+                side.touch_buttons = 0;
+                released = true;
+            }
+        }
+        if released {
+            self.sync_touch_buttons();
+            send_mouse_report_unchecked(self.keymap.mouse_buttons(), 0, 0, 0, 0).await;
+        }
+        if self.active_auto_layer == QUBE_AUTO_LAYER_NONE
+            || self.auto_layer_held_keys != 0
+            || self.sides.iter().any(|side| side.touch_buttons != 0)
+        {
             return;
         }
         if now_ms_u32().wrapping_sub(self.last_auto_motion_ms) >= self.settings.auto_layer_timeout_ms() {
             self.deactivate_auto_layer();
         }
+    }
+
+    fn sync_touch_buttons(&self) {
+        self.keymap
+            .set_pointing_mouse_buttons(self.sides[0].touch_buttons | self.sides[1].touch_buttons);
     }
 
     async fn send_mouse(&self, buttons: u8, x: i16, y: i16, wheel: i16, pan: i16) {
@@ -1603,6 +1668,20 @@ fn rotate_motion(x: i16, y: i16, orientation: u8) -> (i16, i16) {
         2 => (x.saturating_neg(), y.saturating_neg()),
         3 => (y.saturating_neg(), x),
         _ => (x, y),
+    }
+}
+
+// Preserve the legacy gain and >10-count threshold at its original 12 ms
+// cadence, comparing speed instead of report size. K:04 emits at most once
+// per 4 ms. Reject shorter effective intervals as queued delivery rather than
+// faster sampling; pass those and the first report through without an estimate.
+fn accelerate_ball_axis(value: i16, elapsed: Option<Duration>) -> i16 {
+    if elapsed.is_some_and(|dt| {
+        dt >= Duration::from_millis(4) && u64::from(value.unsigned_abs()) * 12_000 > dt.as_micros().saturating_mul(10)
+    }) {
+        value.saturating_mul(2)
+    } else {
+        value
     }
 }
 
@@ -1996,6 +2075,213 @@ mod tests {
     use crate::k;
     use crate::keymap::KeymapData;
     use crate::test_support::test_block_on as block_on;
+
+    #[cfg(all(feature = "split", not(feature = "_no_usb")))]
+    mod qube_acceleration_regression {
+        use rmk_types::connection::UsbState;
+
+        use super::*;
+        use crate::channel::{QueuedReportPayload, USB_REPORT_CHANNEL};
+
+        async fn motion(
+            processor: &mut QubePointingModeProcessor<'_>,
+            device_id: u8,
+            x: i16,
+            y: i16,
+            elapsed_ms: u64,
+        ) -> (i32, i32) {
+            embassy_time::MockDriver::get().advance(Duration::from_millis(elapsed_ms));
+            processor
+                .on_pointing_event(PointingEvent {
+                    device_id,
+                    axes: [
+                        AxisEvent {
+                            axis: Axis::X,
+                            typ: AxisValType::Rel,
+                            value: x,
+                        },
+                        AxisEvent {
+                            axis: Axis::Y,
+                            typ: AxisValType::Rel,
+                            value: y,
+                        },
+                        AxisEvent {
+                            axis: Axis::Z,
+                            typ: AxisValType::Rel,
+                            value: 0,
+                        },
+                    ],
+                })
+                .await;
+            let mut total = (0, 0);
+            while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                match report.into_payload() {
+                    QueuedReportPayload::WideMouse(report) => {
+                        total.0 += report.x;
+                        total.1 += report.y;
+                    }
+                    _ => panic!("expected native-width mouse output"),
+                }
+            }
+            total
+        }
+
+        #[test]
+        fn equal_ball_speed_keeps_acceleration_and_sniper_distance_across_report_intervals() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(UsbState::Configured);
+                USB_REPORT_CHANNEL.clear();
+                for side in 0..2 {
+                    for accelerated in [false, true] {
+                        for mode in [QubePointingMode::Normal, QubePointingMode::Sniper] {
+                            for interval_ms in [4, 8, 12, 15] {
+                                let mut processor = QubePointingModeProcessor::new(&keymap);
+                                processor.settings.mode[side] = mode;
+                                processor.settings.sniper_sens[side] = 5;
+                                processor.settings.flags = if accelerated { 0x10 << side } else { 0 };
+                                // Establish timing with an unaccelerated, exactly divisible sample.
+                                motion(&mut processor, side as u8, 5, -5, 1).await;
+                                let mut total = (0, 0);
+                                for _ in 0..120 / interval_ms {
+                                    let delta = interval_ms as i16;
+                                    let output = motion(&mut processor, side as u8, delta, -delta, interval_ms).await;
+                                    total.0 += output.0;
+                                    total.1 += output.1;
+                                }
+                                let distance = 120 * if accelerated { 2 } else { 1 }
+                                    / if mode == QubePointingMode::Sniper { 5 } else { 1 };
+                                assert_eq!(
+                                    total,
+                                    (distance, -distance),
+                                    "side={side} accelerated={accelerated} mode={mode:?} interval={interval_ms}"
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        #[test]
+        fn ball_acceleration_does_not_boost_first_paused_or_same_instant_reports() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(UsbState::Configured);
+                USB_REPORT_CHANNEL.clear();
+                let mut processor = QubePointingModeProcessor::new(&keymap);
+                processor.settings.flags = 0x30;
+                assert_eq!(motion(&mut processor, 0, 12, -12, 1).await, (12, -12));
+                assert_eq!(motion(&mut processor, 0, 12, -12, 1_000).await, (12, -12));
+                // The conservative estimate also covers the interval following a pause.
+                assert_eq!(motion(&mut processor, 0, -12, 12, 12).await, (-12, 12));
+                assert_eq!(motion(&mut processor, 0, -12, 12, 12).await, (-24, 24));
+                assert_eq!(motion(&mut processor, 0, 12, -12, 0).await, (12, -12));
+                // The other ball and a touchpad must not shorten ball 0's interval.
+                motion(&mut processor, 1, 12, 0, 6).await;
+                assert_eq!(motion(&mut processor, 2, 12, 0, 0).await, (24, 0));
+                assert_eq!(motion(&mut processor, 0, 8, 0, 6).await, (8, 0));
+                assert_eq!(motion(&mut processor, 0, 10, -10, 12).await, (10, -10));
+                assert_eq!(motion(&mut processor, 0, 11, -11, 12).await, (22, -22));
+                processor.settings.mode[0] = QubePointingMode::Sniper;
+                processor.settings.sniper_sens[0] = 5;
+                let mut total = (0, 0);
+                for _ in 0..5 {
+                    let output = motion(&mut processor, 0, 1, -1, 12).await;
+                    total.0 += output.0;
+                    total.1 += output.1;
+                }
+                assert_eq!(total, (1, -1), "slow subpixel motion must survive factor 5");
+            });
+        }
+
+        #[test]
+        fn queued_ball_reports_do_not_gain_speed_when_delivery_is_bunched() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(UsbState::Configured);
+                USB_REPORT_CHANNEL.clear();
+                for mode in [QubePointingMode::Normal, QubePointingMode::Sniper] {
+                    for delta in [1, 2, 3, 8, 10] {
+                        for interval_ms in [0, 1, 3] {
+                            let mut processor = QubePointingModeProcessor::new(&keymap);
+                            processor.settings.flags = 0x10;
+                            processor.settings.mode[0] = mode;
+                            processor.settings.sniper_sens[0] = 5;
+                            motion(&mut processor, 0, 5, -5, 1).await;
+                            // Model a stalled processor followed by a queue draining faster
+                            // than the ball can sample, including sub-millisecond BLE bursts.
+                            let mut total = motion(&mut processor, 0, delta, -delta, 40).await;
+                            for _ in 0..9 {
+                                if interval_ms == 0 {
+                                    embassy_time::MockDriver::get().advance(Duration::from_micros(300));
+                                }
+                                let output = motion(&mut processor, 0, delta, -delta, interval_ms).await;
+                                total.0 += output.0;
+                                total.1 += output.1;
+                            }
+                            let distance = i32::from(delta) * 10 / if mode == QubePointingMode::Sniper { 5 } else { 1 };
+                            assert_eq!(
+                                total,
+                                (distance, -distance),
+                                "mode={mode:?} delta={delta} gap={interval_ms}"
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
+        #[test]
+        fn adjacent_interval_jitter_does_not_toggle_ball_acceleration() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(UsbState::Configured);
+                USB_REPORT_CHANNEL.clear();
+                for side in 0..2 {
+                    for mode in [QubePointingMode::Normal, QubePointingMode::Sniper] {
+                        // A 4 ms local stream with +/-0.5 ms receive jitter, and a
+                        // 15 ms split stream delayed by one 7.5 ms connection event.
+                        for (long_us, short_us, delta, pair_distance) in [(4_500, 3_500, 5, 20), (22_500, 7_500, 7, 14)]
+                        {
+                            let mut processor = QubePointingModeProcessor::new(&keymap);
+                            processor.settings.flags = 0x10 << side;
+                            processor.settings.mode[side] = mode;
+                            processor.settings.sniper_sens[side] = 5;
+                            motion(&mut processor, side as u8, 5, -5, 1).await;
+                            let mut total = (0, 0);
+                            for _ in 0..10 {
+                                for gap_us in [long_us, short_us] {
+                                    embassy_time::MockDriver::get().advance(Duration::from_micros(gap_us));
+                                    let output = motion(&mut processor, side as u8, delta, -delta, 0).await;
+                                    total.0 += output.0;
+                                    total.1 += output.1;
+                                }
+                            }
+                            let distance = pair_distance * 10 / if mode == QubePointingMode::Sniper { 5 } else { 1 };
+                            assert_eq!(
+                                total,
+                                (distance, -distance),
+                                "side={side} mode={mode:?} gaps={long_us}/{short_us}"
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    }
 
     #[cfg(feature = "split")]
     mod sticky_processor_regression {
@@ -3165,6 +3451,129 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "split")]
+    mod touch_hold_regression {
+        use super::*;
+        use crate::channel::{QueuedReportPayload, USB_REPORT_CHANNEL};
+
+        fn event(device_id: u8, x: i16, y: i16, z: i16) -> PointingEvent {
+            PointingEvent {
+                device_id,
+                axes: [
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::X,
+                        value: x,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Y,
+                        value: y,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Z,
+                        value: z,
+                    },
+                ],
+            }
+        }
+
+        fn expect_mouse(buttons: u8, x: i32, y: i32) {
+            let queued = USB_REPORT_CHANNEL.try_receive().expect("mouse report");
+            let QueuedReportPayload::WideMouse(report) = queued.into_payload() else {
+                panic!("expected native-width mouse report");
+            };
+            assert_eq!((report.buttons, report.x, report.y), (buttons, x, y));
+            assert!(USB_REPORT_CHANNEL.try_receive().is_err(), "unexpected button pulse");
+        }
+
+        #[test]
+        fn touch_hold_keeps_opposite_trackball_dragging_until_release() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+                for (touch, ball) in [(2, 1), (3, 0)] {
+                    USB_REPORT_CHANNEL.clear();
+                    let mut processor = QubePointingModeProcessor::new(&keymap);
+                    // Tagged state differs from legacy Z=1/Z=2 click pulses.
+                    processor.on_pointing_event(event(touch, 0, 0, 0x101)).await;
+                    expect_mouse(1, 0, 0);
+                    Timer::after_millis(200).await;
+                    processor.on_pointing_event(event(ball, 7, -3, 0)).await;
+                    expect_mouse(1, 7, -3);
+                    processor.on_pointing_event(event(touch, 2, 1, 0x101)).await;
+                    expect_mouse(1, 2, 1);
+                    processor.on_pointing_event(event(touch, 0, 0, 0x100)).await;
+                    expect_mouse(0, 0, 0);
+                    processor.on_pointing_event(event(ball, 1, 0, 0)).await;
+                    expect_mouse(0, 1, 0);
+                }
+            });
+        }
+
+        #[test]
+        fn touch_hold_merges_sources_and_expires_without_a_release() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+                USB_REPORT_CHANNEL.clear();
+                let mut processor = QubePointingModeProcessor::new(&keymap);
+                processor.on_pointing_event(event(2, 0, 0, 0x101)).await;
+                expect_mouse(1, 0, 0);
+                processor.on_pointing_event(event(3, 0, 0, 0x101)).await;
+                expect_mouse(1, 0, 0);
+                processor.on_pointing_event(event(2, 0, 0, 0x100)).await;
+                expect_mouse(1, 0, 0);
+                keymap.set_mouse_buttons(2);
+                processor.on_pointing_event(event(0, 1, 0, 0)).await;
+                expect_mouse(3, 1, 0);
+                Timer::after_millis(400).await;
+                processor.on_pointing_event(event(3, 0, 0, 0x101)).await;
+                assert!(USB_REPORT_CHANNEL.try_receive().is_err());
+                Timer::after_millis(400).await;
+                processor.poll().await;
+                assert_eq!(keymap.mouse_buttons(), 3, "fresh heartbeat keeps stationary hold");
+                Timer::after_millis(101).await;
+                processor.poll().await;
+                expect_mouse(2, 0, 0);
+                assert_eq!(keymap.mouse_buttons(), 2, "timeout preserves keyboard button");
+            });
+        }
+
+        #[test]
+        fn legacy_touch_taps_remain_short_clicks() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+                let mut processor = QubePointingModeProcessor::new(&keymap);
+                for button in [1, 2] {
+                    USB_REPORT_CHANNEL.clear();
+                    processor.on_pointing_event(event(2, 0, 0, button)).await;
+                    for expected in [button as u8, 0] {
+                        let QueuedReportPayload::WideMouse(report) = USB_REPORT_CHANNEL.receive().await.into_payload()
+                        else {
+                            panic!("expected mouse click");
+                        };
+                        assert_eq!(report.buttons, expected);
+                    }
+                    assert!(USB_REPORT_CHANNEL.try_receive().is_err());
+                    assert_eq!(keymap.mouse_buttons(), 0);
+                }
+            });
+        }
+    }
+
+    // Init logger for tests
     #[test]
     fn qube_touch_gesture_buttons_accepts_only_supported_clicks() {
         assert_eq!(

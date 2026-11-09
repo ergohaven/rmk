@@ -36,8 +36,9 @@ class WorkflowGraphTests(unittest.TestCase):
         # the target QEMU/LLVM runner dependencies and step-local builtin ESP token.
         # Intentional future
         # coverage edits must review/update these baselines, not drop this test.
+        # build.yml includes the Qube display settings/storage regression step.
         expected = {
-            'build.yml': 'c3770e949c766d6020680bbbf718af3acb569746ce1d81fa99a3a2566afdffb5',
+            'build.yml': 'ae418d03dbe42f7b63c0a03beb79109236c9b78a67f9e845227f138edde8b87c',
             'ci.yml': 'dee219c3ea51a3eaa0e2d5a9dca401e5350e86814d52edfa2ccd24596f7f3356',
         }
         for name, (_, owners) in OWNERS.items():

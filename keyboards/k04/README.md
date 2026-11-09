@@ -96,3 +96,34 @@ Run `python3 scripts/test_k04_usb_power_indicator.py` from the repository root
 to check both LED implementations on the host. It exercises their USB color
 branches, brightness scaling, and layer/VBUS/toggle gates; it does not verify
 the physical switch, charge current, or the LED's appearance on hardware.
+
+## Qube display
+
+K:04, Mini, and Micro Qube dongles expose a **Qube display** settings group
+in compatible Entropy versions (Modules page):
+
+| QSID | Setting | Values | Default |
+|------|---------|--------|---------|
+| 336 | Display brightness | 0–100 percent (0 turns the backlight off) | 100 |
+| 337 | Display background | 0: Black, 1: Blue | Black |
+| 338 | Display text size | 0: Compact, 1: Large | Large |
+
+Brightness uses 16 kHz PWM on the display backlight pin and is independent of
+the halves' LED brightness. Sleep turns the backlight off; wake restores the
+selected brightness. Background and text-size changes redraw the screen.
+The large size includes Cyrillic layer and media text.
+
+These settings persist on the dongle. Existing v1–v5 settings load with the
+new display defaults, preserving layer names and module settings. Qube saves
+version 6 using unused palette/encoder padding bits, keeping the existing
+224-byte capacity and layer-name offsets. Firmware predating this format
+cannot restore that settings blob after a downgrade: module settings reset,
+layer names may appear garbled, and the next Vial change saves the reset values.
+Export the layout/settings before downgrading and restore them afterwards.
+Standalone profiles continue using version 5 and do not advertise the display QSIDs.
+
+Run the host-side Vial/storage regression test with:
+
+```sh
+python3 scripts/test_qube_display_settings.py
+```
