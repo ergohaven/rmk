@@ -797,6 +797,8 @@ const QUBE_TEXT_THRESHOLD: i32 = 1;
 const QUBE_TOUCH_CLICK_MS: u64 = 40;
 const QUBE_TOUCH_LEFT_BUTTON: u8 = 1 << 0;
 const QUBE_TOUCH_RIGHT_BUTTON: u8 = 1 << 1;
+const QUBE_TOUCH_HOLD_STATE: i16 = 0x100;
+const QUBE_TOUCH_HOLD_TIMEOUT_MS: u32 = 500;
 #[cfg(feature = "k04_standalone_timeout_14")]
 const QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE: [u32; 14] =
     [50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 750, 1000, 1250, 1500];
@@ -1033,6 +1035,8 @@ enum QubeModeKeyScope {
 
 #[derive(Clone, Copy)]
 struct QubePointingSideState {
+    touch_buttons: u8,
+    touch_last_report_ms: u32,
     mode_key: PointingModeKeyState<QubePointingMode>,
     // Origin of the current override, not a second mode state. Equal values
     // selected by independent side keys must remain independent on reset.
@@ -1045,6 +1049,8 @@ struct QubePointingSideState {
 impl QubePointingSideState {
     const fn new() -> Self {
         Self {
+            touch_buttons: 0,
+            touch_last_report_ms: 0,
             mode_key: PointingModeKeyState::new(),
             mode_key_scope: QubeModeKeyScope::Side,
             remainder_x: 0,
@@ -1248,6 +1254,7 @@ impl<'a> QubePointingModeProcessor<'a> {
         let mut wheel = 0i16;
         let mut pan = 0i16;
         let mut gesture_buttons = 0u8;
+        let mut hold_buttons = None;
 
         for axis_event in event.axes.iter() {
             match axis_event.axis {
@@ -1255,10 +1262,23 @@ impl<'a> QubePointingModeProcessor<'a> {
                 Axis::Y => y = axis_event.value,
                 Axis::V => wheel = axis_event.value,
                 Axis::H => pan = axis_event.value,
-                Axis::Z if source.kind == QubePointingKind::Touch => {
-                    gesture_buttons = qube_touch_gesture_buttons(axis_event.value)
-                }
+                Axis::Z if source.kind == QubePointingKind::Touch => match axis_event.value {
+                    QUBE_TOUCH_HOLD_STATE => hold_buttons = Some(0),
+                    value if value == QUBE_TOUCH_HOLD_STATE | 1 => hold_buttons = Some(1),
+                    value => gesture_buttons = qube_touch_gesture_buttons(value),
+                },
                 _ => {}
+            }
+        }
+
+        if let Some(buttons) = hold_buttons {
+            let state = &mut self.sides[source.side];
+            let changed = state.touch_buttons != buttons;
+            state.touch_buttons = buttons;
+            state.touch_last_report_ms = now_ms_u32();
+            self.sync_touch_buttons();
+            if changed {
+                send_mouse_report_unchecked(self.keymap.mouse_buttons(), 0, 0, 0, 0).await;
             }
         }
 
@@ -1346,12 +1366,33 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     async fn poll(&mut self) {
-        if self.active_auto_layer == QUBE_AUTO_LAYER_NONE || self.auto_layer_held_keys != 0 {
+        let mut released = false;
+        for side in &mut self.sides {
+            if side.touch_buttons != 0
+                && now_ms_u32().wrapping_sub(side.touch_last_report_ms) >= QUBE_TOUCH_HOLD_TIMEOUT_MS
+            {
+                side.touch_buttons = 0;
+                released = true;
+            }
+        }
+        if released {
+            self.sync_touch_buttons();
+            send_mouse_report_unchecked(self.keymap.mouse_buttons(), 0, 0, 0, 0).await;
+        }
+        if self.active_auto_layer == QUBE_AUTO_LAYER_NONE
+            || self.auto_layer_held_keys != 0
+            || self.sides.iter().any(|side| side.touch_buttons != 0)
+        {
             return;
         }
         if now_ms_u32().wrapping_sub(self.last_auto_motion_ms) >= self.settings.auto_layer_timeout_ms() {
             self.deactivate_auto_layer();
         }
+    }
+
+    fn sync_touch_buttons(&self) {
+        self.keymap
+            .set_pointing_mouse_buttons(self.sides[0].touch_buttons | self.sides[1].touch_buttons);
     }
 
     async fn send_mouse(&self, buttons: u8, x: i16, y: i16, wheel: i16, pan: i16) {
@@ -3165,6 +3206,129 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "split")]
+    mod touch_hold_regression {
+        use super::*;
+        use crate::channel::{QueuedReportPayload, USB_REPORT_CHANNEL};
+
+        fn event(device_id: u8, x: i16, y: i16, z: i16) -> PointingEvent {
+            PointingEvent {
+                device_id,
+                axes: [
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::X,
+                        value: x,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Y,
+                        value: y,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Z,
+                        value: z,
+                    },
+                ],
+            }
+        }
+
+        fn expect_mouse(buttons: u8, x: i32, y: i32) {
+            let queued = USB_REPORT_CHANNEL.try_receive().expect("mouse report");
+            let QueuedReportPayload::WideMouse(report) = queued.into_payload() else {
+                panic!("expected native-width mouse report");
+            };
+            assert_eq!((report.buttons, report.x, report.y), (buttons, x, y));
+            assert!(USB_REPORT_CHANNEL.try_receive().is_err(), "unexpected button pulse");
+        }
+
+        #[test]
+        fn touch_hold_keeps_opposite_trackball_dragging_until_release() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+                for (touch, ball) in [(2, 1), (3, 0)] {
+                    USB_REPORT_CHANNEL.clear();
+                    let mut processor = QubePointingModeProcessor::new(&keymap);
+                    // Tagged state differs from legacy Z=1/Z=2 click pulses.
+                    processor.on_pointing_event(event(touch, 0, 0, 0x101)).await;
+                    expect_mouse(1, 0, 0);
+                    Timer::after_millis(200).await;
+                    processor.on_pointing_event(event(ball, 7, -3, 0)).await;
+                    expect_mouse(1, 7, -3);
+                    processor.on_pointing_event(event(touch, 2, 1, 0x101)).await;
+                    expect_mouse(1, 2, 1);
+                    processor.on_pointing_event(event(touch, 0, 0, 0x100)).await;
+                    expect_mouse(0, 0, 0);
+                    processor.on_pointing_event(event(ball, 1, 0, 0)).await;
+                    expect_mouse(0, 1, 0);
+                }
+            });
+        }
+
+        #[test]
+        fn touch_hold_merges_sources_and_expires_without_a_release() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+                USB_REPORT_CHANNEL.clear();
+                let mut processor = QubePointingModeProcessor::new(&keymap);
+                processor.on_pointing_event(event(2, 0, 0, 0x101)).await;
+                expect_mouse(1, 0, 0);
+                processor.on_pointing_event(event(3, 0, 0, 0x101)).await;
+                expect_mouse(1, 0, 0);
+                processor.on_pointing_event(event(2, 0, 0, 0x100)).await;
+                expect_mouse(1, 0, 0);
+                keymap.set_mouse_buttons(2);
+                processor.on_pointing_event(event(0, 1, 0, 0)).await;
+                expect_mouse(3, 1, 0);
+                Timer::after_millis(400).await;
+                processor.on_pointing_event(event(3, 0, 0, 0x101)).await;
+                assert!(USB_REPORT_CHANNEL.try_receive().is_err());
+                Timer::after_millis(400).await;
+                processor.poll().await;
+                assert_eq!(keymap.mouse_buttons(), 3, "fresh heartbeat keeps stationary hold");
+                Timer::after_millis(101).await;
+                processor.poll().await;
+                expect_mouse(2, 0, 0);
+                assert_eq!(keymap.mouse_buttons(), 2, "timeout preserves keyboard button");
+            });
+        }
+
+        #[test]
+        fn legacy_touch_taps_remain_short_clicks() {
+            block_on(async {
+                let mut data = KeymapData::<1, 1, 1>::new([[[k!(A)]]]);
+                let mut behavior = BehaviorConfig::default();
+                let positional = PositionalConfig::<1, 1>::default();
+                let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+                crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+                let mut processor = QubePointingModeProcessor::new(&keymap);
+                for button in [1, 2] {
+                    USB_REPORT_CHANNEL.clear();
+                    processor.on_pointing_event(event(2, 0, 0, button)).await;
+                    for expected in [button as u8, 0] {
+                        let QueuedReportPayload::WideMouse(report) = USB_REPORT_CHANNEL.receive().await.into_payload()
+                        else {
+                            panic!("expected mouse click");
+                        };
+                        assert_eq!(report.buttons, expected);
+                    }
+                    assert!(USB_REPORT_CHANNEL.try_receive().is_err());
+                    assert_eq!(keymap.mouse_buttons(), 0);
+                }
+            });
+        }
+    }
+
+    // Init logger for tests
     #[test]
     fn qube_touch_gesture_buttons_accepts_only_supported_clicks() {
         assert_eq!(
