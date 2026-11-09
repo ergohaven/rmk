@@ -42,7 +42,7 @@ steps = [
   { release = [0, 0] },
   { release = [0, 1] },
 ]
-expect = [["LCtrl"], ["LCtrl", "LShift"], ["LCtrl", "LShift", "Kc9"], ["LCtrl"], ["LCtrl", "LShift"], ["LCtrl"], []]
+expect = [["LCtrl"], ["LCtrl", "LShift"], ["LCtrl", "LShift"], ["LCtrl", "LShift", "Kc9"], ["LCtrl", "LShift"], ["LCtrl"], ["LCtrl", "LShift"], ["LCtrl"], []]
 
 [[test]]
 name = "modifier_restored_before_next_key"

@@ -11,6 +11,7 @@
 // subset of it — so per-row dead code is expected, not a finding.
 #![allow(dead_code)]
 
+mod shortcuts;
 mod simulator;
 
 #[cfg(feature = "_ble")]

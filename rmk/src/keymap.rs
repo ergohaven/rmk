@@ -153,6 +153,7 @@ struct KeyMapInner<'a> {
     /// VIA/Vial layout options; persisted via `LayoutOption`
     layout_option: u32,
     macros: Macros<'a>,
+    pointing_mouse_buttons: u8,
     /// Matrix state for vial lock
     #[cfg(feature = "host_lock")]
     matrix_state: MatrixState,
@@ -456,6 +457,7 @@ impl<'a> KeyMap<'a> {
                 mouse_buttons: 0,
                 layout_option: data.layout_option,
                 macros,
+                pointing_mouse_buttons: 0,
                 #[cfg(feature = "host_lock")]
                 matrix_state: MatrixState::new(ROW, COL),
             }),
@@ -812,11 +814,17 @@ impl<'a> KeyMap<'a> {
     }
 
     pub(crate) fn mouse_buttons(&self) -> u8 {
-        self.inner.borrow().mouse_buttons
+        let inner = self.inner.borrow();
+        inner.mouse_buttons | inner.pointing_mouse_buttons
     }
 
     pub(crate) fn set_mouse_buttons(&self, buttons: u8) {
         self.inner.borrow_mut().mouse_buttons = buttons;
+    }
+
+    #[cfg(feature = "split")]
+    pub(crate) fn set_pointing_mouse_buttons(&self, buttons: u8) {
+        self.inner.borrow_mut().pointing_mouse_buttons = buttons;
     }
 
     pub(crate) fn get_action_by_flat_index(&self, index: usize) -> KeyAction {
