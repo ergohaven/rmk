@@ -25,7 +25,9 @@ mod keyboard_central {
 
     #[register_processor]
     fn display_processor() -> crate::qube_display::DongleScreen<Irqs> {
-        crate::qube_display::create_processor(p.SPI2, p.P1_11, p.P1_10, p.P1_13, p.P0_28, p.P0_03, p.P0_02, Irqs)
+        crate::qube_display::create_processor(
+            p.SPI2, p.P1_11, p.P1_10, p.P1_13, p.P0_28, p.P0_03, p.P0_02, p.PWM0, Irqs,
+        )
     }
 
     #[register_processor]

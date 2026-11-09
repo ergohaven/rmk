@@ -49,6 +49,42 @@ use crate::keymap::HOLD_BUFFER_SIZE;
 #[cfg(feature = "_ble")]
 pub(crate) static LAST_KEY_TIMESTAMP: Signal<crate::RawMutex, u32> = Signal::new();
 
+#[cfg(all(test, feature = "split"))]
+mod touch_hold_report_tests {
+    use super::*;
+    use crate::channel::USB_REPORT_CHANNEL;
+    use crate::config::{BehaviorConfig, PositionalConfig};
+    use crate::keymap::KeymapData;
+
+    #[test]
+    fn keyboard_mouse_reports_preserve_touch_hold_and_its_own_buttons() {
+        crate::test_support::test_block_on(async {
+            let mut data = KeymapData::<1, 1, 1>::new([[[crate::k!(A)]]]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+            keymap.set_pointing_mouse_buttons(1);
+            for (key, pressed, expected) in [
+                (HidKeyCode::MouseBtn1, true, 1),
+                (HidKeyCode::MouseBtn1, false, 1),
+                (HidKeyCode::MouseBtn2, true, 3),
+                (HidKeyCode::MouseBtn2, false, 1),
+            ] {
+                keyboard
+                    .process_action_mouse(key, KeyboardEvent::key(0, 0, pressed))
+                    .await;
+                let Report::MouseReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                    panic!("expected keyboard mouse report");
+                };
+                assert_eq!(report.buttons, expected);
+            }
+        });
+    }
+}
+
 /// Led states for the keyboard hid report (its value is received by by the light service in a hid report)
 /// LedIndicator type would be nicer, but that does not have const expr constructor
 pub(crate) static LOCK_LED_STATES: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0u8);
@@ -263,13 +299,16 @@ impl<'a> Keyboard<'a> {
     }
 
     /// Send a keyboard report to the host.
-    async fn send_report(&self, report: Report) {
+    async fn send_report(&self, mut report: Report) {
         // Do not report keypresses to Host in passkey mode
         #[cfg(feature = "passkey_entry")]
         if self.passkey_entry_state.is_active() {
             return;
         }
 
+        if let Report::MouseReport(mouse) = &mut report {
+            mouse.buttons |= self.keymap.mouse_buttons();
+        }
         send_hid_report(report).await;
     }
 
