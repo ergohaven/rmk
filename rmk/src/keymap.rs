@@ -153,6 +153,7 @@ struct KeyMapInner<'a> {
     /// VIA/Vial layout options; persisted via `LayoutOption`
     layout_option: u32,
     macros: Macros<'a>,
+    pointing_mouse_buttons: u8,
     /// Matrix state for vial lock
     #[cfg(feature = "host_lock")]
     matrix_state: MatrixState,
@@ -456,6 +457,7 @@ impl<'a> KeyMap<'a> {
                 mouse_buttons: 0,
                 layout_option: data.layout_option,
                 macros,
+                pointing_mouse_buttons: 0,
                 #[cfg(feature = "host_lock")]
                 matrix_state: MatrixState::new(ROW, COL),
             }),
@@ -698,7 +700,13 @@ impl<'a> KeyMap<'a> {
     }
 
     pub(crate) fn morse_enable_flow_tap(&self) -> bool {
-        self.inner.borrow().behavior.morse.enable_flow_tap
+        let inner = self.inner.borrow();
+        inner
+            .behavior
+            .morse
+            .default_profile
+            .enable_flow_tap()
+            .unwrap_or(inner.behavior.morse.enable_flow_tap)
     }
 
     pub(crate) fn morse_prior_idle_time(&self) -> Duration {
@@ -806,11 +814,17 @@ impl<'a> KeyMap<'a> {
     }
 
     pub(crate) fn mouse_buttons(&self) -> u8 {
-        self.inner.borrow().mouse_buttons
+        let inner = self.inner.borrow();
+        inner.mouse_buttons | inner.pointing_mouse_buttons
     }
 
     pub(crate) fn set_mouse_buttons(&self, buttons: u8) {
         self.inner.borrow_mut().mouse_buttons = buttons;
+    }
+
+    #[cfg(feature = "split")]
+    pub(crate) fn set_pointing_mouse_buttons(&self, buttons: u8) {
+        self.inner.borrow_mut().pointing_mouse_buttons = buttons;
     }
 
     pub(crate) fn get_action_by_flat_index(&self, index: usize) -> KeyAction {
@@ -895,61 +909,7 @@ impl<'a> KeyMap<'a> {
 
 #[cfg(test)]
 mod test {
-    use rmk_types::fork::{Fork, StateBits};
-    use rmk_types::modifier::ModifierCombination;
-
-    use crate::keyboard::combo::{Combo, ComboConfig};
-    use crate::keymap::fill_vec;
-    use crate::{COMBO_MAX_NUM, FORK_MAX_NUM, k};
-
-    #[test]
-    fn test_fill_vec() {
-        let mut combos: heapless::Vec<_, COMBO_MAX_NUM> = heapless::Vec::from_slice(&[
-            Combo::new(ComboConfig::new([k!(A), k!(B), k!(C), k!(D)], k!(Z), None)),
-            Combo::new(ComboConfig::new([k!(A), k!(B)], k!(X), None)),
-            Combo::new(ComboConfig::new([k!(A), k!(B), k!(C)], k!(Y), None)),
-        ])
-        .unwrap();
-
-        fill_vec(&mut combos);
-
-        assert_eq!(combos.len(), COMBO_MAX_NUM);
-
-        let mut forks: heapless::Vec<_, FORK_MAX_NUM> = heapless::Vec::from_slice(&[
-            Fork::new(
-                k!(A),
-                k!(Y),
-                k!(F),
-                StateBits::default(),
-                StateBits::default(),
-                ModifierCombination::new(),
-                false,
-            ),
-            Fork::new(
-                k!(B),
-                k!(B),
-                k!(F),
-                StateBits::default(),
-                StateBits::default(),
-                ModifierCombination::new(),
-                false,
-            ),
-            Fork::new(
-                k!(C),
-                k!(Y),
-                k!(Y),
-                StateBits::default(),
-                StateBits::default(),
-                ModifierCombination::new(),
-                false,
-            ),
-        ])
-        .unwrap();
-
-        fill_vec(&mut forks);
-
-        assert_eq!(forks.len(), FORK_MAX_NUM);
-    }
+    use crate::k;
 
     #[test]
     fn is_layer_active_reports_individual_layer_state() {

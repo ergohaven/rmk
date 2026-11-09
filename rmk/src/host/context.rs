@@ -2,7 +2,6 @@
 
 use embassy_time::Duration;
 use rmk_types::action::{EncoderAction, KeyAction};
-#[cfg(feature = "_ble")]
 use rmk_types::battery::BatteryStatus;
 use rmk_types::combo::Combo as ComboConfig;
 use rmk_types::connection::{ConnectionStatus, ConnectionType};
@@ -263,7 +262,12 @@ impl<'a> KeyboardContext<'a> {
     }
 
     pub async fn set_morse_prior_idle_time(&self, ms: u16) -> Result<(), ()> {
-        self.keymap.set_morse_prior_idle_time(Duration::from_millis(ms as u64));
+        // Preserve the window for keys that explicitly enable Flow Tap.
+        if ms != 0 {
+            self.keymap.set_morse_prior_idle_time(Duration::from_millis(ms as u64));
+        }
+        let profile = self.morse_default_profile().with_enable_flow_tap(Some(ms != 0));
+        self.keymap.set_morse_default_profile(profile);
         #[cfg(feature = "storage")]
         store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
         Ok(())
@@ -311,7 +315,6 @@ impl<'a> KeyboardContext<'a> {
         crate::state::current_connection_status()
     }
 
-    #[cfg(feature = "_ble")]
     pub fn battery_status(&self) -> BatteryStatus {
         crate::input_device::battery::current_battery_status()
     }

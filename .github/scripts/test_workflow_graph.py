@@ -2,6 +2,10 @@
 import hashlib
 import json
 import pathlib
+import os
+import re
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -36,9 +40,10 @@ class WorkflowGraphTests(unittest.TestCase):
         # the target QEMU/LLVM runner dependencies and step-local builtin ESP token.
         # Intentional future
         # coverage edits must review/update these baselines, not drop this test.
+        # build.yml includes the Qube display settings/storage regression step.
         expected = {
-            'build.yml': '2c2399cc754e81e15be948175d744963aede98e73359f341f9d56ee3b51313ad',
-            'ci.yml': 'dee219c3ea51a3eaa0e2d5a9dca401e5350e86814d52edfa2ccd24596f7f3356',
+            'build.yml': 'ae418d03dbe42f7b63c0a03beb79109236c9b78a67f9e845227f138edde8b87c',
+            'ci.yml': '911607762e45264261657e42913c164ee41c4a5ae1f6cd4c157c9e4641070bab',
         }
         for name, (_, owners) in OWNERS.items():
             jobs = load(name)['jobs']
@@ -55,6 +60,62 @@ class WorkflowGraphTests(unittest.TestCase):
                          "needs.plan.outputs.run == 'true' && github.event_name == 'pull_request'")
         self.assertEqual(jobs['build']['needs'], ['plan', 'discover'])
         self.assertEqual(jobs['bloat-report']['needs'], ['plan', 'build'])
+
+    def test_grouped_discovery_matches_example_build_owner(self):
+        # Execute the real producer, without compiling or downloading anything.
+        with tempfile.TemporaryDirectory(dir=os.environ.get('TMPDIR')) as temp:
+            output = pathlib.Path(temp) / 'matrix'
+            result = subprocess.run(
+                ['bash', '.github/ci/discover.sh'], cwd=ROOT,
+                env={**os.environ, 'GITHUB_OUTPUT': str(output)},
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            matrices = dict(line.split('=', 1) for line in output.read_text().splitlines())
+            groups = json.loads(matrices['stable'])
+        self.assertTrue(groups)
+        build = load('ci.yml')['jobs']['build']
+        consumed = set(re.findall(r'matrix\.([a-z_]+)', json.dumps(build)))
+        examples = []
+        for group in groups:
+            self.assertTrue(consumed <= group.keys(),
+                            f"{group['name']}: missing {sorted(consumed - group.keys())}")
+            self.assertTrue(group['examples'])
+            self.assertEqual(group['arm_gcc'],
+                             any('nrf' in example['dir'] for example in group['examples']))
+            self.assertTrue(all(example['target'] == group['target']
+                                for example in group['examples']))
+            examples.extend(example['dir'] for example in group['examples'])
+        esp = json.loads(matrices['esp'])
+        self.assertEqual(len(examples), len(set(examples)))
+        inventory = subprocess.run(
+            ['bash', '-c', 'source .github/ci/_lib.sh; '
+             'while IFS= read -r manifest; do '
+             'target="$(get_example_target "$manifest")"; '
+             'if [[ -n "$target" ]]; then printf "%s\\n" "$manifest"; fi; '
+             'done < <(list_example_manifests)'],
+            cwd=ROOT, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(inventory.returncode, 0, inventory.stderr)
+        expected = [str(pathlib.PurePosixPath(path).parent)
+                    for path in inventory.stdout.splitlines()]
+        self.assertCountEqual(examples + [example['dir'] for example in esp], expected)
+        calls = [step for step in build['steps']
+                 if step.get('run') == '.github/ci/build-examples.sh']
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]['env'], {
+            'EXAMPLES': '${{ toJson(matrix.examples) }}',
+            'TARGET': '${{ matrix.target }}',
+            'COMPARE_BASE': "${{ github.event_name == 'pull_request' && matrix.bloat }}",
+        })
+        self.assertFalse(any('matrix.dir' in step.get('working-directory', '')
+                             for step in build['steps']))
+
+    def test_pull_requests_cover_production_and_integration(self):
+        workflow = load('ci.yml')
+        triggers = workflow.get('on', workflow.get(True))
+        self.assertEqual(triggers['pull_request']['branches'], ['main', 'upstream-merge'])
+        self.assertIn('workflow_dispatch', triggers)
 
     def test_automatic_push_is_production_only(self):
         for name in ('build.yml', 'ci.yml'):
