@@ -1186,7 +1186,9 @@ impl<'a> QubePointingModeProcessor<'a> {
             return;
         }
         if event.pressed {
-            if !self.auto_layer_held_keys.contains(&event.source) && self.auto_layer_held_keys.push(event.source).is_err() {
+            if !self.auto_layer_held_keys.contains(&event.source)
+                && self.auto_layer_held_keys.push(event.source).is_err()
+            {
                 // Excess input stays untracked: never evict a valid hold or latch
                 // the layer permanently. Normal K:04 input fits in the buffer.
                 warn!("Qube auto layer held-position capacity exceeded");

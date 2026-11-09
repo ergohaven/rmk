@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "dfu_split")]
 use serde::{Deserializer, Serializer};
 
-use crate::event::{BatteryStatusEvent, KeyboardEvent, PointingEvent};
 #[cfg(feature = "_ble")]
 use crate::event::BleAdvertisingMode;
+use crate::event::{BatteryStatusEvent, KeyboardEvent, PointingEvent};
 
 #[cfg(feature = "_ble")]
 pub mod ble;
