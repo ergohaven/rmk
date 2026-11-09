@@ -39,7 +39,8 @@ class RunnerDependencyTests(unittest.TestCase):
         self.assertNotIn('LIBCLANG_PATH', job.get('env', {}))
         self.assertNotIn('CLANG_PATH', job.get('env', {}))
         install = next(step for step in job['steps'] if step.get('name') == 'Install ARM build dependencies')
-        self.assertEqual(install['if'], "contains(matrix.dir, 'nrf')")
+        # Discovery now groups examples; arm_gcc means any member needs Nordic tools.
+        self.assertEqual(install['if'], 'matrix.arm_gcc')
         for package in ('gcc-arm-none-eabi', 'clang', 'libclang-dev', 'llvm-dev'):
             self.assertIn(package, install['run'])
         self.assertIn('/usr/bin/llvm-config --libdir', install['run'])
