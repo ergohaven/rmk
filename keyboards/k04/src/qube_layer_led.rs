@@ -1,11 +1,8 @@
 use embassy_nrf::pwm::{SequenceConfig, SequencePwm, SingleSequenceMode, SingleSequencer};
 use embassy_time::{Duration, Instant, Timer};
-use rmk::event::{
-    BatteryStatusEvent, LayerChangeEvent, SleepStateEvent, SplitConnectionState, SplitConnectionStateEvent,
-};
+use rmk::event::{LayerChangeEvent, SleepStateEvent, SplitConnectionState, SplitConnectionStateEvent};
 use rmk::macros::processor;
 use rmk::processor::DeadlineProcessor;
-use rmk::types::battery::BatteryStatus;
 
 use crate::module_settings::{self, Rgb};
 
@@ -14,7 +11,6 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 const SPLIT_BLINK_PERIOD_MS: u64 = 360;
 const SPLIT_BLINK_ON_MS: u64 = 180;
 const CONNECTED_INDICATOR_MS: u64 = 1_000;
-const CHARGED_BATTERY_MIN: u8 = 95;
 const PWM_POLARITY_INVERTED: u16 = 0x8000;
 const PWM_T0H: u16 = PWM_POLARITY_INVERTED | 6;
 const PWM_T1H: u16 = PWM_POLARITY_INVERTED | 13;
@@ -25,8 +21,7 @@ const FRAME_WORDS: usize = LED_COUNT * 24 + RESET_SLOTS;
     subscribe = [
         LayerChangeEvent,
         SplitConnectionStateEvent,
-        SleepStateEvent,
-        BatteryStatusEvent
+        SleepStateEvent
     ],
     deadline
 )]
@@ -40,7 +35,6 @@ pub struct LayerLed {
     next_poll: Instant,
     phase_started: Instant,
     connected_until: Option<Instant>,
-    latest_battery: Option<u8>,
     last_vbus_status: Option<(bool, bool)>,
 }
 
@@ -57,7 +51,6 @@ impl LayerLed {
             next_poll: now,
             phase_started: now,
             connected_until: None,
-            latest_battery: None,
             last_vbus_status: None,
         }
     }
@@ -75,18 +68,6 @@ impl LayerLed {
     async fn on_sleep_state_event(&mut self, event: SleepStateEvent) {
         self.sleeping = event.0;
         self.next_poll = Instant::now();
-        self.render(Instant::now()).await;
-    }
-
-    async fn on_battery_status_event(&mut self, event: BatteryStatusEvent) {
-        match event.0 {
-            BatteryStatus::Available { level, .. } => {
-                self.latest_battery = level;
-            }
-            BatteryStatus::Unavailable => {
-                self.latest_battery = None;
-            }
-        }
         self.render(Instant::now()).await;
     }
 
@@ -162,11 +143,8 @@ impl LayerLed {
         }
 
         if self.current_layer == Some(0) && vbus_status.0 && module_settings::charge_indicator_enabled() {
-            return if self.latest_battery.is_some_and(|level| level >= CHARGED_BATTERY_MIN) {
-                (color_green(), 3)
-            } else {
-                (color_yellow(), 3)
-            };
+            // VBUS confirms USB power, not battery connection or charge state.
+            return (scale_color(Rgb { r: 0, g: 180, b: 255 }), 3);
         }
 
         (self.current_layer.map(color_for_layer).unwrap_or_else(color_off), 4)

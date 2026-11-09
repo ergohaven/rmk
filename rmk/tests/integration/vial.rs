@@ -642,3 +642,133 @@ fn high_layer_momentary_write_activates_the_requested_layer() {
         keyboard.run().await;
     });
 }
+
+fn get_flow_window(keyboard: &mut SimKeyboard, window: u16) {
+    let mut request = vial(VialCommand::GetBehaviorSetting);
+    request[2..4].copy_from_slice(&(SettingKey::PriorIdleTime as u16).to_le_bytes());
+    let mut reply = [0xFF; REPORT];
+    reply[0] = 0;
+    reply[1..3].copy_from_slice(&window.to_le_bytes());
+    keyboard.host_exchange(request, reply);
+}
+
+async fn flow_keyboard(window: u16, per_key: Option<bool>) -> SimKeyboard {
+    use rmk_types::morse::{MorseMode, MorseProfile};
+    let mut behavior = BehaviorConfig::default();
+    behavior.morse.default_profile = MorseProfile::new(Some(false), Some(MorseMode::HoldOnOtherPress), Some(250), None);
+    let profile = if let Some(enabled) = per_key {
+        behavior
+            .morse
+            .profiles
+            .push(MorseProfile::default().with_enable_flow_tap(Some(enabled)))
+            .unwrap();
+        0
+    } else {
+        u8::MAX
+    };
+    let space = KeyAction::TapHold(
+        Action::Key(KeyCode::Hid(HidKeyCode::Space)),
+        Action::LayerOn(1),
+        profile,
+    );
+    let mut keyboard = SimKeyboard::builder([[[k!(A), space, k!(B)]], [[k!(X), rmk::a!(Transparent), k!(C)]]])
+        .behavior_config(behavior)
+        .build()
+        .await;
+    get_flow_window(&mut keyboard, 0);
+    keyboard.set_behavior(SettingKey::PriorIdleTime, 150);
+    keyboard.set_behavior(SettingKey::PriorIdleTime, window);
+    get_flow_window(&mut keyboard, window);
+    keyboard
+}
+
+#[test]
+fn host_flow_tap_window_keeps_space_during_typing_rollover() {
+    test_block_on(async {
+        let mut keyboard = flow_keyboard(150, None).await;
+        keyboard
+            .delay(500)
+            .tap(0, 0, 10)
+            .delay(20)
+            .press(0, 1)
+            .press(0, 2)
+            .release(0, 1)
+            .release(0, 2)
+            .expect_keys([HidKeyCode::A])
+            .expect_keys([])
+            .expect_keys([HidKeyCode::Space])
+            .expect_keys([HidKeyCode::Space, HidKeyCode::B])
+            .expect_keys([HidKeyCode::B])
+            .expect_keys([])
+            .run()
+            .await;
+    });
+}
+
+#[test]
+fn host_flow_tap_window_allows_layer_chord_after_idle() {
+    test_block_on(async {
+        let mut keyboard = flow_keyboard(150, None).await;
+        keyboard
+            .delay(500)
+            .tap(0, 0, 10)
+            .delay(190)
+            .press(0, 1)
+            .tap(0, 2, 10)
+            .release(0, 1)
+            .expect_keys([HidKeyCode::A])
+            .expect_keys([])
+            .expect_keys([HidKeyCode::C])
+            .expect_keys([])
+            .run()
+            .await;
+    });
+}
+
+#[test]
+fn disabling_host_flow_tap_preserves_explicit_per_key_protection() {
+    test_block_on(async {
+        for per_key in [None, Some(false), Some(true)] {
+            let mut keyboard = flow_keyboard(0, per_key).await;
+            keyboard
+                .delay(500)
+                .tap(0, 0, 10)
+                .delay(20)
+                .press(0, 1)
+                .press(0, 2)
+                .release(0, 1)
+                .release(0, 2)
+                .expect_keys([HidKeyCode::A])
+                .expect_keys([]);
+            if per_key == Some(true) {
+                keyboard
+                    .expect_keys([HidKeyCode::Space])
+                    .expect_keys([HidKeyCode::Space, HidKeyCode::B])
+                    .expect_keys([HidKeyCode::B])
+                    .expect_keys([]);
+            } else {
+                keyboard.expect_keys([HidKeyCode::C]).expect_keys([]);
+            }
+            keyboard.run().await;
+        }
+    });
+}
+
+#[cfg(feature = "storage")]
+#[test]
+fn host_flow_tap_window_survives_restart() {
+    test_block_on(async {
+        let flash = crate::simulator::Flash::new();
+        for window in [150, 0, 175] {
+            {
+                let mut keyboard = SimKeyboard::builder([[[k!(A)]]]).build_with_flash(flash.clone()).await;
+                keyboard.set_behavior(SettingKey::PriorIdleTime, window);
+                get_flow_window(&mut keyboard, window);
+                keyboard.run().await;
+            }
+            let mut keyboard = SimKeyboard::builder([[[k!(A)]]]).build_with_flash(flash.clone()).await;
+            get_flow_window(&mut keyboard, window);
+            keyboard.run().await;
+        }
+    });
+}

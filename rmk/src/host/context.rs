@@ -262,7 +262,12 @@ impl<'a> KeyboardContext<'a> {
     }
 
     pub async fn set_morse_prior_idle_time(&self, ms: u16) -> Result<(), ()> {
-        self.keymap.set_morse_prior_idle_time(Duration::from_millis(ms as u64));
+        // Preserve the window for keys that explicitly enable Flow Tap.
+        if ms != 0 {
+            self.keymap.set_morse_prior_idle_time(Duration::from_millis(ms as u64));
+        }
+        let profile = self.morse_default_profile().with_enable_flow_tap(Some(ms != 0));
+        self.keymap.set_morse_default_profile(profile);
         #[cfg(feature = "storage")]
         store(StorageItem::BehaviorConfig(self.keymap.behavior_snapshot())).await?;
         Ok(())

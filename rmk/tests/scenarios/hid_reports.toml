@@ -83,13 +83,16 @@ steps = [
   { release = [0, 3] },
 ]
 expect = [
+  ["LShift"],
   ["LShift", "Dot"],
   ["Dot", "RightBracket"],
   ["RightBracket"],
   ["LShift", "RightBracket"],
   ["LShift", "RightBracket"],
+  ["LShift", "RightBracket"],
   ["LShift", "RightBracket", "Kc0"],
   ["LShift", "Kc0"],
+  ["LShift"],
   [],
 ]
 
@@ -104,7 +107,7 @@ steps = [
   { release = [1, 2] },
   { release = [0, 3] },
 ]
-expect = [["LShift", "Dot"], ["LShift", "Dot", "RightBracket"], ["LShift", "RightBracket"], []]
+expect = [["LShift"], ["LShift", "Dot"], ["LShift", "Dot", "RightBracket"], ["LShift", "RightBracket"], ["LShift"], []]
 
 # `WM` modifiers last until the next press and never come back: `]` pressed
 # after `>` types plain, and releasing `]` leaves `>` plain, since no modifier
@@ -119,7 +122,7 @@ steps = [
   { release = [1, 0] },
   { release = [0, 3] },
 ]
-expect = [["LShift", "Dot"], ["Dot", "RightBracket"], ["Dot"], []]
+expect = [["LShift"], ["LShift", "Dot"], ["Dot", "RightBracket"], ["Dot"], []]
 
 # Two keys sharing a modifier are two holders of it, like two keys sharing a
 # keycode above.

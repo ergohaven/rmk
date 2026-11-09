@@ -18,14 +18,15 @@
 use core::fmt::Write as _;
 
 use defmt::{info, warn};
-use embassy_futures::select::{select, Either};
+use embassy_futures::select::{Either, select};
 use embassy_nrf::gpio::{Level, Output, OutputDrive};
-use embassy_nrf::peripherals::{P0_02, P0_03, P0_28, P1_10, P1_11, P1_13, SPI2};
+use embassy_nrf::peripherals::{P0_02, P0_03, P0_28, P1_10, P1_11, P1_13, PWM0, SPI2};
+use embassy_nrf::pwm::{DutyCycle, Prescaler, SimpleConfig, SimplePwm};
 use embassy_nrf::spim::{self, Spim};
-use embassy_nrf::{interrupt, Peri};
+use embassy_nrf::{Peri, interrupt};
 use embassy_time::{Delay, Duration, Instant, Timer};
-use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_8X13, FONT_9X15};
 use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::ascii::{FONT_6X10, FONT_8X13, FONT_9X15, FONT_10X20};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, RoundedRectangle};
@@ -44,9 +45,9 @@ use rmk::event::{
 };
 use rmk_types::battery::BatteryStatus;
 use static_cell::StaticCell;
-use u8g2_fonts::{fonts, U8g2TextStyle};
+use u8g2_fonts::{U8g2TextStyle, fonts};
 
-use crate::media_label::{marquee, media_label, media_scrolls, MEDIA_VISIBLE_CHARS};
+use crate::media_label::{MEDIA_VISIBLE_CHARS, marquee, media_label};
 
 // --- Panel geometry ---------------------------------------------------------
 
@@ -70,6 +71,7 @@ const SAFE_W: u32 = SCREEN_W as u32 - (SAFE_X as u32 * 2);
 const MEDIA_LABEL_LEN: usize = 2 * rmk::host_data::HOST_TEXT_LEN + 3;
 // A visible character takes up to four bytes.
 const MEDIA_VISIBLE_LEN: usize = MEDIA_VISIBLE_CHARS * 4;
+const LARGE_MEDIA_VISIBLE_CHARS: usize = 19;
 const PANEL_RADIUS: u32 = 14;
 const CHIP_RADIUS: u32 = 7;
 const BAR_RADIUS: u32 = 5;
@@ -79,21 +81,76 @@ const LAYER_DIRTY: DirtyRegion = DirtyRegion::range(50, 138);
 const MODIFIER_DIRTY: DirtyRegion = DirtyRegion::range(144, 166);
 const BATTERY_DIRTY: DirtyRegion = DirtyRegion::range(174, 224);
 
-const COL_BG: Rgb565 = Rgb565::new(0, 2, 4);
-const COL_FG: Rgb565 = Rgb565::new(29, 61, 30);
-const COL_MUTED: Rgb565 = Rgb565::new(11, 24, 20);
-const COL_LABEL: Rgb565 = Rgb565::new(16, 36, 28);
-const COL_DIM: Rgb565 = Rgb565::new(5, 12, 14);
-const COL_ACCENT: Rgb565 = Rgb565::new(3, 38, 31);
-const COL_ACCENT_DIM: Rgb565 = Rgb565::new(1, 16, 18);
-const COL_YELLOW: Rgb565 = Rgb565::new(31, 50, 0);
-const COL_RED: Rgb565 = Rgb565::new(31, 5, 5);
-const COL_BAR_BG: Rgb565 = Rgb565::new(2, 7, 9);
-const COL_BAR_FG: Rgb565 = Rgb565::new(3, 42, 30);
-const COL_PANEL: Rgb565 = Rgb565::new(2, 6, 9);
-const COL_PANEL_HI: Rgb565 = Rgb565::new(3, 9, 13);
-const COL_BORDER: Rgb565 = Rgb565::new(5, 13, 16);
-const COL_BORDER_DIM: Rgb565 = Rgb565::new(3, 8, 11);
+#[derive(Clone, Copy)]
+struct Palette {
+    bg: Rgb565,
+    fg: Rgb565,
+    muted: Rgb565,
+    label: Rgb565,
+    dim: Rgb565,
+    accent: Rgb565,
+    accent_dim: Rgb565,
+    yellow: Rgb565,
+    red: Rgb565,
+    bar_bg: Rgb565,
+    bar_fg: Rgb565,
+    panel: Rgb565,
+    panel_hi: Rgb565,
+    border: Rgb565,
+    border_dim: Rgb565,
+}
+
+const BLUE_PALETTE: Palette = Palette {
+    bg: Rgb565::new(0, 2, 4),
+    fg: Rgb565::new(29, 61, 30),
+    muted: Rgb565::new(11, 24, 20),
+    label: Rgb565::new(16, 36, 28),
+    dim: Rgb565::new(5, 12, 14),
+    accent: Rgb565::new(3, 38, 31),
+    accent_dim: Rgb565::new(1, 16, 18),
+    yellow: Rgb565::new(31, 50, 0),
+    red: Rgb565::new(31, 5, 5),
+    bar_bg: Rgb565::new(2, 7, 9),
+    bar_fg: Rgb565::new(3, 42, 30),
+    panel: Rgb565::new(2, 6, 9),
+    panel_hi: Rgb565::new(3, 9, 13),
+    border: Rgb565::new(5, 13, 16),
+    border_dim: Rgb565::new(3, 8, 11),
+};
+
+const BLACK_PALETTE: Palette = Palette {
+    bg: Rgb565::BLACK,
+    fg: Rgb565::WHITE,
+    muted: Rgb565::new(23, 46, 23),
+    label: Rgb565::new(25, 50, 25),
+    dim: Rgb565::new(16, 32, 16),
+    panel: Rgb565::BLACK,
+    panel_hi: Rgb565::BLACK,
+    border: Rgb565::new(10, 20, 10),
+    border_dim: Rgb565::new(6, 12, 6),
+    bar_bg: Rgb565::new(3, 6, 3),
+    ..BLUE_PALETTE
+};
+
+fn palette() -> Palette {
+    if crate::layer_names::qube_display_settings()[1] == 0 {
+        BLACK_PALETTE
+    } else {
+        BLUE_PALETTE
+    }
+}
+
+fn large_text() -> bool {
+    crate::layer_names::qube_display_settings()[2] != 0
+}
+
+fn media_visible_chars() -> usize {
+    if large_text() {
+        LARGE_MEDIA_VISIBLE_CHARS
+    } else {
+        MEDIA_VISIBLE_CHARS
+    }
+}
 
 type SpiDev = ExclusiveDevice<Spim<'static>, Output<'static>, NoDelay>;
 type Di = SpiInterface<SpiDev, Output<'static>>;
@@ -289,6 +346,7 @@ where
     }
 
     async fn present_dirty(&mut self, renderer: &mut QubeStatusRenderer, ctx: &RenderContext, dirty: DirtyRegion) {
+        let colors = palette();
         self.ensure_init().await;
         let LcdState::Active(lcd) = &mut self.state else {
             return;
@@ -304,7 +362,7 @@ where
             let remaining = y1.saturating_sub(y);
             let h = remaining.min(STRIPE_H as u16);
             lcd.set_band(y, h);
-            lcd.clear_stripe(COL_BG);
+            lcd.clear_stripe(colors.bg);
             // Re-run full UI; DrawTarget keeps only this stripe's pixels.
             renderer.render(ctx, lcd);
             lcd.flush_band().await;
@@ -369,7 +427,8 @@ where
         + 'static,
 {
     lcd: LazyQubeLcd<I>,
-    backlight: Output<'static>,
+    backlight: SimplePwm<'static>,
+    last_display_settings: [u8; 3],
     renderer: QubeStatusRenderer,
     ctx: RenderContext,
     last_host_data: rmk::host_data::HostData,
@@ -388,6 +447,7 @@ pub fn create_processor<I>(
     dc: Peri<'static, P0_28>,
     rst: Peri<'static, P0_03>,
     bl: Peri<'static, P0_02>,
+    pwm: Peri<'static, PWM0>,
     irq: I,
 ) -> DongleScreen<I>
 where
@@ -395,8 +455,11 @@ where
         + Copy
         + 'static,
 {
-    let level = if BACKLIGHT_ACTIVE_HIGH { Level::High } else { Level::Low };
-    let backlight = Output::new(bl, level, OutputDrive::Standard);
+    // 16 MHz / 1000 gives a 16 kHz backlight PWM, independent of UI redraws.
+    let mut config = SimpleConfig::default();
+    config.prescaler = Prescaler::Div1;
+    config.max_duty = 1000;
+    let backlight = SimplePwm::new_1ch(pwm, bl, &config);
     let host_data = rmk::host_data::snapshot();
 
     DongleScreen {
@@ -412,6 +475,7 @@ where
             irq,
         },
         backlight,
+        last_display_settings: crate::layer_names::qube_display_settings(),
         renderer: QubeStatusRenderer {
             host_data: host_data.clone(),
         },
@@ -457,12 +521,18 @@ where
     }
 
     fn set_backlight(&mut self, on: bool) {
-        let level = if on == BACKLIGHT_ACTIVE_HIGH {
-            Level::High
+        let brightness = if on {
+            crate::layer_names::qube_display_settings()[0]
         } else {
-            Level::Low
+            0
         };
-        self.backlight.set_level(level);
+        let duty = u16::from(brightness) * 10;
+        let cycle = if BACKLIGHT_ACTIVE_HIGH {
+            DutyCycle::inverted(duty)
+        } else {
+            DutyCycle::normal(duty)
+        };
+        self.backlight.set_duty(0, cycle);
     }
 
     fn sync_host_data(&mut self) {
@@ -491,6 +561,7 @@ where
 {
     async fn run(&mut self) -> ! {
         self.pending = true;
+        self.set_backlight(!self.ctx.sleeping);
         self.sync_host_data();
         self.redraw().await;
 
@@ -580,6 +651,12 @@ where
                 }
             }
 
+            let settings = crate::layer_names::qube_display_settings();
+            if settings != self.last_display_settings {
+                self.last_display_settings = settings;
+                self.set_backlight(!self.ctx.sleeping);
+                self.request_redraw();
+            }
             if self.pending {
                 self.redraw().await;
             }
@@ -768,20 +845,26 @@ pub struct QubeStatusRenderer {
 
 impl QubeStatusRenderer {
     fn media_needs_marquee(&self) -> bool {
-        media_scrolls(&self.host_data.media_artist, &self.host_data.media_title)
+        media_label(&self.host_data.media_artist, &self.host_data.media_title).count() > media_visible_chars()
     }
 }
 
 impl DisplayRenderer<Rgb565> for QubeStatusRenderer {
     fn render<D: DrawTarget<Color = Rgb565>>(&mut self, ctx: &RenderContext, display: &mut D) {
-        let _ = display.clear(COL_BG);
+        let colors = palette();
+        let large = large_text();
+        let _ = display.clear(colors.bg);
 
-        let layer_meta = MonoTextStyle::new(&FONT_6X10, COL_LABEL);
-        let header_media = U8g2TextStyle::new(fonts::u8g2_font_6x12_t_cyrillic, COL_FG);
-        let header_fallback = MonoTextStyle::new(&FONT_8X13, COL_ACCENT);
-        let body = MonoTextStyle::new(&FONT_8X13, COL_FG);
-        let title_shadow = U8g2TextStyle::new(fonts::u8g2_font_10x20_t_cyrillic, COL_ACCENT_DIM);
-        let title = U8g2TextStyle::new(fonts::u8g2_font_10x20_t_cyrillic, COL_FG);
+        let layer_meta = MonoTextStyle::new(if large { &FONT_8X13 } else { &FONT_6X10 }, colors.label);
+        let header_media = if large {
+            U8g2TextStyle::new(fonts::u8g2_font_8x13_t_cyrillic, colors.fg)
+        } else {
+            U8g2TextStyle::new(fonts::u8g2_font_6x12_t_cyrillic, colors.fg)
+        };
+        let header_fallback = MonoTextStyle::new(&FONT_8X13, colors.accent);
+        let body = MonoTextStyle::new(if large { &FONT_9X15 } else { &FONT_8X13 }, colors.fg);
+        let title_shadow = U8g2TextStyle::new(fonts::u8g2_font_10x20_t_cyrillic, colors.accent_dim);
+        let title = U8g2TextStyle::new(fonts::u8g2_font_10x20_t_cyrillic, colors.fg);
         let tc = TextStyleBuilder::new()
             .alignment(Alignment::Center)
             .baseline(Baseline::Top)
@@ -806,8 +889,8 @@ impl DisplayRenderer<Rgb565> for QubeStatusRenderer {
         };
 
         // Header.
-        draw_panel(display, SAFE_X, 14, SAFE_W, 28, COL_PANEL, COL_BORDER_DIM);
-        draw_round_fill(display, SAFE_X + 11, 23, 3, 10, 2, COL_ACCENT);
+        draw_panel(display, SAFE_X, 14, SAFE_W, 28, colors.panel, colors.border_dim);
+        draw_round_fill(display, SAFE_X + 11, 23, 3, 10, 2, colors.accent);
         let mut s: heapless::String<16> = heapless::String::new();
         draw_media_or_fallback(display, &self.host_data, &header_media, header_fallback);
         if host_time_available(&self.host_data) {
@@ -816,13 +899,19 @@ impl DisplayRenderer<Rgb565> for QubeStatusRenderer {
         }
 
         // Layer panel.
-        draw_panel(display, SAFE_X, 52, SAFE_W, 84, COL_PANEL_HI, COL_BORDER_DIM);
+        draw_panel(display, SAFE_X, 52, SAFE_W, 84, colors.panel_hi, colors.border_dim);
         s.clear();
         let _ = write!(&mut s, "LAYER {}", ctx.layer);
         let _ = Text::with_text_style(&s, Point::new(SCREEN_W as i32 / 2, 66), layer_meta, tc).draw(display);
-        let _ = Text::with_text_style(name, Point::new(SCREEN_W as i32 / 2 + 1, 101), &title_shadow, mc).draw(display);
-        let _ = Text::with_text_style(name, Point::new(SCREEN_W as i32 / 2, 100), &title, mc).draw(display);
-        draw_round_fill(display, 104, 125, 72, 2, 1, COL_ACCENT_DIM);
+        if large {
+            let mut scaled = DoubleSize(display);
+            let _ = Text::with_text_style(name, Point::new(SCREEN_W as i32 / 4, 50), &title, mc).draw(&mut scaled);
+        } else {
+            let _ =
+                Text::with_text_style(name, Point::new(SCREEN_W as i32 / 2 + 1, 101), &title_shadow, mc).draw(display);
+            let _ = Text::with_text_style(name, Point::new(SCREEN_W as i32 / 2, 100), &title, mc).draw(display);
+        }
+        draw_round_fill(display, 104, 125, 72, 2, 1, colors.accent_dim);
 
         // Modifier chips.
         draw_chip(display, 30, 146, 38, "CAPS", ctx.caps_lock);
@@ -865,6 +954,30 @@ impl DisplayRenderer<Rgb565> for QubeStatusRenderer {
     }
 }
 
+struct DoubleSize<'a, D>(&'a mut D);
+
+impl<D: DrawTarget<Color = Rgb565>> OriginDimensions for DoubleSize<'_, D> {
+    fn size(&self) -> Size {
+        Size::new(SCREEN_W as u32 / 2, SCREEN_H as u32 / 2)
+    }
+}
+
+impl<D: DrawTarget<Color = Rgb565>> DrawTarget for DoubleSize<'_, D> {
+    type Color = Rgb565;
+    type Error = D::Error;
+
+    fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(&mut self, pixels: I) -> Result<(), Self::Error> {
+        self.0.draw_iter(pixels.into_iter().flat_map(|Pixel(point, color)| {
+            [
+                Pixel(point * 2, color),
+                Pixel(point * 2 + Point::new(1, 0), color),
+                Pixel(point * 2 + Point::new(0, 1), color),
+                Pixel(point * 2 + Point::new(1, 1), color),
+            ]
+        }))
+    }
+}
+
 fn draw_panel<D: DrawTarget<Color = Rgb565>>(
     display: &mut D,
     x: i32,
@@ -901,16 +1014,18 @@ fn draw_round_fill<D: DrawTarget<Color = Rgb565>>(
 }
 
 fn draw_chip<D: DrawTarget<Color = Rgb565>>(display: &mut D, x: i32, y: i32, w: u32, label: &str, active: bool) {
+    let colors = palette();
+    let font = if large_text() { &FONT_8X13 } else { &FONT_6X10 };
     let text = if active {
-        MonoTextStyle::new(&FONT_6X10, COL_FG)
+        MonoTextStyle::new(font, colors.fg)
     } else {
-        MonoTextStyle::new(&FONT_6X10, COL_DIM)
+        MonoTextStyle::new(font, colors.dim)
     };
     if active {
         let rect = Rectangle::new(Point::new(x, y), Size::new(w, 16));
         let style = PrimitiveStyleBuilder::new()
-            .fill_color(COL_ACCENT_DIM)
-            .stroke_color(COL_ACCENT)
+            .fill_color(colors.accent_dim)
+            .stroke_color(colors.accent)
             .stroke_width(1)
             .build();
         let _ = RoundedRectangle::with_equal_corners(rect, Size::new(CHIP_RADIUS, CHIP_RADIUS))
@@ -921,7 +1036,13 @@ fn draw_chip<D: DrawTarget<Color = Rgb565>>(display: &mut D, x: i32, y: i32, w: 
         .alignment(Alignment::Center)
         .baseline(Baseline::Top)
         .build();
-    let _ = Text::with_text_style(label, Point::new(x + w as i32 / 2, y + 3), text, tc).draw(display);
+    let _ = Text::with_text_style(
+        label,
+        Point::new(x + w as i32 / 2, y + if large_text() { 1 } else { 3 }),
+        text,
+        tc,
+    )
+    .draw(display);
 }
 #[derive(Clone, Copy)]
 enum BatReading {
@@ -947,35 +1068,37 @@ fn draw_bat<D: DrawTarget<Color = Rgb565>>(
     connected: bool,
     side: &str,
 ) {
+    let colors = palette();
+    let large = large_text();
     let (label, col, fill_pct): (heapless::String<8>, Rgb565, Option<u8>) = match (connected, reading) {
         (false, _) => {
             let mut s = heapless::String::new();
             let _ = s.push_str("--");
-            (s, COL_DIM, None)
+            (s, colors.dim, None)
         }
         (true, BatReading::Unknown) | (true, BatReading::Pending) => {
             let mut s = heapless::String::new();
             let _ = s.push_str("??");
-            (s, COL_DIM, None)
+            (s, colors.dim, None)
         }
         (true, BatReading::Pct(p)) => {
             let mut s = heapless::String::new();
             let _ = write!(&mut s, "{}%", p);
             let c = if p < 10 {
-                COL_RED
+                colors.red
             } else if p < 25 {
-                COL_YELLOW
+                colors.yellow
             } else {
-                COL_FG
+                colors.fg
             };
             (s, c, Some(p))
         }
     };
 
-    draw_panel(display, x, y, w as u32, 46, COL_PANEL, COL_BORDER_DIM);
+    draw_panel(display, x, y, w as u32, 46, colors.panel, colors.border_dim);
 
-    let title = MonoTextStyle::new(&FONT_6X10, COL_MUTED);
-    let percent = MonoTextStyle::new(&FONT_9X15, col);
+    let title = MonoTextStyle::new(if large { &FONT_8X13 } else { &FONT_6X10 }, colors.muted);
+    let percent = MonoTextStyle::new(if large { &FONT_10X20 } else { &FONT_9X15 }, col);
     let top = TextStyleBuilder::new().baseline(Baseline::Top).build();
     let tr = TextStyleBuilder::new()
         .alignment(Alignment::Right)
@@ -993,22 +1116,22 @@ fn draw_bat<D: DrawTarget<Color = Rgb565>>(
         Size::new(BAR_RADIUS, BAR_RADIUS),
     );
     let bar_style = PrimitiveStyleBuilder::new()
-        .fill_color(COL_BAR_BG)
-        .stroke_color(COL_BORDER)
+        .fill_color(colors.bar_bg)
+        .stroke_color(colors.border)
         .stroke_width(1)
         .build();
     let _ = bar.into_styled(bar_style).draw(display);
-    draw_round_fill(display, bx + bw + 2, by + 2, 4, 3, 2, COL_BORDER_DIM);
+    draw_round_fill(display, bx + bw + 2, by + 2, 4, 3, 2, colors.border_dim);
     if let Some(pct) = fill_pct {
         if pct > 0 {
             let inner = (bw - 4).max(1) as u32;
             let fw = (inner * pct as u32 / 100).max(2);
             let fc = if pct < 10 {
-                COL_RED
+                colors.red
             } else if pct < 25 {
-                COL_YELLOW
+                colors.yellow
             } else {
-                COL_BAR_FG
+                colors.bar_fg
             };
             draw_round_fill(display, bx + 2, by + 2, fw, bh - 4, 3, fc);
         }
@@ -1050,11 +1173,11 @@ fn draw_media_or_fallback<D: DrawTarget<Color = Rgb565>>(
     }
 
     let mut visible: heapless::String<MEDIA_VISIBLE_LEN> = heapless::String::new();
-    if media.chars().count() <= MEDIA_VISIBLE_CHARS {
+    if media.chars().count() <= media_visible_chars() {
         let _ = visible.push_str(&media);
     } else {
         let elapsed = Instant::now().duration_since(Instant::from_ticks(0)).as_millis() as usize;
-        for ch in marquee(&media, elapsed / 300) {
+        for ch in marquee(&media, elapsed / 300).take(media_visible_chars()) {
             let _ = visible.push(ch);
         }
     }

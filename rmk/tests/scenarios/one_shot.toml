@@ -152,7 +152,7 @@ steps = [
   { tap = { pos = [0, 4], duration = 10 } },
   { tap = { pos = [0, 5], duration = 10 } },
 ]
-expect = [["LShift", "LCtrl", "LGui", "B"], []]
+expect = [["LShift", "LCtrl", "LGui"], ["LShift", "LCtrl", "LGui", "B"], ["LGui"], []]
 
 # activate_on_keypress: the modifier is reported as soon as the OSM is pressed.
 [[test]]
@@ -360,7 +360,7 @@ steps = [
   { tap = { pos = [0, 4], duration = 10 } },
   { tap = { pos = [0, 5], duration = 10 } },
 ]
-expect = [["LShift", "LCtrl", "LGui", "B"], ["LGui", "B"], []]
+expect = [["LShift", "LCtrl", "LGui"], ["LShift", "LCtrl", "LGui", "B"], ["LGui", "B"], ["LGui"], []]
 
 [[test]]
 name = "osm_quick_release_activate_on_keypress"

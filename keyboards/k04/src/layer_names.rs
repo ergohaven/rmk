@@ -12,6 +12,7 @@ pub const LAYER_NAME_MAX: usize = 12;
 const LAYER_NAME_QSID_BASE: u16 = 200;
 const STORAGE_MARKER: u8 = 0xE4;
 const STORAGE_VERSION: u8 = 5;
+const QUBE_DISPLAY_STORAGE_VERSION: u8 = 6;
 const ENCODER_STEPS_STORAGE_VERSION: u8 = 4;
 const REMOVED_HOST_TIMEOUT_STORAGE_VERSION: u8 = 3;
 const PREVIOUS_STORAGE_VERSION: u8 = 2;
@@ -24,12 +25,40 @@ const LEGACY_LAYER_NAMES_STORAGE_OFFSET: usize = MODULE_STORAGE_OFFSET + LEGACY_
 
 pub type LayerNameString = heapless::String<LAYER_NAME_MAX>;
 
-const SETTING_KEYS: [u16; 84] = [
+const BASE_SETTING_KEYS: [u16; 84] = [
     120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142,
     143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212,
     213, 214, 215, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319,
     320, 321, 322, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335,
 ];
+
+const SETTING_KEYS: [u16; 84 + if cfg!(feature = "qube") { 3 } else { 0 }] = {
+    let mut keys = [0; 84 + if cfg!(feature = "qube") { 3 } else { 0 }];
+    let mut i = 0;
+    while i < BASE_SETTING_KEYS.len() {
+        keys[i] = BASE_SETTING_KEYS[i];
+        i += 1;
+    }
+    if cfg!(feature = "qube") {
+        keys[84] = 336;
+        keys[85] = 337;
+        keys[86] = 338;
+    }
+    keys
+};
+
+static DISPLAY_SETTINGS: [AtomicU8; 3] = [AtomicU8::new(100), AtomicU8::new(0), AtomicU8::new(1)];
+
+#[cfg(feature = "qube")]
+pub fn qube_display_settings() -> [u8; 3] {
+    core::array::from_fn(|i| DISPLAY_SETTINGS[i].load(Ordering::Relaxed))
+}
+
+fn set_display_setting(qsid: u16, value: u8) {
+    let index = usize::from(qsid - 336);
+    let max = if index == 0 { 100 } else { 1 };
+    DISPLAY_SETTINGS[index].store(value.min(max), Ordering::Relaxed);
+}
 
 const MODULE_SETTINGS_VERSION: u8 = if cfg!(feature = "standalone") { 10 } else { 9 };
 const LEGACY_TIMEOUT_SETTINGS_VERSION: u8 = 9;
@@ -299,12 +328,28 @@ fn serialize() -> VialDeviceSettingsData {
         pos += copy_len;
     }
     data.len = pos as u8;
+    if cfg!(feature = "qube") {
+        data.data[1] = QUBE_DISPLAY_STORAGE_VERSION;
+        // The last palette byte uses bit 0; encoder-step nibbles use bits 0..2.
+        // Store dongle-only settings in that padding, without shrinking layer names.
+        data.data[MODULE_STORAGE_OFFSET + 28] |= DISPLAY_SETTINGS[0].load(Ordering::Relaxed) << 1;
+        data.data[MODULE_STORAGE_OFFSET + 32] |=
+            (DISPLAY_SETTINGS[1].load(Ordering::Relaxed) << 3) | (DISPLAY_SETTINGS[2].load(Ordering::Relaxed) << 7);
+    }
     data
 }
 
 fn deserialize(bytes: &[u8]) {
+    for (setting, default) in DISPLAY_SETTINGS.iter().zip([100, 0, 1]) {
+        setting.store(default, Ordering::Relaxed);
+    }
     if bytes.first() == Some(&STORAGE_MARKER) {
         let profile = match bytes.get(1).copied() {
+            Some(QUBE_DISPLAY_STORAGE_VERSION)
+                if cfg!(feature = "qube") && bytes.len() >= LAYER_NAMES_STORAGE_OFFSET =>
+            {
+                Some((LAYER_NAMES_STORAGE_OFFSET, false, false))
+            }
             Some(STORAGE_VERSION) if bytes.len() >= LAYER_NAMES_STORAGE_OFFSET => {
                 Some((LAYER_NAMES_STORAGE_OFFSET, false, false))
             }
@@ -325,7 +370,18 @@ fn deserialize(bytes: &[u8]) {
             _ => None,
         };
         if let Some((layer_names_offset, migrate_placeholders, reset_reserved_timeout)) = profile {
-            deserialize_module_settings(&bytes[MODULE_STORAGE_OFFSET..layer_names_offset]);
+            if bytes[1] == QUBE_DISPLAY_STORAGE_VERSION {
+                let mut module_data = [0u8; MODULE_SETTINGS_STORAGE_LEN];
+                module_data.copy_from_slice(&bytes[MODULE_STORAGE_OFFSET..layer_names_offset]);
+                set_display_setting(336, module_data[28] >> 1);
+                set_display_setting(337, (module_data[32] >> 3) & 1);
+                set_display_setting(338, module_data[32] >> 7);
+                module_data[28] &= 0x01;
+                module_data[32] &= 0x77;
+                deserialize_module_settings(&module_data);
+            } else {
+                deserialize_module_settings(&bytes[MODULE_STORAGE_OFFSET..layer_names_offset]);
+            }
             if reset_reserved_timeout {
                 module_set_byte(IDX_RESERVED_HOST_DISCONNECT_TIMEOUT, 3);
             }
@@ -468,6 +524,7 @@ fn module_get_setting(qsid: u16, out: &mut [u8]) -> Option<usize> {
 
 const fn module_qsid_width(qsid: u16) -> Option<usize> {
     match qsid {
+        336..=338 if cfg!(feature = "qube") => Some(1),
         120..=152 | 300..=315 | 317..=335 => Some(1),
         316 => Some(2),
         _ => None,
@@ -480,6 +537,10 @@ fn module_set_setting(qsid: u16, data: &[u8]) -> bool {
         None => return false,
     };
     match qsid {
+        336..=338 if cfg!(feature = "qube") => {
+            set_display_setting(qsid, value);
+            return true;
+        }
         120 => module_set_byte(IDX_LEFT_BALL_DPI, value.min(15)),
         121 => module_set_byte(IDX_RIGHT_BALL_DPI, value.min(15)),
         122 => module_set_byte(IDX_LEFT_TOUCH_DPI, value.min(9)),
@@ -620,6 +681,7 @@ fn module_settings_sync_packet() -> [u8; MODULE_SETTINGS_SYNC_LEN] {
 
 fn module_qsid_value(qsid: u16) -> Option<u8> {
     Some(match qsid {
+        336..=338 if cfg!(feature = "qube") => DISPLAY_SETTINGS[usize::from(qsid - 336)].load(Ordering::Relaxed),
         120 => module_byte(IDX_LEFT_BALL_DPI),
         121 => module_byte(IDX_RIGHT_BALL_DPI),
         122 => module_byte(IDX_LEFT_TOUCH_DPI),

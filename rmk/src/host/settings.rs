@@ -61,7 +61,14 @@ pub(crate) fn get(
         SettingKey::HoldOnOtherKeyPress => put_flag(out, profile.mode() == Some(MorseMode::HoldOnOtherPress)),
         SettingKey::QuickTapTerm => put_u16(out, profile.quick_tap_timeout_ms().unwrap_or(0)),
         SettingKey::UnilateralTap => put_flag(out, profile.unilateral_tap().unwrap_or(false)),
-        SettingKey::PriorIdleTime => put_u16(out, ctx.morse_prior_idle_time().as_millis() as u16),
+        SettingKey::PriorIdleTime => put_u16(
+            out,
+            if ctx.keymap.morse_enable_flow_tap() {
+                ctx.morse_prior_idle_time().as_millis() as u16
+            } else {
+                0
+            },
+        ),
     }
 }
 

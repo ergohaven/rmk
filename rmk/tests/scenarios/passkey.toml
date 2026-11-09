@@ -62,4 +62,4 @@ steps = [
   { tap = { pos = [0, 2], duration = 50 } },
   { release = [2, 6] },
 ]
-expect = [["D"], ["LGui", "D", "B"], ["D", "A"], ["D"], []]
+expect = [["D"], ["LGui", "D"], ["LGui", "D", "B"], ["D", "A"], ["D"], []]
