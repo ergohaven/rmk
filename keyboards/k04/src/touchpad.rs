@@ -7,6 +7,10 @@ use rmk::event::{publish_event, Axis, AxisEvent, AxisValType, PointingEvent};
 use crate::board::TouchpadI2c;
 use crate::module_settings;
 
+#[path = "touchpad_hold.rs"]
+mod touchpad_hold;
+use touchpad_hold::TouchpadHold;
+
 const IQS5XX_ADDR: u8 = 0x74;
 const REG_PRODUCT_NUMBER: u16 = 0x0000;
 const REG_PREVIOUS_CYCLE_TIME: u16 = 0x000c;
@@ -91,6 +95,7 @@ pub struct Touchpad {
     suspended: bool,
     read_failures: u8,
     multi_finger_samples: u8,
+    hold: TouchpadHold,
     acc_x: i32,
     acc_y: i32,
     last_report: Instant,
@@ -111,6 +116,7 @@ impl Touchpad {
             suspended: false,
             read_failures: 0,
             multi_finger_samples: 0,
+            hold: TouchpadHold::default(),
             acc_x: 0,
             acc_y: 0,
             last_report: Instant::MIN,
@@ -424,7 +430,16 @@ impl Touchpad {
 
         let gestures_enabled = module_settings::touch_gestures_enabled(self.side);
 
-        if gestures_enabled && (gesture_0 & (GESTURE_0_SINGLE_TAP | GESTURE_0_PRESS_AND_HOLD)) != 0 {
+        if let Some(state) = self.hold.update(
+            gestures_enabled,
+            gesture_0,
+            number_of_fingers,
+            Instant::now().as_millis() as u32,
+        ) {
+            self.send_gesture_state(state);
+        }
+
+        if gestures_enabled && (gesture_0 & GESTURE_0_SINGLE_TAP) != 0 {
             return TouchReadResult::Gesture { buttons: BUTTON_LEFT };
         }
 
@@ -484,6 +499,7 @@ impl Touchpad {
     }
 
     fn clear_motion_state(&mut self) {
+        self.release_hold();
         self.multi_finger_samples = 0;
         self.acc_x = 0;
         self.acc_y = 0;
@@ -501,15 +517,23 @@ impl Touchpad {
     }
 
     fn send_gesture(&self, buttons: u8) {
-        // Qube reserves relative Z on touch sources for a button pulse. Keeping
-        // the signal inside PointingEvent preserves the existing split wire
-        // format, so a new central remains compatible with an RC48 peripheral.
+        self.send_gesture_state(i16::from(buttons));
+    }
+
+    fn release_hold(&mut self) {
+        if let Some(state) = self.hold.update(false, 0, 0, 0) {
+            self.send_gesture_state(state);
+        }
+    }
+
+    fn send_gesture_state(&self, state: i16) {
+        // Keep legacy pulses distinct from sustained hold/release state.
         publish_event(PointingEvent {
             device_id: self.device_id,
             axes: [
                 relative_axis(Axis::X, 0),
                 relative_axis(Axis::Y, 0),
-                relative_axis(Axis::Z, i16::from(buttons)),
+                relative_axis(Axis::Z, state),
             ],
         });
     }
