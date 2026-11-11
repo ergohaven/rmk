@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 // A boot hand-off, not a second persisted platform setting. Each Keyboard owns
 // its two-way platform state, restored before it starts processing events.
 static BOOT_MAC: AtomicBool = AtomicBool::new(false);
-// Geometry has one live snapshot, sourced exclusively from Vial LayoutConfig.
+// Geometry has one live snapshot, sourced from the host layout options.
 static ISO_GEOMETRY: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn restore_platform(mac: bool) {
@@ -33,7 +33,7 @@ pub(crate) fn set_layout_options(options: u32) {
         4
     };
     ISO_GEOMETRY.store(
-        cfg!(all(feature = "vial", feature = "universal_symbols_iso")) && options & iso_mask != 0,
+        cfg!(feature = "universal_symbols_iso") && options & iso_mask != 0,
         Ordering::Relaxed,
     );
 }
@@ -201,7 +201,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             layout: HostLayout::English,
-            platform: if cfg!(feature = "vial") && BOOT_MAC.load(Ordering::Relaxed) {
+            platform: if cfg!(any(feature = "vial", feature = "ergohaven_rynk")) && BOOT_MAC.load(Ordering::Relaxed) {
                 Platform::Mac
             } else {
                 Platform::Pc
@@ -275,6 +275,18 @@ impl State {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    #[cfg(feature = "ergohaven_rynk")]
+    #[test]
+    fn rynk_restores_mac_mode_and_resolves_mac_symbols() {
+        restore_platform(true);
+        let mut state = State::default();
+        assert_eq!(state.platform(), Platform::Mac);
+        let result = layout::resolve(HostLayout::Russian, state.platform(), Symbol::Asterisk);
+        assert!(result.temporary_layout_switch);
+        assert_eq!(state.handle(USER_TOGGLE_MACOS, None), Some(Command::None));
+        assert_eq!(state.platform(), Platform::Pc);
+    }
+
     // Mirror the production board feature selection without changing runtime code.
     pub(crate) const ISO_LAYOUT_OPTION_MASK: u32 = if cfg!(feature = "universal_symbols_iso_bit0") {
         1
@@ -316,18 +328,23 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(not(feature = "vial"))]
+    #[cfg(not(any(feature = "vial", feature = "ergohaven_rynk", feature = "universal_symbols_iso")))]
     #[test]
-    fn universal_non_vial_keeps_target_platform_numero_and_star_behavior() {
+    fn universal_non_vial_keeps_target_platform_and_star_behavior() {
         restore_platform(true);
         set_layout_options(7);
-        let mut state = State::default();
+        let state = State::default();
         assert_eq!(state.platform(), Platform::Pc);
-        assert!(state.handle(USER_NUMERO, None).is_none());
         assert!(!ISO_GEOMETRY.load(Ordering::Relaxed));
         let result = layout::resolve(HostLayout::Russian, Platform::Mac, Symbol::Asterisk);
         assert_eq!(result.stroke.keycode, HidKeyCode::Kc8);
         assert!(!result.temporary_layout_switch);
+    }
+
+    #[cfg(not(any(feature = "vial", feature = "ergohaven_rynk")))]
+    #[test]
+    fn universal_other_protocols_leave_numero_unhandled() {
+        assert!(State::default().handle(USER_NUMERO, None).is_none());
     }
 
     #[cfg(not(feature = "universal_symbols_iso"))]
@@ -415,7 +432,7 @@ pub(crate) mod tests {
         assert!(!dot.temporary_layout_switch);
     }
 
-    #[cfg(feature = "vial")]
+    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     #[test]
     fn mac_russian_asterisk_uses_english_fallback_but_pc_stays_direct() {
         for platform in [Platform::Pc, Platform::Mac] {
@@ -486,7 +503,7 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg(feature = "vial")]
+    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     #[test]
     fn restored_platform_keeps_exact_two_way_toggle_semantics() {
         restore_platform(true);

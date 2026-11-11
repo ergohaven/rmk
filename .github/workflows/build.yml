@@ -83,8 +83,8 @@ jobs:
           - keyboard: k04
             output_name: k04_series_k04
             keyboard_toml: keyboard.toml
-            vial_json: vial.json
-            build_features: "--features production_v30g"
+            vial_json: vial_universal.json
+            build_features: "--features production_v30g,universal_mac_iso"
           - keyboard: k04
             output_name: k04_series_mini
             keyboard_toml: keyboard_mini.toml
@@ -93,8 +93,8 @@ jobs:
           - keyboard: k04
             output_name: k04_series_micro
             keyboard_toml: keyboard_micro.toml
-            vial_json: vial_micro.json
-            build_features: "--features production_v30g"
+            vial_json: vial_micro_universal.json
+            build_features: "--features production_v30g,universal_mac_iso"
           - keyboard: imperial44
             output_name: imperial44
             keyboard_toml: keyboard.toml

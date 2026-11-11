@@ -82,7 +82,7 @@ RMK_TEST_FEATURESETS=(
     "split,vial,storage,_ble"
     # The rmk features of the K:04 standalone firmware (`standalone` + `production_v30g`),
     # except `k04_standalone_timeout_14`: its tests need the K:04 keyboard.toml (test.sh)
-    "split,ergohaven_rynk,storage,universal_symbols,async_matrix,display,_ble,fixed_mouse_pacing_15ms,host_first_split_wake"
+    "split,ergohaven_rynk,storage,universal_symbols_iso,async_matrix,display,_ble,fixed_mouse_pacing_15ms,host_first_split_wake"
     # Ergohaven's Rynk boards: BLE split and wired split
     "split,ergohaven_rynk,storage,async_matrix,_ble"
     "split,ergohaven_rynk,storage,async_matrix"
@@ -90,7 +90,7 @@ RMK_TEST_FEATURESETS=(
 
 # All rmk features of the K:04 standalone firmware, for the pointing tests that
 # run against the K:04 keyboard.toml.
-RMK_K04_STANDALONE_FEATURES="split,ergohaven_rynk,storage,universal_symbols,async_matrix,display,_ble,fixed_mouse_pacing_15ms,host_first_split_wake,k04_standalone_timeout_14"
+RMK_K04_STANDALONE_FEATURES="split,ergohaven_rynk,storage,universal_symbols_iso,async_matrix,display,_ble,fixed_mouse_pacing_15ms,host_first_split_wake,k04_standalone_timeout_14"
 
 # Examples auto-discovery skiplist. Reasons:
 #   - nrf54lm20_ble: Cargo.toml references local path deps that only exist on

@@ -291,7 +291,7 @@ impl<'a> KeyboardContext<'a> {
 
     pub async fn set_layout_options(&self, opts: u32) -> Result<(), ()> {
         self.keymap.set_layout_option(opts);
-        #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+        #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
         crate::universal_symbols::set_layout_options(opts);
         #[cfg(feature = "storage")]
         store(StorageItem::LayoutOption(opts)).await?;

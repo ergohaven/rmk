@@ -25,10 +25,6 @@ fn main() {
         !vial || std::env::var_os("CARGO_FEATURE_VIAL_STANDALONE").is_some(),
         "Vial requires vial_standalone to preserve standalone build options"
     );
-    assert!(
-        std::env::var_os("CARGO_FEATURE_UNIVERSAL_MAC_ISO").is_none() || vial,
-        "universal_mac_iso is only supported by the Vial standalone profile"
-    );
     // VIA and USB encode only numeric major/minor/patch components. The full
     // release identity remains embedded in the selected Vial JSON.
     const STANDALONE_RELEASE_VERSION: &str = "0.2.0";
