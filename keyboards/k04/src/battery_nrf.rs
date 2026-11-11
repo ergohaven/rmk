@@ -28,7 +28,7 @@ const FULL_MV: i32 = 4100;
 // Calibrated from K:04 Qube halves: raw ~= 2520 at 3.150 V and 2600 at 3.281 V.
 const RAW_PER_MV_NUM: i32 = 4;
 const RAW_PER_MV_DEN: i32 = 5;
-const CHARGING_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
+const USB_POWER_SAMPLE_INTERVAL: Duration = Duration::from_secs(2);
 const DISCHARGING_SAMPLE_INTERVAL: Duration = Duration::from_secs(15);
 
 fn percent(val: u16) -> u8 {
@@ -90,8 +90,8 @@ impl K04Battery {
 
     async fn publish_sample(&mut self) {
         let charge_state = current_charge_state();
-        let charging = charge_state == ChargeState::Charging;
-        let measured = if charging {
+        let usb_powered = usb_powered();
+        let measured = if usb_powered {
             // VBUS only tells us that charging power is present. The charger
             // raises terminal voltage toward 4.1 V before the cell is full,
             // so publishing that sample would create a false 100% reading.
@@ -99,8 +99,8 @@ impl K04Battery {
         } else {
             self.sample_raw().await.map(percent)
         };
-        let level = self.level.observe(measured, charging);
-        let status = if charging || level.is_some() {
+        let level = self.level.observe(measured, usb_powered);
+        let status = if usb_powered || level.is_some() {
             BatteryStatus::Available { charge_state, level }
         } else {
             BatteryStatus::Unavailable
@@ -118,11 +118,8 @@ pub(crate) fn usb_power_status() -> (bool, bool) {
 }
 
 pub(crate) fn usb_powered() -> bool {
-    // Restore the v14 charging semantics. On the split peripheral OUTPUTRDY
-    // may remain low after the v16 bootloader-USBD cleanup even though VBUS is
-    // physically present. VBUSDETECT is the authoritative cable signal; the
-    // v16 cleanup removes the stale UF2 interrupt state that originally made
-    // the right-side indication misleading.
+    // OUTPUTRDY can remain low on a split peripheral after USBD cleanup.
+    // VBUSDETECT is the cable signal, independent of USB enumeration.
     usb_power_status().0
 }
 
@@ -146,7 +143,8 @@ pub(crate) fn log_uf2_usb_cleanup_state_v16() {
 
 fn current_charge_state() -> ChargeState {
     if usb_powered() {
-        ChargeState::Charging
+        // No charger-status or battery-switch input is configured.
+        ChargeState::Unknown
     } else {
         ChargeState::Discharging
     }
@@ -158,9 +156,10 @@ impl Runnable for K04Battery {
         let mut refresh_sub = PeripheralBatteryRefreshEvent::subscriber();
         loop {
             self.publish_sample().await;
-            let interval = match current_charge_state() {
-                ChargeState::Charging => CHARGING_SAMPLE_INTERVAL,
-                _ => DISCHARGING_SAMPLE_INTERVAL,
+            let interval = if usb_powered() {
+                USB_POWER_SAMPLE_INTERVAL
+            } else {
+                DISCHARGING_SAMPLE_INTERVAL
             };
             let _ = select(Timer::after(interval), refresh_sub.next_event()).await;
         }

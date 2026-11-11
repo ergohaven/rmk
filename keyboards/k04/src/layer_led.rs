@@ -9,9 +9,12 @@ use rmk::macros::processor;
 use rmk::processor::DeadlineProcessor;
 use rmk::types::battery::BatteryStatus;
 use rmk::types::ble::BleState;
-use rmk::types::connection::{ConnectionStatus, ConnectionType, UsbState};
+use rmk::types::connection::ConnectionStatus;
 
 use crate::module_settings::{self, Rgb};
+
+#[path = "status_led.rs"]
+mod status_led;
 
 const LED_COUNT: usize = 1;
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -19,8 +22,6 @@ const LOW_BATTERY_MAX: u8 = 20;
 const BATTERY_PULSE_INTERVAL_MS: u64 = 2_000;
 const BATTERY_PULSE_ON_MS: u64 = 120;
 const INDICATOR_DURATION_MS: u64 = 1_000;
-const STATUS_BLINK_PERIOD_MS: u64 = 360;
-const STATUS_BLINK_ON_MS: u64 = 180;
 const PWM_POLARITY_INVERTED: u16 = 0x8000;
 const PWM_T0H: u16 = PWM_POLARITY_INVERTED | 6;
 const PWM_T1H: u16 = PWM_POLARITY_INVERTED | 13;
@@ -31,7 +32,6 @@ const FRAME_WORDS: usize = LED_COUNT * 24 + RESET_SLOTS;
 enum Overlay {
     Profile(u8),
     HostConnected,
-    SplitConnected,
     Battery(u8),
     LowBattery,
 }
@@ -123,15 +123,22 @@ impl LayerLed {
         let previous = self.connection_status;
         let repeated = previous == Some(event.0);
         let profile_changed = previous.is_some_and(|status| status.ble.profile != event.0.ble.profile);
-        let state_changed = previous.is_none_or(|status| status.ble.state != event.0.ble.state);
-        let previous_ble_state = previous.map(|status| status.ble.state);
+        let previous_transport = previous.and_then(|status| status.decide_active());
+        let active_transport = event.0.decide_active();
 
         self.connection_status = Some(event.0);
         self.ble_profile = event.0.ble.profile;
         self.ble_state = event.0.ble.state;
 
-        if state_changed {
-            self.apply_ble_state_transition(previous_ble_state, self.ble_state);
+        if previous != Some(event.0) {
+            self.indicator_phase_started = now;
+        }
+        if active_transport != previous_transport {
+            if active_transport.is_some() {
+                self.start_overlay(Overlay::HostConnected, indicator_duration());
+            } else {
+                self.overlay = None;
+            }
         }
         if profile_changed || repeated {
             if self.split_state != SplitConnectionState::Searching {
@@ -232,19 +239,6 @@ impl LayerLed {
         self.ble_advertising_mode = rmk::state::current_ble_advertising_mode();
     }
 
-    fn apply_ble_state_transition(&mut self, previous: Option<BleState>, state: BleState) {
-        match state {
-            BleState::Connected => {
-                self.start_overlay(Overlay::HostConnected, indicator_duration());
-            }
-            BleState::Advertising | BleState::Inactive | BleState::Sleeping => {
-                if previous == Some(BleState::Connected) {
-                    self.overlay = None;
-                }
-            }
-        }
-    }
-
     fn set_split_state(&mut self, state: SplitConnectionState, now: Instant, source: u8) {
         if self.split_state == state {
             if state != SplitConnectionState::Connected {
@@ -255,10 +249,13 @@ impl LayerLed {
         self.split_state = state;
         self.indicator_phase_started = now;
         defmt::info!("[SPLIT_LED_V15] side={} source={} state={:?}", self.side, source, state);
-        if state == SplitConnectionState::Connected {
-            self.start_overlay(Overlay::SplitConnected, indicator_duration());
-        } else {
-            self.overlay = None;
+        self.overlay = None;
+        if state == SplitConnectionState::Connected
+            && self
+                .connection_status
+                .is_some_and(|status| status.decide_active().is_some())
+        {
+            self.start_overlay(Overlay::HostConnected, indicator_duration());
         }
     }
 
@@ -341,7 +338,7 @@ impl LayerLed {
         // used for UF2 must not turn the Searching blink into steady cyan.
         if self.split_state == SplitConnectionState::Searching {
             let elapsed_ms = now.duration_since(self.indicator_phase_started).as_millis();
-            return (split_missing_blink_color(elapsed_ms), 1);
+            return (scale_color(status_led::split_search_color(elapsed_ms)), 1);
         }
 
         if let Some(overlay) = self.overlay.filter(|overlay| now < overlay.ends) {
@@ -350,37 +347,16 @@ impl LayerLed {
             }
         }
 
+        if let Some(status) = self.connection_status {
+            let elapsed_ms = now.duration_since(self.indicator_phase_started).as_millis();
+            if let Some(color) = status_led::host_indicator(status, self.ble_advertising_mode, elapsed_ms) {
+                return (scale_color(color), 5);
+            }
+        }
+
         if self.current_layer == Some(0) && vbus_status.0 && module_settings::charge_indicator_enabled() {
             // VBUS confirms USB power, not battery connection or charge state.
             return (color_cyan(), 3);
-        }
-
-        // USB_OUT is an explicit host-transport choice. BLE may keep
-        // advertising in the background, but its pairing/reconnect state is
-        // irrelevant while USB output is in use and must not replace the
-        // active-layer indicator. Without a USB host, BLE is the output
-        // whatever is preferred, and USB is also the default preference.
-        let show_host_ble_status = self.connection_status.is_none_or(|status| {
-            status.preferred == ConnectionType::Ble
-                || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)
-        });
-        if show_host_ble_status {
-            if matches!(self.ble_state, BleState::Inactive | BleState::Sleeping) {
-                return (color_off(), 4);
-            }
-
-            if self.ble_state == BleState::Advertising {
-                let elapsed_ms = now.duration_since(self.indicator_phase_started).as_millis();
-                return (
-                    match self.ble_advertising_mode {
-                        BleAdvertisingMode::Pairing => pairing_blink_color(elapsed_ms),
-                        BleAdvertisingMode::Reconnecting => {
-                            blink_color(color_white(), elapsed_ms, STATUS_BLINK_PERIOD_MS, STATUS_BLINK_ON_MS)
-                        }
-                    },
-                    5,
-                );
-            }
         }
 
         (
@@ -422,38 +398,18 @@ fn indicator_duration() -> Duration {
 fn overlay_color(overlay: TimedOverlay) -> Rgb {
     match overlay.kind {
         Overlay::Profile(profile) => color_for_bt_profile(profile),
-        Overlay::HostConnected => color_green(),
-        Overlay::SplitConnected => color_green(),
+        Overlay::HostConnected => color_white(),
         Overlay::Battery(level) => color_for_battery(level),
         Overlay::LowBattery => color_red(),
     }
 }
 
 fn is_success_overlay(kind: Overlay) -> bool {
-    matches!(kind, Overlay::HostConnected | Overlay::SplitConnected)
+    matches!(kind, Overlay::HostConnected)
 }
 
 fn is_connection_overlay(kind: Overlay) -> bool {
-    matches!(
-        kind,
-        Overlay::Profile(_) | Overlay::HostConnected | Overlay::SplitConnected
-    )
-}
-
-fn split_missing_blink_color(elapsed_ms: u64) -> Rgb {
-    blink_color(color_yellow(), elapsed_ms, STATUS_BLINK_PERIOD_MS, STATUS_BLINK_ON_MS)
-}
-
-fn pairing_blink_color(elapsed_ms: u64) -> Rgb {
-    blink_color(color_cyan(), elapsed_ms, STATUS_BLINK_PERIOD_MS, STATUS_BLINK_ON_MS)
-}
-
-fn blink_color(color: Rgb, elapsed_ms: u64, period_ms: u64, on_ms: u64) -> Rgb {
-    if elapsed_ms % period_ms < on_ms {
-        color
-    } else {
-        color_off()
-    }
+    matches!(kind, Overlay::Profile(_) | Overlay::HostConnected)
 }
 
 fn color_for_layer(layer: u8) -> Rgb {
@@ -475,19 +431,11 @@ fn color_for_battery(level: u8) -> Rgb {
 }
 
 fn color_cyan() -> Rgb {
-    scale_color(Rgb { r: 0, g: 180, b: 255 })
-}
-
-fn color_green() -> Rgb {
-    scale_color(Rgb { r: 0, g: 255, b: 0 })
+    scale_color(Rgb { r: 0, g: 45, b: 64 })
 }
 
 fn color_red() -> Rgb {
     scale_color(Rgb { r: 255, g: 0, b: 0 })
-}
-
-fn color_yellow() -> Rgb {
-    scale_color(Rgb { r: 255, g: 180, b: 0 })
 }
 
 fn color_white() -> Rgb {

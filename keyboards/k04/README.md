@@ -72,29 +72,50 @@ The halves use `src/battery_nrf.rs`, which samples `P0_31` without
 
 ## USB power indication
 
-On the base layer, a steady cyan LED means USB power is present. It does not
+On the base layer, a dim cyan LED means USB power is present. It does not
 confirm that the battery is connected, charging, or full. This applies to
 K:04, Mini, and Micro, both standalone and with Qube. The battery percentage
 does not change this color; the former yellow/green charging indication is
-no longer used. Cyan blinking means Bluetooth pairing when that indication
-is visible. As before, USB indication takes priority over pairing and battery
-overlays on the base layer. A custom layer color can match the USB color.
+no longer used. Host-status pulses interrupt the power or layer colour and
+restore it between pulse groups. A short dark separator after each host pulse
+keeps the rhythm visible even when a custom layer colour matches the pulse.
+
+| State | LED indication while awake |
+| --- | --- |
+| Host connected through the active USB/Bluetooth transport | White for one second on connection, then power/layer colour |
+| Reconnecting to a Bluetooth host | One short white pulse every 1.5 seconds |
+| No host connection and no advertising attempt | Two short white pulses every 3 seconds |
+| Pairing with a new Bluetooth host | Purple pulse every 300 ms |
+| Split link searching | Three amber pulses every 2 seconds, overriding host/power indication |
+| USB power present, charge state unknown | Dim cyan on the base layer between host-status pulses |
+| Sleeping | Off |
+
+An available USB host suppresses background Bluetooth advertising indications
+when USB is the active transport. Qube halves use the host status forwarded by
+the dongle; their own USB cable only establishes local power presence.
+Restoring a split link flashes white only when a host transport is also ready.
 
 The existing `Charge indicator` toggle (QSID 331) enables this USB power
 indication. Its label and stored bit are retained for compatibility with
-configurators that discover it by that name. Brightness, sleep, split-search,
-connection overlays, and non-base-layer indication keep their existing rules.
+configurators that discover it by that name. It controls the cyan power colour;
+connection patterns remain visible with it disabled. Brightness scales every
+indicator, including the connection pulses.
 
 For charging, leave each half's physical power switch ON, as required by the
 [K:04 guide](https://docs.eh.works/device/k04/#зарядка-мониторинг-заряда).
 The firmware reads USB VBUS but has no configured input for the physical
 switch or charger status, so it cannot distinguish actual charging from USB
-power alone. Battery levels remain based on unplugged measurements to avoid
-false full readings from charging voltage.
+power alone. The battery protocol therefore reports an unknown charge state
+while USB power is present. Battery levels remain based on unplugged
+measurements to avoid false full readings from charging voltage; a percentage
+shown while plugged in is the last unplugged measurement. Battery-level query
+colours describe that estimate, not charger completion. Actual charging and
+charged indications require a verified charger-status input.
 
 Run `python3 scripts/test_k04_usb_power_indicator.py` from the repository root
 to check both LED implementations on the host. It exercises their USB color
-branches, brightness scaling, and layer/VBUS/toggle gates; it does not verify
+branches, brightness scaling, layer/VBUS/toggle gates, host/split priority, and
+unknown charge-state reporting; it does not verify
 the physical switch, charge current, or the LED's appearance on hardware.
 
 ## Qube display

@@ -1,4 +1,4 @@
-//! Charge-aware K:04 battery level filtering.
+//! USB-power-aware K:04 battery level filtering.
 //!
 //! The board only exposes battery voltage and USB VBUS. While USB power is
 //! present, the charger raises terminal voltage long before the cell is full,
@@ -13,11 +13,11 @@ pub(crate) struct BatteryLevelTracker {
 
 impl BatteryLevelTracker {
     /// Return the level that may safely be published for the current power
-    /// state. Charging and a failed sample keep the last discharging
+    /// state. USB power and a failed sample keep the last discharging
     /// measurement; a cold boot on USB reports an unknown level until the
     /// first unplugged sample.
-    pub(crate) fn observe(&mut self, measured: Option<u8>, charging: bool) -> Option<u8> {
-        if charging {
+    pub(crate) fn observe(&mut self, measured: Option<u8>, usb_powered: bool) -> Option<u8> {
+        if usb_powered {
             return self.trusted_level;
         }
 
