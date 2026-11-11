@@ -37,7 +37,7 @@ pub fn handle_sticky_mode_key(event: ActionEvent, settings: VialDeviceSettings<'
         }
     }
     if changed {
-        #[cfg(feature = "storage")]
+        #[cfg(all(feature = "storage", any(feature = "vial", feature = "ergohaven_rynk")))]
         crate::storage::queue_device_settings_flash_write((settings.serialize)());
     }
 }

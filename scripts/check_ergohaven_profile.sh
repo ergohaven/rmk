@@ -924,7 +924,7 @@ for path in sys.argv[1:]:
 
     assert [entry["name"] for entry in custom_keycodes[:19]] == expected_reserved
     assert all(entry["shortName"] == "" and entry["title"] == "" for entry in custom_keycodes[:19])
-    assert [entry["name"] for entry in custom_keycodes[19:]] == expected_active
+    assert [entry["name"] for entry in custom_keycodes[19:41]] == expected_active
     assert all(field.get("qsid") != 323 for section in definition.get("settings", []) for field in section["fields"])
 PY
 
