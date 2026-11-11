@@ -33,15 +33,18 @@ assert max_len, "Vial storage capacity declaration changed"
 source = (ROOT / 'keyboards/k04/src/layer_names.rs').read_text()
 source = source.replace('use rmk::macros::processor;\n', '')
 source = source.replace('use portable_atomic::{AtomicU8, Ordering};', 'use std::sync::atomic::{AtomicU8, Ordering};')
-source = re.sub(r'#\[processor\(subscribe = \[PeripheralSettingsRefreshEvent\]\)\]', '', source)
+source = re.sub(r'#\[processor\(subscribe = \[PeripheralSettingsRefreshEvent, ActionEvent\]\)\]', '', source)
 # Host shims only replace the event transport and fixed-capacity string dependency.
 prefix = r'''
 #![allow(dead_code)]
 extern crate self as rmk;
+extern crate self as rmk_types;
+mod action { pub enum Action { User(u8), No } }
 mod board {
 @BOARD_CONSTANTS@
 }
 mod config {
+    #[derive(Clone, Copy)]
     pub struct VialDeviceSettings<'a> {
         pub setting_keys: &'a [u16],
         pub get_setting: fn(u16, &mut [u8]) -> Option<usize>,
@@ -53,6 +56,8 @@ mod config {
     impl VialDeviceSettingsData { pub fn empty() -> Self { Self { data: [0;@MAX_LEN@], len: 0 } } }
 }
 mod event {
+    pub struct KeyboardEvent { pub pressed: bool }
+    pub struct ActionEvent { pub action: crate::action::Action, pub keyboard_event: KeyboardEvent }
     pub struct PeripheralSettingsEvent(pub [u8;27]);
     pub struct PeripheralSettingsRefreshEvent;
     pub fn publish_event<T>(_: T) {}
@@ -75,7 +80,34 @@ mod default_layer_names {
 const DEFAULT_LAYER_NAMES: [&str;16] = default_layer_names::STANDARD_WITH_MOUSE;
 '''
 prefix = prefix.replace('@MAX_LEN@', max_len.group(1)).replace('@BOARD_CONSTANTS@', board_constants)
+helper = (ROOT / 'rmk/src/input_device/pointing_settings.rs').read_text().split('#[cfg(test)]')[0]
+helper = '\n'.join(line for line in helper.splitlines() if not line.startswith('//!'))
+prefix += '\nmod input_device { pub mod pointing_settings {\n' + helper + '\n} }\n'
 tests = r'''
+#[test]
+fn sticky_keys_change_live_settings_and_preserve_stored_values() {
+    let api = layer_names::vial_device_settings();
+    (api.deserialize)(&[]);
+    let get = |id| { let mut out=[0;16]; assert_eq!((api.get_setting)(id,&mut out),Some(1)); out[0] };
+    assert!((api.set_setting)(140,&[0]));
+    assert!((api.set_setting)(141,&[1]));
+    assert!((api.set_setting)(200,b"my base"));
+    assert!((api.set_setting)(143,&[7]));
+    let key = |id, pressed| input_device::pointing_settings::handle_sticky_mode_key(
+        event::ActionEvent { action: action::Action::User(id), keyboard_event: event::KeyboardEvent { pressed } }, api, 41);
+    key(41,true); assert_eq!([get(140),get(141)], [1,1]);
+    key(41,false); assert_eq!([get(140),get(141)], [1,1]);
+    key(46,true); assert_eq!([get(140),get(141)], [0,1]);
+    let saved=(api.serialize)();
+    (api.deserialize)(&[]);
+    (api.deserialize)(&saved.data[..saved.len as usize]);
+    assert_eq!([get(140),get(141)], [0,1]);
+    assert_eq!(get(143),7);
+    let mut name=[0;16];
+    assert_eq!((api.get_setting)(200,&mut name),Some(8));
+    assert_eq!(&name[..7],b"my base");
+}
+
 #[test]
 fn display_settings_vial_and_storage_round_trip() {
     let api = layer_names::vial_device_settings();

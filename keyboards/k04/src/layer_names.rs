@@ -4,7 +4,7 @@ use core::str;
 // atomic read-modify-write instructions.
 use portable_atomic::{AtomicU8, Ordering};
 use rmk::config::{VialDeviceSettings, VialDeviceSettingsData};
-use rmk::event::{publish_event, PeripheralSettingsEvent, PeripheralSettingsRefreshEvent};
+use rmk::event::{publish_event, ActionEvent, PeripheralSettingsEvent, PeripheralSettingsRefreshEvent};
 use rmk::macros::processor;
 
 pub const LAYER_NAME_COUNT: usize = 16;
@@ -609,12 +609,16 @@ pub fn publish_module_settings() {
 /// runs on hardcoded defaults — touch gestures off, encoder steps at 1 — until
 /// something republishes them. Without this the next Vial edit was the only
 /// thing that could heal it.
-#[processor(subscribe = [PeripheralSettingsRefreshEvent])]
+#[processor(subscribe = [PeripheralSettingsRefreshEvent, ActionEvent])]
 pub struct ModuleSettingsBroadcast;
 
 impl ModuleSettingsBroadcast {
     pub fn new() -> Self {
         Self
+    }
+
+    async fn on_action_event(&mut self, event: ActionEvent) {
+        rmk::input_device::pointing_settings::handle_sticky_mode_key(event, vial_device_settings(), 41);
     }
 
     async fn on_peripheral_settings_refresh_event(&mut self, _event: PeripheralSettingsRefreshEvent) {

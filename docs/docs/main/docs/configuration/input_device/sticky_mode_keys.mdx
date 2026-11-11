@@ -1,0 +1,33 @@
+---
+title: Sticky Mode Keys
+---
+
+Ergohaven pointing keyboards expose key actions for the persistent **Sticky mode**
+setting in Entropy's custom key picker. These work through Vial and Rynk.
+
+| Action | Behavior |
+| --- | --- |
+| `EH_STK_TG` | Toggle sticky mode for all pointing devices |
+| `EH_STK_ON` | Enable sticky mode for all pointing devices |
+| `EH_STK_OFF` | Disable sticky mode and clear latched mode-key selections |
+| `EH_L_STK_TG`, `EH_L_STK_ON`, `EH_L_STK_OFF` | Control the left device |
+| `EH_R_STK_TG`, `EH_R_STK_ON`, `EH_R_STK_OFF` | Control the right device |
+
+K:04 and Phenom Series expose shared and per-side actions. Velvet, including its
+Qube profile, exposes the three shared actions for its right pointer. Existing
+custom keycode positions are unchanged. In the K:04 and Phenom catalogs the new
+actions start at User41; in Velvet they start at User13.
+
+A shared toggle enables all available sides when their settings differ; another
+press disables them. Only key presses act. Releasing a key does not toggle again,
+and repeating an explicit on/off action leaves the setting unchanged.
+
+Key actions use the board's existing settings callbacks and storage record. The
+new value is readable by Entropy, is sent to the pointing processor and split
+devices, and survives a restart. Turning the setting off clears a latched
+selection using the same path as a configurator edit; a held mode key retains its
+existing momentary semantics.
+
+These keys control pointer-mode fixation, not auto-layer activation. Put `TO(0)`
+on the auto layer to return to layer 0 immediately. `MO(0)` leaves higher layers
+active, and further pointer movement can activate the auto layer again.

@@ -13,6 +13,7 @@ pub mod joystick;
 pub mod pmw33xx;
 pub mod pmw3610;
 pub mod pointing;
+pub mod pointing_settings;
 pub mod rotary_encoder;
 
 /// The trait for input devices.
