@@ -127,3 +127,12 @@ Run the host-side Vial/storage regression test with:
 ```sh
 python3 scripts/test_qube_display_settings.py
 ```
+
+## Bluetooth profile indication
+
+On Standalone K:04, Mini, and Micro, waiting for a host connection blinks the
+configured color of the selected BT0–BT4 profile (180 ms on, 180 ms off).
+This applies to both new pairing and reconnecting to a saved host. The brief
+profile-selection and connection-success indications still take priority,
+as do sleep, split-link acquisition, and the enabled USB-power indicator.
+Qube halves retain their split-link indicators.

@@ -56,6 +56,8 @@ done
 KEYBOARD_TOML_PATH="$repo_root/keyboards/k04/keyboard.toml" CARGO_TARGET_DIR="$target_root/test-k04" \
     cargo +stable "${nx[@]}" --manifest-path rmk/Cargo.toml --no-default-features \
     --features "$RMK_K04_STANDALONE_FEATURES" -E 'test(/^input_device::pointing::/) or test(unbound_key_preserves)'
+python3 scripts/test_k04_bt_profile_indicator.py
+
 # The K:04 firmware bins set `test = false`, so build its dependency-free
 # modules as standalone test harnesses.
 k04_tests="$target_root/k04-tests"

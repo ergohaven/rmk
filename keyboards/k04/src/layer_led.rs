@@ -1,9 +1,8 @@
 use embassy_nrf::pwm::{SequenceConfig, SequencePwm, SingleSequenceMode, SingleSequencer};
 use embassy_time::{Duration, Instant, Timer};
 use rmk::event::{
-    BatteryStatusEvent, BleAdvertisingMode, BleAdvertisingModeEvent, ConnectionStatusChangeEvent, LayerChangeEvent,
-    PeripheralBatteryRefreshEvent, PeripheralSettingsEvent, SleepStateEvent, SplitConnectionState,
-    SplitConnectionStateEvent,
+    BatteryStatusEvent, ConnectionStatusChangeEvent, LayerChangeEvent, PeripheralBatteryRefreshEvent,
+    PeripheralSettingsEvent, SleepStateEvent, SplitConnectionState, SplitConnectionStateEvent,
 };
 use rmk::macros::processor;
 use rmk::processor::DeadlineProcessor;
@@ -46,7 +45,6 @@ struct TimedOverlay {
     subscribe = [
         LayerChangeEvent,
         ConnectionStatusChangeEvent,
-        BleAdvertisingModeEvent,
         SplitConnectionStateEvent,
         SleepStateEvent,
         PeripheralSettingsEvent,
@@ -64,7 +62,6 @@ pub struct LayerLed {
     connection_status: Option<ConnectionStatus>,
     ble_profile: u8,
     ble_state: BleState,
-    ble_advertising_mode: BleAdvertisingMode,
     ble_snapshot_initialized: bool,
     split_state: SplitConnectionState,
     sleeping: bool,
@@ -93,7 +90,6 @@ impl LayerLed {
             connection_status: None,
             ble_profile: 0,
             ble_state: BleState::Inactive,
-            ble_advertising_mode: BleAdvertisingMode::Pairing,
             ble_snapshot_initialized: false,
             split_state: rmk::event::current_split_connection_state(),
             sleeping: false,
@@ -139,12 +135,6 @@ impl LayerLed {
             }
         }
 
-        self.render(now).await;
-    }
-
-    async fn on_ble_advertising_mode_event(&mut self, event: BleAdvertisingModeEvent) {
-        let now = Instant::now();
-        self.ble_advertising_mode = event.0;
         self.render(now).await;
     }
 
@@ -229,7 +219,6 @@ impl LayerLed {
         self.connection_status = Some(status);
         self.ble_profile = status.ble.profile;
         self.ble_state = status.ble.state;
-        self.ble_advertising_mode = rmk::state::current_ble_advertising_mode();
     }
 
     fn apply_ble_state_transition(&mut self, previous: Option<BleState>, state: BleState) {
@@ -361,8 +350,7 @@ impl LayerLed {
         // active-layer indicator. Without a USB host, BLE is the output
         // whatever is preferred, and USB is also the default preference.
         let show_host_ble_status = self.connection_status.is_none_or(|status| {
-            status.preferred == ConnectionType::Ble
-                || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)
+            status.preferred == ConnectionType::Ble || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)
         });
         if show_host_ble_status {
             if matches!(self.ble_state, BleState::Inactive | BleState::Sleeping) {
@@ -372,12 +360,12 @@ impl LayerLed {
             if self.ble_state == BleState::Advertising {
                 let elapsed_ms = now.duration_since(self.indicator_phase_started).as_millis();
                 return (
-                    match self.ble_advertising_mode {
-                        BleAdvertisingMode::Pairing => pairing_blink_color(elapsed_ms),
-                        BleAdvertisingMode::Reconnecting => {
-                            blink_color(color_white(), elapsed_ms, STATUS_BLINK_PERIOD_MS, STATUS_BLINK_ON_MS)
-                        }
-                    },
+                    blink_color(
+                        color_for_bt_profile(self.ble_profile),
+                        elapsed_ms,
+                        STATUS_BLINK_PERIOD_MS,
+                        STATUS_BLINK_ON_MS,
+                    ),
                     5,
                 );
             }
@@ -444,10 +432,6 @@ fn split_missing_blink_color(elapsed_ms: u64) -> Rgb {
     blink_color(color_yellow(), elapsed_ms, STATUS_BLINK_PERIOD_MS, STATUS_BLINK_ON_MS)
 }
 
-fn pairing_blink_color(elapsed_ms: u64) -> Rgb {
-    blink_color(color_cyan(), elapsed_ms, STATUS_BLINK_PERIOD_MS, STATUS_BLINK_ON_MS)
-}
-
 fn blink_color(color: Rgb, elapsed_ms: u64, period_ms: u64, on_ms: u64) -> Rgb {
     if elapsed_ms % period_ms < on_ms {
         color
@@ -488,10 +472,6 @@ fn color_red() -> Rgb {
 
 fn color_yellow() -> Rgb {
     scale_color(Rgb { r: 255, g: 180, b: 0 })
-}
-
-fn color_white() -> Rgb {
-    scale_color(Rgb { r: 255, g: 255, b: 255 })
 }
 
 fn color_off() -> Rgb {
