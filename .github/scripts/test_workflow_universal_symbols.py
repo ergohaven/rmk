@@ -44,10 +44,10 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
     def test_qube_descriptors_preserve_pre_iso_contracts(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())
         entries = workflow['jobs']['build-qube']['strategy']['matrix']['include']
-        # SHA256 of the reviewed Vial main definitions at 155526aa.
+        # Reviewed definitions from 155526aa; Velvet appends Sticky Mode keys.
         expected = {
             'k03': 'bd8285acdabd2bd97274287cb0c48ff0f945ca7eb4a9ce0558b4f96d18bd6277',
-            'velvet': 'db15d7f1ff6cd5cda930e2d25ac357ae6546789abea64bb484ed840d6bd0fbd3',
+            'velvet': '489235bf522bcc71fce1777605cb62b5b148706e9610aef83320bd09f7a2fd1e',
             'imperial44': '5f4f852e5cd989f595c6a833560f5ba430bacfdf36413690241882ef6da728c2',
         }
         for model, digest in expected.items():
