@@ -49,6 +49,8 @@ pub mod caps {
     /// Keymap and macro writes reach flash after the reply; `CommitWrites`
     /// and `GetWriteStatus` tell when.
     pub const STAGED_WRITES: u32 = 1 << 7;
+    /// Universal Symbols include numero (`Action::User(0xB4)`).
+    pub const UNIVERSAL_NUMERO: u32 = 1 << 8;
 }
 
 /// What `GetErgohavenInfo` reports.

@@ -233,7 +233,7 @@ impl State {
                 };
                 Command::None
             }
-            #[cfg(feature = "vial")]
+            #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
             USER_NUMERO => Command::Type(layout::resolve_numero(self.layout)),
             id => {
                 if let Some(letter) = RussianLetter::from_user_id(id) {
@@ -289,7 +289,7 @@ pub(crate) mod tests {
 
     use super::*;
 
-    #[cfg(feature = "vial")]
+    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     #[test]
     fn universal_numero_sparse_id_switches_symmetrically_without_state_change() {
         assert_eq!(USER_NUMERO, 0xB4);
@@ -318,16 +318,21 @@ pub(crate) mod tests {
 
     #[cfg(not(feature = "vial"))]
     #[test]
-    fn universal_non_vial_keeps_target_platform_numero_and_star_behavior() {
+    fn universal_non_vial_keeps_target_platform_and_star_behavior() {
         restore_platform(true);
         set_layout_options(7);
-        let mut state = State::default();
+        let state = State::default();
         assert_eq!(state.platform(), Platform::Pc);
-        assert!(state.handle(USER_NUMERO, None).is_none());
         assert!(!ISO_GEOMETRY.load(Ordering::Relaxed));
         let result = layout::resolve(HostLayout::Russian, Platform::Mac, Symbol::Asterisk);
         assert_eq!(result.stroke.keycode, HidKeyCode::Kc8);
         assert!(!result.temporary_layout_switch);
+    }
+
+    #[cfg(not(any(feature = "vial", feature = "ergohaven_rynk")))]
+    #[test]
+    fn universal_other_protocols_leave_numero_unhandled() {
+        assert!(State::default().handle(USER_NUMERO, None).is_none());
     }
 
     #[cfg(not(feature = "universal_symbols_iso"))]
