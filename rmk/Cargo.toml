@@ -18,6 +18,9 @@ features = ["split", "vial", "async_matrix", "_ble"]
 doctest = false
 
 [features]
+# Include the active host profile in Bluetooth discovery and GAP names.
+ble_profile_names = []
+
 default = ["defmt", "storage", "vial", "host_lock", "watchdog"]
 
 ## Enable low-rate RTT counters for transport latency diagnostics.

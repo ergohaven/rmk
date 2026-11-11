@@ -183,6 +183,22 @@ mod tests {
     }
 
     #[test]
+    fn profile_names_are_present_in_host_discovery_packets() {
+        for product in ["K:04", "K:04 Mini", "K:04 Micro"] {
+            for profile in 0..5 {
+                let name = crate::ble::profile_name::profile_name(product, profile);
+                let mut buf = [0; 31];
+                let Advertisement::ConnectableScannableUndirected { adv_data, .. } =
+                    (Adv::Host { name: &name }).build(&mut buf).unwrap()
+                else {
+                    panic!("host discovery must be undirected");
+                };
+                assert!(adv_data.windows(name.len()).any(|bytes| bytes == name.as_bytes()));
+            }
+        }
+    }
+
+    #[test]
     fn host_reconnect_has_only_flags() {
         let mut buf = [0; 31];
         let Advertisement::ConnectableScannableUndirected { adv_data, scan_data } =

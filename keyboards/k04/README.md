@@ -127,3 +127,13 @@ Run the host-side Vial/storage regression test with:
 ```sh
 python3 scripts/test_qube_display_settings.py
 ```
+
+## Bluetooth profile names
+
+Host Bluetooth profiles advertise as `K:04 BT0` through `K:04 BT4`, with the
+corresponding Mini or Micro model name. GAP Device Name uses the same selected
+profile name. Profile labels are automatic; this does not add editable names
+or change saved bonds, profile addresses, USB identity, or Qube split discovery.
+The shared RMK `ble_profile_names` feature is enabled for this keyboard family.
+Hosts may retain an older display name for an existing pairing; check new
+pairings as well as switching between saved profiles during hardware testing.

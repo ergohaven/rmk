@@ -69,6 +69,8 @@ pub(crate) mod led;
 mod p256;
 pub mod passkey;
 pub(crate) mod profile;
+#[cfg(any(test, feature = "ble_profile_names"))]
+mod profile_name;
 pub(crate) mod rng;
 #[cfg(any(feature = "split", feature = "dongle"))]
 pub(crate) mod scan;
@@ -582,6 +584,16 @@ async fn run_ble_keyboard<
 ) -> ! {
     let product_name = device_config.product_name;
 
+    #[cfg(feature = "ble_profile_names")]
+    let profile_names: [_; BOND_SLOTS] = core::array::from_fn(|slot| {
+        if slot < crate::NUM_BLE_PROFILE {
+            profile_name::profile_name(product_name, slot as u8)
+        } else {
+            // The dongle slot keeps the product identity rather than a host profile label.
+            heapless::String::<{ rmk_types::ble::BLE_ADV_NAME_MAX_LEN }>::try_from(product_name).unwrap()
+        }
+    });
+
     info!("Starting advertising and GATT service");
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: product_name,
@@ -612,6 +624,16 @@ async fn run_ble_keyboard<
             &heapless::String::try_from(device_config.manufacturer).expect("manufacturer is too long for BLE"),
         )
         .unwrap();
+    #[cfg(feature = "ble_profile_names")]
+    // GAP is the first service: service, Device Name declaration, value.
+    // Keep the standard GAP/GATT layout so bonded hosts retain their handles.
+    let gap_name = server
+        .server
+        .table()
+        .find_characteristic_by_value_handle::<heapless::String<{ rmk_types::ble::BLE_ADV_NAME_MAX_LEN }>>(3)
+        .unwrap();
+    #[cfg(feature = "ble_profile_names")]
+    assert_eq!(gap_name.uuid, characteristic::DEVICE_NAME.into());
     let server = &server;
 
     if crate::ble::passkey::passkey_entry_enabled() {
@@ -648,6 +670,12 @@ async fn run_ble_keyboard<
             }
 
             let profile = crate::state::current_profile();
+            #[cfg(feature = "ble_profile_names")]
+            let product_name = {
+                let name = &profile_names[profile as usize];
+                gap_name.set_ro(&server.server, name).unwrap();
+                name.as_str()
+            };
             let active_bond_info = profile_manager.bond_info(profile);
             let active_peer = active_bond_info.as_ref().map(|info| info.info.identity.addr);
             // The dongle slot advertises directed to the bonded dongle or as a
