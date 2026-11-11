@@ -1,0 +1,79 @@
+# A native fork selects the momentary layer from an already-held Ctrl,
+# independently of the combo timeout. The key at (0,2) identifies the layer.
+
+[layout]
+rows = 1
+cols = 3
+map = """
+(0,0)  (0,1)  (0,2)
+"""
+
+[[keymap.layer]]
+keys = """
+LCtrl  MO(1)  A
+"""
+
+[[keymap.layer]]
+keys = """
+_  _  B
+"""
+
+[[keymap.layer]]
+keys = """
+_  _  C
+"""
+
+[behavior.fork]
+forks = [
+  { trigger = "MO(1)", positive_output = "MO(2)", match_any = "LCtrl|RCtrl" },
+]
+
+[[test]]
+name = "held_ctrl_selects_layer_without_combo_deadline"
+steps = [
+  { press = [0, 0] },
+  { delay = 2000 },
+  { press = [0, 1] },
+  { tap = { pos = [0, 2], duration = 30 } },
+  { tap = { pos = [0, 2], duration = 30 } },
+  { release = [0, 1] },
+  { release = [0, 0] },
+  { tap = { pos = [0, 2], duration = 30 } },
+]
+expect = [["LCtrl"], [], ["C"], [], ["C"], [], ["LCtrl"], [], ["A"], []]
+
+[[test]]
+name = "without_ctrl_original_layer_still_works"
+steps = [
+  { press = [0, 1] },
+  { tap = { pos = [0, 2], duration = 30 } },
+  { release = [0, 1] },
+  { tap = { pos = [0, 2], duration = 30 } },
+]
+expect = [["B"], [], ["A"], []]
+
+[[test]]
+name = "host_can_configure_ctrl_layer_rule_without_rebuilding"
+features = ["rynk"]
+behavior.fork = { forks = [] }
+steps = [
+  { rynk = { cmd = "SetFork", payload = { index = 0, config = {
+    trigger = { Single = { LayerOn = 1 } },
+    negative_output = { Single = { LayerOn = 1 } },
+    positive_output = { Single = { LayerOn = 2 } },
+    match_any = { modifiers = { left_ctrl = true, right_ctrl = true }, leds = {}, mouse = {} },
+    match_none = { modifiers = {}, leds = {}, mouse = {} },
+    suppressed_modifiers = { left_ctrl = true, right_ctrl = true },
+    options = { activate_on_trigger_down = true, activate_on_required_mod_down = true, activate_on_negative_mod_up = true, one_mod = true, no_unregister_on_other_key_down = true, enabled = true },
+    bindable = false,
+    layers = 0xFFFFFFFF,
+  } } } },
+  { press = [0, 0] },
+  { delay = 2000 },
+  { press = [0, 1] },
+  { tap = { pos = [0, 2], duration = 30 } },
+  { release = [0, 1] },
+  { release = [0, 0] },
+  { tap = { pos = [0, 2], duration = 30 } },
+]
+expect = [["LCtrl"], [], ["C"], [], ["LCtrl"], [], ["A"], []]
