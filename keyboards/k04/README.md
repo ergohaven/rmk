@@ -26,9 +26,9 @@ Product ID, Vial keyboard ID, storage, and UF2 artifact.
 
 ```sh
 KEYBOARD_TOML_PATH="$PWD/keyboard.toml" \
-VIAL_JSON_PATH="$PWD/vial.json" \
+VIAL_JSON_PATH="$PWD/vial_universal.json" \
 CARGO_TARGET_DIR=target/k04 \
-cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g
+cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g,universal_mac_iso
 
 KEYBOARD_TOML_PATH="$PWD/keyboard_mini.toml" \
 VIAL_JSON_PATH="$PWD/vial_mini.json" \
@@ -36,9 +36,9 @@ CARGO_TARGET_DIR=target/mini \
 cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g
 
 KEYBOARD_TOML_PATH="$PWD/keyboard_micro.toml" \
-VIAL_JSON_PATH="$PWD/vial_micro.json" \
+VIAL_JSON_PATH="$PWD/vial_micro_universal.json" \
 CARGO_TARGET_DIR=target/micro \
-cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g
+cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g,universal_mac_iso
 ```
 
 Qube K:04:
@@ -64,6 +64,21 @@ The repository build matrix builds all six profiles:
 ```sh
 ./scripts/build_k04_matrix.sh
 ```
+
+## Universal Symbols on macOS
+
+Select Mac mode with the Universal Symbols macOS toggle; firmware remembers
+this choice after a restart. Configure macOS input-source switching as
+Control+Space and keep English and Russian as the two input sources.
+
+For K:04 and Micro standalone builds, select ANSI or ISO in Entropy's
+Live Integrations → Universal Symbols to match the keyboard type in macOS.
+This changes universal backtick and tilde only, and preserves the encoder options.
+Mini and Qube do not advertise this geometry option.
+
+With Entropy closed, use the universal language toggle so firmware can track the
+language. If the language changes elsewhere, use the universal sync key to
+resynchronize it. Host layout synchronization requires Entropy to stay running.
 
 ## Battery
 

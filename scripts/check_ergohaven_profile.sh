@@ -532,9 +532,9 @@ from pathlib import Path
 
 workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 expected_features = {
-    "k04_series_k04": "production_v30g",
+    "k04_series_k04": "production_v30g,universal_mac_iso",
     "k04_series_mini": "production_v30g",
-    "k04_series_micro": "production_v30g",
+    "k04_series_micro": "production_v30g,universal_mac_iso",
 }
 for output_name, features in expected_features.items():
     marker = f"output_name: {output_name}"
@@ -545,7 +545,8 @@ for output_name, features in expected_features.items():
 
 assert "cargo build --release --bin central ${{ matrix.build_features }}" in workflow
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
-assert workflow.count('build_features: "--features production_v30g"') == 3
+assert workflow.count('build_features: "--features production_v30g"') == 1
+assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 2
 assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 2
 PY
 
@@ -558,12 +559,13 @@ readme = Path("keyboards/k04/README.md").read_text(encoding="utf-8")
 standalone_body = script.split("build_k04_series_profile() {", 1)[1].split(
     "build_classic_qube_profile() {", 1
 )[0]
-assert 'cargo build --release "${bins[@]}" --features production_v30g' in standalone_body
-assert standalone_body.count("--features production_v30g") == 1
+assert 'cargo build --release "${bins[@]}" --features "$features"' in standalone_body
+assert 'local features=production_v30g' in standalone_body
+assert 'features+=,universal_mac_iso' in standalone_body
 for call in (
-    "build_k04_series_profile k04 keyboard.toml vial.json",
+    "build_k04_series_profile k04 keyboard.toml vial_universal.json",
     "build_k04_series_profile mini keyboard_mini.toml vial_mini.json",
-    "build_k04_series_profile micro keyboard_micro.toml vial_micro.json",
+    "build_k04_series_profile micro keyboard_micro.toml vial_micro_universal.json",
 ):
     assert script.count(call) == 1, call
 
@@ -572,7 +574,8 @@ standalone_command = (
     "cargo build --release --bin central --bin peripheral --bin hardreset "
     "--features production_v30g"
 )
-assert standalone_readme.count(standalone_command) == 3
+assert standalone_readme.count(standalone_command + ",universal_mac_iso") == 2
+assert standalone_readme.count(standalone_command + "\n") == 1
 
 k04_qube_body = script.split("build_k04_qube_profile() {", 1)[1].split(
     'echo "Using BINDGEN_EXTRA_CLANG_ARGS=', 1

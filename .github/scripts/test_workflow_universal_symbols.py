@@ -15,8 +15,8 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         entries = workflow['jobs']['build']['strategy']['matrix']['include']
         expected = {
             'k03': [],
-            'k04_series_k04': ['production_v30g'],
-            'k04_series_micro': ['production_v30g'],
+            'k04_series_k04': ['production_v30g', 'universal_mac_iso'],
+            'k04_series_micro': ['production_v30g', 'universal_mac_iso'],
             'imperial44': [],
             'op36': [],
             'velvet': [],

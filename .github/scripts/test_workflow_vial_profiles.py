@@ -1,4 +1,4 @@
-"""Selectable Vial profiles must leave the existing Rynk builds intact."""
+"""Protocol and geometry selection must match each board definition."""
 import pathlib
 import shlex
 import tomllib
@@ -67,7 +67,11 @@ class VialProfiles(unittest.TestCase):
             self.assertIn('universal_mac_iso', flags)
         for row in entries:
             if not row['output_name'].endswith('_vial'):
-                self.assertNotIn('universal_mac_iso', row.get('build_features', ''))
+                enabled = row['output_name'] in {'k04_series_k04', 'k04_series_micro'}
+                self.assertEqual('universal_mac_iso' in row.get('build_features', ''), enabled)
+                if enabled:
+                    self.assertTrue(row['vial_json'].endswith('_universal.json'))
+                    self.assertNotIn('--no-default-features', row['build_features'])
         self.assertFalse(any(row['output_name'] == 'k04_series_mini_vial' for row in entries))
 
 

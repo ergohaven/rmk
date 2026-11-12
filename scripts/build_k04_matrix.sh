@@ -84,12 +84,16 @@ build_k04_series_profile() {
     local keyboard_toml="$2"
     local vial_json="$3"
     local bins=(--bin central --bin peripheral --bin hardreset)
+    local features=production_v30g
+    if [[ "$profile" == k04 || "$profile" == micro ]]; then
+        features+=,universal_mac_iso
+    fi
 
     run "keyboards/k04" env \
         "CARGO_TARGET_DIR=target/$profile/standalone" \
         "KEYBOARD_TOML_PATH=$repo_root/keyboards/k04/$keyboard_toml" \
         "VIAL_JSON_PATH=$repo_root/keyboards/k04/$vial_json" \
-        cargo build --release "${bins[@]}" --features production_v30g
+        cargo build --release "${bins[@]}" --features "$features"
 }
 
 build_classic_qube_profile() {
@@ -140,9 +144,9 @@ build_k04_qube_profile() {
 
 echo "Using BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
 
-build_k04_series_profile k04 keyboard.toml vial.json
+build_k04_series_profile k04 keyboard.toml vial_universal.json
 build_k04_series_profile mini keyboard_mini.toml vial_mini.json
-build_k04_series_profile micro keyboard_micro.toml vial_micro.json
+build_k04_series_profile micro keyboard_micro.toml vial_micro_universal.json
 build_k04_qube_profile k04 keyboard_qube.toml vial_qube.json
 build_k04_qube_profile mini keyboard_qube_mini.toml vial_qube_mini.json
 build_k04_qube_profile micro keyboard_qube_micro.toml vial_qube_micro.json

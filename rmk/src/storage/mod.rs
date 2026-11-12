@@ -353,7 +353,7 @@ pub(crate) enum StorageKey {
         layer: u8,
         idx: u8,
     },
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     UniversalSymbolsPlatform,
 }
 
@@ -411,14 +411,14 @@ pub(crate) enum StorageItem {
     },
     #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     DeviceSettings(config::VialDeviceSettingsData),
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     UniversalSymbolsPlatform(bool),
 }
 
 impl StorageItem {
     fn split(self) -> (StorageKey, StorageValue) {
         match self {
-            #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+            #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
             Self::UniversalSymbolsPlatform(v) => (
                 StorageKey::UniversalSymbolsPlatform,
                 StorageValue::UniversalSymbolsPlatform(v),
@@ -507,7 +507,7 @@ pub(crate) enum StorageValue {
     UserData(heapless::Vec<u8, USER_DATA_MAX_SIZE>),
     #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     DeviceSettings(config::VialDeviceSettingsData),
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     UniversalSymbolsPlatform(bool),
 }
 
@@ -718,7 +718,7 @@ impl<F: AsyncNorFlash> Storage<F> {
             }
         }
 
-        #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+        #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
         {
             let mac = matches!(
                 storage.fetch(StorageKey::UniversalSymbolsPlatform).await,
@@ -1104,7 +1104,7 @@ mod tests {
         })
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols_iso"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols_iso"))]
     #[test]
     fn universal_context_ack_and_same_build_restore_preserve_layout() {
         use crate::universal_symbols::{Command, Platform, State, USER_SYMBOL_START};
@@ -1186,7 +1186,7 @@ mod tests {
         });
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     #[test]
     fn universal_storage_records_follow_the_target_tail_variants() {
         let mut buf = [0u8; 32];
@@ -1206,7 +1206,21 @@ mod tests {
         );
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(feature = "ergohaven_rynk", feature = "universal_symbols_iso"))]
+    #[test]
+    fn rynk_geometry_keeps_the_existing_storage_feature_signature() {
+        for feature in env!("RMK_FEATURES").split(',') {
+            assert!(
+                !matches!(
+                    feature,
+                    "universal_symbols_iso" | "universal_symbols_iso_bit0" | "universal_symbols_iso_bit1"
+                ),
+                "geometry must not erase existing Rynk layouts"
+            );
+        }
+    }
+
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     #[test]
     fn universal_absent_platform_defaults_pc_without_rewriting_flash() {
         let part = Part::new();

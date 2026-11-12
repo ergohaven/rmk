@@ -1980,14 +1980,14 @@ impl<'a> Keyboard<'a> {
         }
 
         let host_layout = crate::host_data::snapshot().layout;
-        #[cfg(all(feature = "vial", feature = "storage"))]
+        #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "storage"))]
         let previous_platform = self.universal_symbols.platform();
         let previous_state = self.universal_symbols;
         let Some(command) = self.universal_symbols.handle(user_id, host_layout) else {
             return false;
         };
         let platform = self.universal_symbols.platform();
-        #[cfg(all(feature = "vial", feature = "storage"))]
+        #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "storage"))]
         if platform != previous_platform {
             crate::storage::store_unchecked(crate::storage::StorageItem::UniversalSymbolsPlatform(
                 platform == crate::universal_symbols::Platform::Mac,
@@ -2049,7 +2049,9 @@ impl<'a> Keyboard<'a> {
             crate::universal_symbols::Platform::Mac => ModifierCombination::LCTRL,
         };
 
-        if cfg!(feature = "vial") && platform == crate::universal_symbols::Platform::Mac {
+        if cfg!(any(feature = "vial", feature = "ergohaven_rynk"))
+            && platform == crate::universal_symbols::Platform::Mac
+        {
             // TEST5 diagnostic: reduce only Ctrl lead from 134 to 20 ms.
             // Keep TEST4's report order, Space hold and release gap unchanged.
             // Ctrl releases first while Space remains held.
@@ -2337,7 +2339,7 @@ mod test {
     }
 
     /// Set the layer-0 action of the key at `(row, col)`.
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     fn set_key_action(keyboard: &mut Keyboard<'static>, row: u8, col: u8, action: KeyAction) {
         keyboard
             .keymap
@@ -2354,7 +2356,11 @@ mod test {
         })
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols", feature = "storage"))]
+    #[cfg(all(
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        feature = "universal_symbols",
+        feature = "storage"
+    ))]
     #[test]
     fn universal_platform_saves_only_on_pressed_toggle_and_ordinary_grave_stays_ordinary() {
         block_on(async {
@@ -2399,7 +2405,11 @@ mod test {
         });
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols_iso", feature = "storage"))]
+    #[cfg(all(
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        feature = "universal_symbols_iso",
+        feature = "storage"
+    ))]
     #[test]
     fn universal_mac_iso_reports_grave_tilde_and_ru_star_without_symbol_flash_writes() {
         block_on(async {
@@ -2481,11 +2491,11 @@ mod test {
             crate::state::set_usb_state(UsbState::Configured);
             let mut keyboard = create_test_keyboard();
             for platform in [Platform::Mac, Platform::Pc] {
-                let mac_vial = cfg!(feature = "vial") && platform == Platform::Mac;
+                let mac_sequence = cfg!(any(feature = "vial", feature = "ergohaven_rynk")) && platform == Platform::Mac;
                 USB_REPORT_CHANNEL.clear();
                 let capture = async {
                     let mut reports = std::vec::Vec::new();
-                    for _ in 0..if mac_vial { 5 } else { 4 } {
+                    for _ in 0..if mac_sequence { 5 } else { 4 } {
                         let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
                             panic!()
                         };
@@ -2501,7 +2511,7 @@ mod test {
                     .collect();
                 let space = [HidKeyCode::Space as u8, 0, 0, 0, 0, 0];
                 let released = [0; 6];
-                let expected = if mac_vial {
+                let expected = if mac_sequence {
                     std::vec![(1, released), (1, space), (0, space), (0, released), (0, released)]
                 } else {
                     let modifier = if platform == Platform::Mac { 1 } else { 8 };
@@ -2510,7 +2520,7 @@ mod test {
                 assert_eq!(sequence, expected);
                 // Mac: modifier lead, chord hold, Ctrl-first release gap, settle.
                 // PC retains its chord hold, immediate modifier release, settle.
-                let intervals: &[u64] = if mac_vial { &[20, 20, 10, 50] } else { &[10, 0, 50] };
+                let intervals: &[u64] = if mac_sequence { &[20, 20, 10, 50] } else { &[10, 0, 50] };
                 for (pair, minimum_ms) in reports.windows(2).zip(intervals) {
                     let elapsed = pair[1].0.duration_since(pair[0].0);
                     assert!(
@@ -2526,7 +2536,11 @@ mod test {
         });
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols_iso", feature = "storage"))]
+    #[cfg(all(
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        feature = "universal_symbols_iso",
+        feature = "storage"
+    ))]
     #[test]
     fn universal_russian_fallback_waits_50ms_before_each_symbol_and_after_return() {
         block_on(async {
@@ -2541,10 +2555,13 @@ mod test {
             let mut keyboard = create_test_keyboard();
             keyboard.universal_symbols.handle(USER_SYNC, None);
             flash_channel.clear();
+            let initial_state = keyboard.universal_symbols;
             for (id, usage, modifiers) in [
                 (USER_SYMBOL_START + 7, 0x64, 0),
                 (USER_SYMBOL_START + 8, 0x64, 2),
                 (USER_SYMBOL_START + 21, 37, 2),
+                (USER_SYMBOL_START + 28, 36, 2),
+                (USER_SYMBOL_START + 29, 49, 2),
             ] {
                 USB_REPORT_CHANNEL.clear();
                 let capture = async {
@@ -2563,6 +2580,7 @@ mod test {
                 )
                 .await;
                 assert!(handled);
+                assert_eq!(keyboard.universal_symbols, initial_state);
                 let sequence: std::vec::Vec<_> = reports.iter().map(|(_, r)| (r.modifier, r.keycodes[0])).collect();
                 assert_eq!(
                     sequence,
@@ -2846,7 +2864,7 @@ mod test {
         block_on(main);
     }
 
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     #[test]
     fn universal_macros_execute_on_release_including_tap_hold() {
         block_on(async {
@@ -2909,7 +2927,7 @@ mod test {
     }
 
     #[test]
-    #[cfg(all(feature = "vial", feature = "universal_symbols"))]
+    #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     fn universal_macro_layout_switch_with_full_report_keeps_layout_state() {
         block_on(async {
             use crate::universal_symbols::{State, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_TOGGLE};
