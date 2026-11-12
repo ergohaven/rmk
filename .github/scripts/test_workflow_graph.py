@@ -41,8 +41,9 @@ class WorkflowGraphTests(unittest.TestCase):
         # Intentional future
         # coverage edits must review/update these baselines, not drop this test.
         # build.yml retains macOS geometry profiles, display storage and sticky key regressions.
+        # The standalone K:04 Vial artifact is intentionally excluded; other rows are retained.
         expected = {
-            'build.yml': '0d4a54a04c804db7a29a04d3989730000fca34be80baa9915419843f36166a7f',
+            'build.yml': '54705410ee6442ac0c6ed8d7cd2ff5e3a1e2e451055ecc833d2a666c85afdf67',
             'ci.yml': '911607762e45264261657e42913c164ee41c4a5ae1f6cd4c157c9e4641070bab',
         }
         for name, (_, owners) in OWNERS.items():

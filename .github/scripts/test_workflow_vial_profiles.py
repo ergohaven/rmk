@@ -57,7 +57,11 @@ class VialProfiles(unittest.TestCase):
     def test_ci_vial_rows_actually_select_vial(self):
         job = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']['build']
         entries = job['strategy']['matrix']['include']
-        approved = {'k03', 'k04_series_k04', 'k04_series_micro', 'imperial44', 'op36', 'velvet'}
+        approved = {'k03', 'k04_series_micro', 'imperial44', 'op36', 'velvet'}
+        self.assertEqual(
+            {row['output_name'] for row in entries if row['output_name'].endswith('_vial')},
+            {name + '_vial' for name in approved},
+        )
         for name in approved:
             vial = next(row for row in entries if row['output_name'] == name + '_vial')
             args = shlex.split(vial['build_features'])

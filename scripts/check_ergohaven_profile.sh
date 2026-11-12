@@ -547,7 +547,8 @@ assert "cargo build --release --bin central ${{ matrix.build_features }}" in wor
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
 assert workflow.count('build_features: "--features production_v30g"') == 1
 assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 2
-assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 2
+# Only K:04 Micro retains a separate Vial production row.
+assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 1
 PY
 
 python3 - <<'PY' || fail "K:04 local build instructions drifted from the production profile"

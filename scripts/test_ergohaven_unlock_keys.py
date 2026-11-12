@@ -56,7 +56,7 @@ class FactoryUnlockTests(unittest.TestCase):
             "imperial44", "op36", "velvet", "phenom", "phenom_mini", "phenom_micro",
             "op36_qube", "k03_qube", "velvet_qube", "imperial44_qube",
             "k04_qube_k04", "k04_qube_mini", "k04_qube_micro",
-            "k03_vial", "k04_series_k04_vial", "k04_series_micro_vial",
+            "k03_vial", "k04_series_micro_vial",
             "imperial44_vial", "op36_vial", "velvet_vial",
         }
         self.assertEqual({profile["output_name"] for profile in profiles}, expected_profiles)

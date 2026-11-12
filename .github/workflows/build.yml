@@ -139,11 +139,6 @@ jobs:
             vial_json: vial_universal.json
             build_features: "--no-default-features --features vial_standalone,universal_mac_iso"
           - keyboard: k04
-            output_name: k04_series_k04_vial
-            keyboard_toml: keyboard_vial.toml
-            vial_json: vial_universal.json
-            build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"
-          - keyboard: k04
             output_name: k04_series_micro_vial
             keyboard_toml: keyboard_micro_vial.toml
             vial_json: vial_micro_universal.json
