@@ -2,7 +2,7 @@
 """Host probe of verbatim production BLE bootstrap and confirmation code.
 
 Simulated boundaries: controller submission, Connection::params, Signal/event
-arrival and time. Not a radio/Windows/HID transport test. No rewritten policy.
+arrival and time. Not a radio/macOS/Windows/HID transport test. No rewritten policy.
 """
 from pathlib import Path
 import re
@@ -124,6 +124,17 @@ fn confirm(target:HostConnParamsSnapshot)->Option<HostConnParamsSnapshot> {
 #[test] fn startup_missing_event_does_not_disconnect_usable_link() {
  setup(snap(30,0),None,None,true);
  assert_eq!(boot(),BleKeyboardExit::Running(snap(30,0)));
+}
+#[test] fn macos_11250us_without_update_event_keeps_connection() {
+ let accepted=HostConnParamsSnapshot{interval:Duration::from_micros(11250),latency:0};
+ setup(accepted,None,None,true);
+ assert_eq!(boot(),BleKeyboardExit::Running(accepted));
+ assert_eq!(S.with(|s|s.borrow().updates),3);
+}
+#[test] fn macos_current_parameters_override_stale_mismatching_event() {
+ let accepted=HostConnParamsSnapshot{interval:Duration::from_micros(11250),latency:0};
+ setup(accepted,None,Some(snap(30,30)),true);
+ assert_eq!(confirm(snap(15,0)),Some(accepted));
 }
 #[test] fn startup_rejection_preserves_link_but_wake_target_has_zero_latency() {
  setup(snap(30,30),None,None,false);

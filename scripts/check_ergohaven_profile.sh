@@ -557,12 +557,12 @@ mapfile -t build_scripts < <(
 )
 for file in "${build_scripts[@]}"; do
     if [[ "$file" == "keyboards/k04/build.rs" ]]; then
-        rg -q 'const STANDALONE_RELEASE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: K:04 Standalone release version must be 0.2.0"
-        rg -q 'const STANDALONE_FIRMWARE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: K:04 Standalone numeric firmware version must be 0.2.0"
-        rg -q 'const STANDALONE_FIRMWARE_VERSION_BCD: &str = "0x0200";' "$file" \
-            || fail "$file: K:04 Standalone BCD firmware version must be 0x0200"
+        rg -q 'const STANDALONE_RELEASE_VERSION: &str = "0\.2\.1";' "$file" \
+            || fail "$file: K:04 Standalone release version must be 0.2.1"
+        rg -q 'const STANDALONE_FIRMWARE_VERSION: &str = "0\.2\.1";' "$file" \
+            || fail "$file: K:04 Standalone numeric firmware version must be 0.2.1"
+        rg -q 'const STANDALONE_FIRMWARE_VERSION_BCD: &str = "0x0201";' "$file" \
+            || fail "$file: K:04 Standalone BCD firmware version must be 0x0201"
         rg -q 'const QUBE_FIRMWARE_VERSION: &str = "0\.2\.0";' "$file" \
             || fail "$file: K:04 Qube firmware version must be 0.2.0"
         rg -q 'const QUBE_FIRMWARE_VERSION_BCD: &str = "0x0200";' "$file" \
@@ -603,9 +603,8 @@ for file in "${vial_definitions[@]}"; do
         keyboards/k03/vial.json|keyboards/imperial44/vial.json)
             expected_version="0.2.0"
             ;;
-        keyboards/k04/vial.json|keyboards/k04/vial_mini.json|keyboards/k04/vial_micro.json|\
-        keyboards/k04/vial_qube.json|keyboards/k04/vial_qube_mini.json|keyboards/k04/vial_qube_micro.json)
-            expected_version="0.2.0"
+        keyboards/k04/vial.json|keyboards/k04/vial_mini.json|keyboards/k04/vial_micro.json)
+            expected_version="0.2.1"
             ;;
     esac
     jq -e '.manufacturer == "Ergohaven"' "$file" >/dev/null \
