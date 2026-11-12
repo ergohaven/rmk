@@ -148,7 +148,13 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
                     Ok(split_message) => match split_message {
                         SplitMessage::ConnectionStatus(status) => {
                             trace!("Received central connection status: {:?}", status);
-                            update_status(|c| *c = status);
+                            // Repeated status is also the profile-selection notification.
+                            // Preserve it across the split link instead of deduplicating it.
+                            if crate::state::current_connection_status() == status {
+                                crate::state::notify_connection_status();
+                            } else {
+                                update_status(|c| *c = status);
+                            }
                             // Report cached battery status when the central synchronizes its state.
                             self.split_driver
                                 .write(&SplitMessage::BatteryStatus(

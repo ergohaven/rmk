@@ -126,12 +126,18 @@ impl LayerLed {
         let state_changed = previous.is_none_or(|status| status.ble.state != event.0.ble.state);
         let previous_ble_state = previous.map(|status| status.ble.state);
 
+        self.initialize_ble_snapshot();
         self.connection_status = Some(event.0);
         self.ble_profile = event.0.ble.profile;
         self.ble_state = event.0.ble.state;
 
         if state_changed {
             self.apply_ble_state_transition(previous_ble_state, self.ble_state);
+        }
+        if matches!(event.0.usb, UsbState::Configured | UsbState::Suspended)
+            && previous.is_none_or(|status| !matches!(status.usb, UsbState::Configured | UsbState::Suspended))
+        {
+            self.start_overlay(Overlay::HostConnected, indicator_duration());
         }
         if profile_changed || repeated {
             if self.split_state != SplitConnectionState::Searching {
@@ -186,6 +192,7 @@ impl LayerLed {
     }
 
     async fn on_peripheral_battery_refresh_event(&mut self, _event: PeripheralBatteryRefreshEvent) {
+        self.initialize_ble_snapshot();
         self.pending_battery_display = true;
         if let Some(level) = self.latest_battery {
             self.pending_battery_display = false;
@@ -230,6 +237,10 @@ impl LayerLed {
         self.ble_profile = status.ble.profile;
         self.ble_state = status.ble.state;
         self.ble_advertising_mode = rmk::state::current_ble_advertising_mode();
+        self.latest_battery = match rmk::input_device::battery::current_battery_status() {
+            BatteryStatus::Available { level, .. } => level,
+            BatteryStatus::Unavailable => None,
+        };
     }
 
     fn apply_ble_state_transition(&mut self, previous: Option<BleState>, state: BleState) {
@@ -238,7 +249,11 @@ impl LayerLed {
                 self.start_overlay(Overlay::HostConnected, indicator_duration());
             }
             BleState::Advertising | BleState::Inactive | BleState::Sleeping => {
-                if previous == Some(BleState::Connected) {
+                if previous == Some(BleState::Connected)
+                    && self
+                        .overlay
+                        .is_some_and(|overlay| overlay.kind == Overlay::HostConnected)
+                {
                     self.overlay = None;
                 }
             }
@@ -269,7 +284,9 @@ impl LayerLed {
             return;
         }
         if let Some(overlay) = self.overlay {
-            if overlay.kind == kind || (is_success_overlay(overlay.kind) && !is_success_overlay(kind)) {
+            if (overlay.kind == kind && !matches!(kind, Overlay::Profile(_) | Overlay::Battery(_)))
+                || (is_success_overlay(overlay.kind) && !is_success_overlay(kind))
+            {
                 return;
             }
         }
@@ -295,6 +312,9 @@ impl LayerLed {
     }
 
     async fn render(&mut self, now: Instant) {
+        // Read sticky state only after the processor has subscribed. An event
+        // can render before the first deadline callback.
+        self.initialize_ble_snapshot();
         // Split events are edge-triggered. Reconcile with the sticky snapshot
         // so a fast reconnect during post-UF2 startup cannot leave the LED in
         // the Searching state after the link is already usable. Use this
@@ -333,26 +353,38 @@ impl LayerLed {
     }
 
     fn display_color(&self, now: Instant, vbus_status: (bool, bool)) -> (Rgb, u8) {
-        if self.sleeping {
+        if !vbus_status.0
+            && (self.sleeping || (cfg!(feature = "qube-half") && self.split_state == SplitConnectionState::Idle))
+        {
             return (color_off(), 0);
         }
 
-        // Split acquisition takes priority over USB power indication. A cable
-        // used for UF2 must not turn the Searching blink into steady cyan.
+        // Split acquisition takes priority over USB power indication.
         if self.split_state == SplitConnectionState::Searching {
             let elapsed_ms = now.duration_since(self.indicator_phase_started).as_millis();
             return (split_missing_blink_color(elapsed_ms), 1);
         }
 
         if let Some(overlay) = self.overlay.filter(|overlay| now < overlay.ends) {
-            if is_connection_overlay(overlay.kind) {
+            if overlay.kind != Overlay::LowBattery || !vbus_status.0 {
                 return (overlay_color(overlay), 2);
             }
         }
 
         if self.current_layer == Some(0) && vbus_status.0 && module_settings::charge_indicator_enabled() {
-            // VBUS confirms USB power, not battery connection or charge state.
-            return (color_cyan(), 3);
+            // Use only the available (unplugged) level, never charging voltage.
+            return (
+                if self.latest_battery.is_some_and(|level| level >= 95) {
+                    color_green()
+                } else {
+                    color_yellow()
+                },
+                3,
+            );
+        }
+
+        if vbus_status.0 && self.current_layer.is_some_and(|layer| layer != 0) {
+            return (self.layer_color(now), 6);
         }
 
         // USB_OUT is an explicit host-transport choice. BLE may keep
@@ -361,8 +393,7 @@ impl LayerLed {
         // active-layer indicator. Without a USB host, BLE is the output
         // whatever is preferred, and USB is also the default preference.
         let show_host_ble_status = self.connection_status.is_none_or(|status| {
-            status.preferred == ConnectionType::Ble
-                || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)
+            status.preferred == ConnectionType::Ble || !matches!(status.usb, UsbState::Configured | UsbState::Suspended)
         });
         if show_host_ble_status {
             if matches!(self.ble_state, BleState::Inactive | BleState::Sleeping) {
@@ -383,13 +414,7 @@ impl LayerLed {
             }
         }
 
-        (
-            self.overlay
-                .filter(|overlay| now < overlay.ends)
-                .map(overlay_color)
-                .unwrap_or_else(|| self.layer_color(now)),
-            6,
-        )
+        (self.layer_color(now), 6)
     }
 
     fn layer_color(&self, now: Instant) -> Rgb {
@@ -400,12 +425,11 @@ impl LayerLed {
     }
 }
 
-// The LED is dark while the half sleeps, so the poll that drives blinking,
-// overlays and VBUS detection stops: a 10 ms tick would keep the MCU waking
-// all night.
+// Stop the LED timer only when asleep without USB power. Powered indication
+// still needs overlay expiry and VBUS-removal detection.
 impl DeadlineProcessor for LayerLed {
     fn deadline(&self) -> Option<Instant> {
-        (!self.sleeping).then_some(self.next_poll)
+        (!self.sleeping || crate::battery_nrf::usb_powered()).then_some(self.next_poll)
     }
 
     async fn on_deadline(&mut self) {
@@ -431,13 +455,6 @@ fn overlay_color(overlay: TimedOverlay) -> Rgb {
 
 fn is_success_overlay(kind: Overlay) -> bool {
     matches!(kind, Overlay::HostConnected | Overlay::SplitConnected)
-}
-
-fn is_connection_overlay(kind: Overlay) -> bool {
-    matches!(
-        kind,
-        Overlay::Profile(_) | Overlay::HostConnected | Overlay::SplitConnected
-    )
 }
 
 fn split_missing_blink_color(elapsed_ms: u64) -> Rgb {

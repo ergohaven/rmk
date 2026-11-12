@@ -85,32 +85,61 @@ resynchronize it. Host layout synchronization requires Entropy to stay running.
 The halves use `src/battery_nrf.rs`, which samples `P0_31` without
 `calibrate().await` and re-publishes `BatteryStatusEvent` periodically.
 
-## USB power indication
+## Legacy LED indication
 
-On the base layer, a steady cyan LED means USB power is present. It does not
-confirm that the battery is connected, charging, or full. This applies to
-K:04, Mini, and Micro, both standalone and with Qube. The battery percentage
-does not change this color; the former yellow/green charging indication is
-no longer used. Cyan blinking means Bluetooth pairing when that indication
-is visible. As before, USB indication takes priority over pairing and battery
-overlays on the base layer. A custom layer color can match the USB color.
+K:04, Mini, and Micro share these rules in standalone and Qube halves:
 
-The existing `Charge indicator` toggle (QSID 331) enables this USB power
-indication. Its label and stored bit are retained for compatibility with
-configurators that discover it by that name. Brightness, sleep, split-search,
-connection overlays, and non-base-layer indication keep their existing rules.
+- Selecting BT0–BT4 shows that profile's configurable color for one second.
+  Factory colors are red, blue, yellow, green, and magenta respectively.
+- Cyan blinking means pairing with a new host; white blinking means reconnecting
+  to a known host. Yellow blinking means a half is searching for its split peer.
+- A host or split-peer connection shows green for one second.
+- **BT Battery** shows each half's own available battery level for one second:
+  0–20% red, 21–40% orange, 41–74% yellow, 75–100% green. If the local
+  level is unknown, the request waits for a real local battery reading.
+- At <=20%, a half without USB-C power shows a short red blink every two seconds
+  (120 ms on). USB-C power suppresses this low-battery warning.
+- On the base layer, USB-C indication is yellow below 95% (or when the level is
+  unknown) and green at an available level of 95% or above. A non-base-layer
+  color takes precedence over USB indication, including on a power-only cable.
+- During sleep, a half without USB-C power turns its LED off. A powered half
+  retains the appropriate indication, including non-base-layer colors.
+
+The existing `Charge indicator` toggle (QSID 331), packed settings bit, profile
+palette, and protocol schema are unchanged. Split search and one-second connection
+success keep their existing overlay priority. Profile and battery-request overlays
+are visible ahead of background host/USB indication. Both topologies now use the
+same existing overlay/event/deadline owner rather than separate painters.
 
 For charging, leave each half's physical power switch ON, as required by the
 [K:04 guide](https://docs.eh.works/device/k04/#зарядка-мониторинг-заряда).
-The firmware reads USB VBUS but has no configured input for the physical
-switch or charger status, so it cannot distinguish actual charging from USB
-power alone. Battery levels remain based on unplugged measurements to avoid
-false full readings from charging voltage.
+VBUS is only a power input: firmware has no physical-switch, charge-current or
+charge-termination input. Battery filtering still uses trusted unplugged readings
+and does not synthesize levels from elevated charging voltage. Thus the green
+threshold is a display rule on the **available** level, not proof of charge
+termination. A cold boot on USB may remain yellow; an older cached level may
+remain unchanged until an unplugged measurement is available.
 
-Run `python3 scripts/test_k04_usb_power_indicator.py` from the repository root
-to check both LED implementations on the host. It exercises their USB color
-branches, brightness scaling, and layer/VBUS/toggle gates; it does not verify
-the physical switch, charge current, or the LED's appearance on hardware.
+The LED's 10 ms timer stops during sleep without USB. Powered sleep keeps that
+timer for blink/overlay expiry and cable removal. After cable insertion into an
+unpowered sleeping half, the existing battery/event wake observes VBUS and resumes
+indication; there is no new immediate cable-insertion interrupt. The battery task
+still wakes independently (normally every 15 seconds without USB, plus sampling
+time), so stopping this LED timer does not eliminate all MCU wakeups.
+
+Host regressions (run through the project's managed build-cache wrapper):
+
+```sh
+python3 scripts/test_k04_usb_power_indicator.py
+python3 scripts/test_k04_led_legacy.py
+```
+
+The first checks the USB decision branch, brightness, threshold and gates. The
+second compiles the complete production LED state/event/render/poll/deadline
+callbacks, settings-color functions, shared connection-state functions and selected
+split-receive arms. It substitutes deterministic clock/snapshots, event transport
+and PWM output. It does not test the generated forever-loop, physical BLE/USB
+transport, switch, battery ADC, charge current or LED appearance on hardware.
 
 ## Qube display
 

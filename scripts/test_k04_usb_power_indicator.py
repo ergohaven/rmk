@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Host probe of the verbatim USB indicator branches in both K:04 LED owners.
 
-Exercises color, brightness, and the layer/VBUS/setting gates. Earlier LED
-priorities and physical charging/switch detection are outside this probe.
+Exercises the accepted yellow/green-at-95 contract, brightness, and the
+layer/VBUS/setting gates. Available level is not proof of charge termination.
+Earlier LED priorities and physical charging/switch detection are outside this probe.
 """
 from pathlib import Path
 import re
@@ -43,7 +44,7 @@ const FALLTHROUGH: (Rgb, u8) = (Rgb { r: 1, g: 2, b: 3 }, 255);
 
 TEST = r'''
 #[test]
-fn usb_power_does_not_claim_charging_or_full_battery() {
+fn usb_indicator_uses_available_level_at_95_without_claiming_charge_termination() {
     for brightness in [0, 1, 128, 255] {
         module_settings::BRIGHTNESS.store(brightness, Ordering::Relaxed);
         for enabled in [false, true] {
@@ -54,8 +55,10 @@ fn usb_power_does_not_claim_charging_or_full_battery() {
                         for level in [None, Some(0), Some(74), Some(94), Some(95), Some(100)] {
                             let led = LayerLed { current_layer: layer, latest_battery: level };
                             let expected = if enabled && layer == Some(0) && vbus {
-                                (Rgb { r: 0, g: (180u16 * u16::from(brightness) / 255) as u8,
-                                    b: brightness }, 3)
+                                let charged = level.is_some_and(|level| level >= 95);
+                                (Rgb { r: if charged { 0 } else { brightness },
+                                    g: if charged { brightness } else { (180u16 * u16::from(brightness) / 255) as u8 },
+                                    b: 0 }, 3)
                             } else {
                                 FALLTHROUGH
                             };
@@ -75,6 +78,9 @@ failed = []
 with tempfile.TemporaryDirectory(prefix="k04-usb-power-") as directory:
     for name in ("layer_led", "qube_layer_led"):
         source = (ROOT / f"keyboards/k04/src/{name}.rs").read_text()
+        if 'include!("layer_led.rs");' in source:
+            assert re.sub(r'//[^\n]*', '', source).strip() == 'include!("layer_led.rs");', name
+            source = (ROOT / "keyboards/k04/src/layer_led.rs").read_text()
         marker = "if self.current_layer == Some(0) && vbus_status.0"
         assert source.count(marker) == 1, name
         branch = block(source, source.index(marker))
