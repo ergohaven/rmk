@@ -53,6 +53,7 @@ qube-half = ["protocol_rynk", "rmk/defmt"]
 [dependencies]
 rmk = { path = "../../rmk", default-features = false, features = [
     "storage",
+    "ble_profile_names",
     "universal_symbols",
     "nrf52840_ble",
     "split",
