@@ -61,6 +61,9 @@ jobs:
       - name: Test Qube display settings and storage
         run: python3 scripts/test_qube_display_settings.py
 
+      - name: Test pointing sticky key profiles
+        run: python3 scripts/test_pointing_sticky_keys.py
+
       - name: Test K:04 host connection parameter negotiation
         run: python3 scripts/test_k04_host_params.py
 

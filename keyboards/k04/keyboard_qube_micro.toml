@@ -48,7 +48,7 @@ clear_layout = false
 
 [event]
 action.channel_size = 16
-action.subs = 2
+action.subs = 3
 keyboard.subs = 4
 peripheral_battery.pubs = 2
 peripheral_battery.subs = 4

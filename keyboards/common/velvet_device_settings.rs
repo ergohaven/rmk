@@ -7,7 +7,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use rmk::config::{VialDeviceSettings, VialDeviceSettingsData};
-use rmk::event::{PeripheralSettingsEvent, PeripheralSettingsRefreshEvent, publish_event};
+use rmk::event::{ActionEvent, PeripheralSettingsEvent, PeripheralSettingsRefreshEvent, publish_event};
 use rmk::macros::processor;
 
 use crate::velvet_pointing::{
@@ -125,12 +125,16 @@ pub(crate) fn publish_settings() {
     publish_event(PeripheralSettingsEvent(settings_packet()));
 }
 
-#[processor(subscribe = [PeripheralSettingsRefreshEvent])]
+#[processor(subscribe = [PeripheralSettingsRefreshEvent, ActionEvent])]
 pub struct VelvetSettingsBroadcast;
 
 impl VelvetSettingsBroadcast {
     pub const fn new() -> Self {
         Self
+    }
+
+    async fn on_action_event(&mut self, event: ActionEvent) {
+        rmk::input_device::pointing_settings::handle_sticky_mode_key(event, vial_device_settings(), 13);
     }
 
     async fn on_peripheral_settings_refresh_event(&mut self, _event: PeripheralSettingsRefreshEvent) {

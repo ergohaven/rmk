@@ -114,7 +114,7 @@ num_sectors = 32
 # Sized like keyboards/k04: the Qube pointing processor subscribes to
 # actions, keys, layer changes and peripheral settings.
 action.channel_size = 16
-action.subs = 1
+action.subs = 2
 keyboard.subs = 4
 # One settings update publishes base, profile and encoder packets together.
 peripheral_settings.channel_size = 3

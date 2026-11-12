@@ -82,7 +82,10 @@
             "name": "EH_TXT",
             "title": "Set trackball to text mode",
             "shortName": "Text\nmode"
-        }
+        },
+        {"name": "EH_STK_TG", "shortName": "Sticky\nToggle", "title": "Toggle sticky mode for all pointing devices"},
+        {"name": "EH_STK_ON", "shortName": "Sticky\nOn", "title": "Enable sticky mode for all pointing devices"},
+        {"name": "EH_STK_OFF", "shortName": "Sticky\nOff", "title": "Disable sticky mode for all pointing devices"}
     ],
     "settings": [
         {
