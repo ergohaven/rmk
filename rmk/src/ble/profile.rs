@@ -103,7 +103,7 @@ pub(crate) enum BleProfileAction {
 /// ProfileManager is responsible for:
 /// 1. Managing multiple BLE profiles, allowing users to switch between multiple devices
 /// 2. Storing and loading bonding information for each profile
-/// 3. Updating the bonding information of the active profile to the BLE stack
+/// 3. Keeping stored security identities in the BLE stack, separate from profile admission
 /// 4. Handling profile switch, clear, and save operations
 ///
 /// `SLOTS` sizes the cache to the role: [`BOND_SLOTS`] for a keyboard, a single
@@ -165,6 +165,21 @@ where
         self.profiles.get(profile as usize)?.try_get_and(|info| !info.removed)
     }
 
+    /// Whether this peer may use the selected profile.
+    ///
+    /// Security keys remain cached for all known hosts, but that does not grant
+    /// them access to another slot. Only a genuinely unknown peer may pair into
+    /// an empty profile.
+    pub(crate) fn accepts_peer(&self, profile: u8, identity: &Identity) -> bool {
+        if let Some(bond) = self.bond_info(profile) {
+            return bond.info.identity.match_identity(identity);
+        }
+        !(0..SLOTS).any(|slot| {
+            self.bond_info(slot as u8)
+                .is_some_and(|bond| bond.info.identity.match_identity(identity))
+        })
+    }
+
     /// Check if the `identity` is the bonded dongle's identity.
     ///
     /// This function is used when searching for BLE host,
@@ -175,31 +190,52 @@ where
             .is_some_and(|info| info.info.identity.match_identity(identity))
     }
 
-    /// Update bonding information in the stack according to the current active profile
+    /// Keep known security identities available independently of profile admission.
     ///
-    /// Also republishes `BleStatus::bonded`. Every change to `profiles` that can
-    /// alter bond presence is followed by this call, so the flag is derived here once
-    /// instead of at each mutation site.
+    /// Empty profiles share the same local BLE identity as bonded profiles. An
+    /// inactive host must be refused by the connection owner, not told that its
+    /// saved key disappeared. Prefer the selected slot if legacy slots contain
+    /// different keys for the same peer identity.
     pub(crate) fn update_stack_bonds(&self) {
-        // Drain one at a time rather than collecting: the stack holds bonds this
-        // manager has no slot for — a fresh pairing lands there before we prune —
-        // and a `heapless::Vec` collect panics on the overflow.
-        while let Some(identity) = self
-            .stack
-            .with_bond_information(|bonds| bonds.first().map(|b| b.identity))
-        {
-            if let Err(e) = self.stack.remove_bond_information(identity) {
-                debug!("Remove bond info error: {:?}", e);
-                break; // a bond that won't come off would spin here forever
+        let active = self.bond_info(current_profile());
+        set_ble_bonded(active.is_some());
+        let mut desired: heapless::Vec<BondInformation, SLOTS> = heapless::Vec::new();
+        if let Some(info) = active {
+            let _ = desired.push(info.info);
+        }
+        for slot in 0..SLOTS {
+            if let Some(info) = self.bond_info(slot as u8)
+                && !desired
+                    .iter()
+                    .any(|bond| bond.identity.match_identity(&info.info.identity))
+            {
+                let _ = desired.push(info.info);
             }
         }
 
-        let active = self.bond_info(current_profile());
-        set_ble_bonded(active.is_some());
-
-        if let Some(info) = active {
-            debug!("Add bond info of profile {}: {:?}", info.slot_num, info);
-            if let Err(e) = self.stack.add_bond_information(info.info) {
+        // Reconcile rather than clear/re-add every key: unchanged profiles
+        // must not enqueue resolving-list churn during every reconnect.
+        loop {
+            let stale = self.stack.with_bond_information(|bonds| {
+                bonds
+                    .iter()
+                    .find(|bond| !desired.iter().any(|wanted| wanted == *bond))
+                    .map(|bond| bond.identity)
+            });
+            let Some(identity) = stale else { break };
+            if let Err(e) = self.stack.remove_bond_information(identity) {
+                debug!("Remove bond info error: {:?}", e);
+                break;
+            }
+        }
+        for info in desired {
+            if self
+                .stack
+                .with_bond_information(|bonds| bonds.iter().any(|bond| bond == &info))
+            {
+                continue;
+            }
+            if let Err(e) = self.stack.add_bond_information(info) {
                 debug!("Add bond info error: {:?}", e);
             }
         }
@@ -303,7 +339,9 @@ where
             };
             if profile != current {
                 set_ble_profile(profile, self.bond_info(profile).is_some());
-                self.update_stack_bonds();
+                // The connection owner applies this selection only after the old
+                // ACL/GATT session is down. Its security state must remain valid
+                // while the connection is being torn down.
                 self.updated_active_profile.signal(());
                 info!("Switched to BLE profile: {}", profile);
             }
@@ -336,6 +374,118 @@ mod tests {
         assert_eq!(profile_address([1, 2, 3, 0xFF, 5, 0xC6], 1), [1, 2, 3, 0, 5, 0xC6]);
     }
 
+    #[test]
+    fn switching_to_empty_profile_preserves_known_host_security() {
+        use crate::channel::BLE_PROFILE_CHANNEL;
+        use crate::state::{current_ble_status, current_profile};
+
+        crate::test_support::reset_connection_status();
+        with_manager::<2>(|manager| {
+            let mut host = ProfileInfo::default();
+            host.info.identity.addr = super::Address::random([1, 2, 3, 4, 5, 0xC6]);
+            host.info.ltk = LongTermKey(42);
+            manager.set_bond(host.clone());
+            manager.update_stack_bonds();
+
+            test_block_on(async {
+                BLE_PROFILE_CHANNEL.send(super::BleProfileAction::Switch(1)).await;
+                manager.update_profile().await;
+            });
+
+            assert_eq!(current_profile(), 1);
+            assert!(!current_ble_status().bonded);
+            assert!(manager.bond_info(1).is_none());
+            assert_eq!(manager.bond_info(0), Some(host.clone()));
+            manager.stack.with_bond_information(|bonds| {
+                assert!(
+                    bonds.iter().any(|bond| bond == &host.info),
+                    "switching to an empty profile must not make the known host's key disappear"
+                );
+            });
+
+            // The connection owner reconciles bonds after the old ACL is down.
+            // Known security identities must survive the new empty-profile
+            // advertising window too; admission is a separate profile check.
+            manager.update_stack_bonds();
+            manager.stack.with_bond_information(|bonds| {
+                assert!(
+                    bonds.iter().any(|bond| bond == &host.info),
+                    "empty-profile advertising must retain known host security identities"
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn empty_profile_refuses_a_host_already_bonded_to_another_slot() {
+        crate::test_support::reset_connection_status();
+        with_manager::<2>(|manager| {
+            let mut host = ProfileInfo::default();
+            host.info.identity.addr = super::Address::random([1, 2, 3, 4, 5, 0xC6]);
+            host.info.ltk = LongTermKey(42);
+            let unknown = super::Identity {
+                addr: super::Address::random([9, 8, 7, 6, 5, 0xC6]),
+                irk: None,
+            };
+            manager.set_bond(host.clone());
+
+            // Existing controls: the bonded slot accepts only its own host,
+            // and an empty slot still accepts genuinely new pairing peers.
+            assert!(manager.accepts_peer(0, &host.info.identity));
+            assert!(!manager.accepts_peer(0, &unknown));
+            assert!(manager.accepts_peer(1, &unknown));
+            assert!(manager.bond_info(1).is_none());
+            assert!(
+                !manager.accepts_peer(1, &host.info.identity),
+                "an inactive bonded host must not enter an empty profile as a new pairing peer"
+            );
+        });
+    }
+
+    #[test]
+    fn known_host_cache_and_empty_profile_admission_follow_explicit_bond_clear() {
+        use crate::channel::BLE_PROFILE_CHANNEL;
+
+        crate::test_support::reset_connection_status();
+        with_manager::<3>(|manager| {
+            let mut first = ProfileInfo::default();
+            first.info.identity.addr = super::Address::random([1, 2, 3, 4, 5, 0xC6]);
+            first.info.ltk = LongTermKey(41);
+            let mut second = ProfileInfo {
+                slot_num: 1,
+                ..Default::default()
+            };
+            second.info.identity.addr = super::Address::random([9, 8, 7, 6, 5, 0xC6]);
+            second.info.ltk = LongTermKey(42);
+            manager.set_bond(first.clone());
+            manager.set_bond(second.clone());
+            test_block_on(async {
+                BLE_PROFILE_CHANNEL.send(super::BleProfileAction::Switch(2)).await;
+                manager.update_profile().await;
+            });
+            manager.update_stack_bonds();
+            manager.stack.with_bond_information(|bonds| {
+                assert_eq!(bonds.len(), 2);
+                assert!(bonds.contains(&first.info));
+                assert!(bonds.contains(&second.info));
+            });
+            assert!(!manager.accepts_peer(2, &first.info.identity));
+            assert!(!manager.accepts_peer(2, &second.info.identity));
+
+            // Clearing one slot must not evict the other host. The explicitly
+            // forgotten peer is now eligible for genuinely new pairing.
+            manager.clear_bond(0);
+            manager.stack.with_bond_information(|bonds| {
+                assert_eq!(bonds.len(), 1);
+                assert_eq!(bonds[0], second.info);
+            });
+            assert!(manager.accepts_peer(2, &first.info.identity));
+            assert!(!manager.accepts_peer(2, &second.info.identity));
+            assert_eq!(manager.bond_info(1), Some(second));
+            assert!(manager.bond_info(2).is_none());
+        });
+    }
+
     struct TestTransport;
 
     impl embedded_io_async::ErrorType for TestTransport {
@@ -357,7 +507,7 @@ mod tests {
 
     fn with_manager<const SLOTS: usize>(test: impl FnOnce(&mut TestManager<'_, '_, SLOTS>)) {
         crate::ble::rng::seed([7; 32]);
-        let mut resources = HostResources::<DefaultPacketPool, 1, 1>::new();
+        let mut resources = HostResources::<DefaultPacketPool, 1, 1, 1, SLOTS>::new();
         let stack = trouble_host::new(ExternalController::<_, 1>::new(TestTransport), &mut resources).build();
         let mut manager = ProfileManager::new(&stack);
         test(&mut manager);
@@ -399,10 +549,18 @@ mod tests {
             }
             test_block_on(async {
                 for (action, selected) in [(Switch(1), 1), (Previous, 0), (Next, 1)] {
+                    let previous = current_profile();
                     BLE_PROFILE_CHANNEL.send(action).await;
                     manager.update_profile().await;
                     assert_eq!(current_profile(), selected);
                     assert!(current_ble_status().bonded);
+                    manager.stack.with_bond_information(|bonds| {
+                        assert_eq!(bonds.len(), 1);
+                        assert_eq!(bonds[0].ltk, LongTermKey(previous.into()));
+                    });
+                    // The connection owner reconciles only after old-session
+                    // teardown, then the selected slot wins duplicate identities.
+                    manager.update_stack_bonds();
                     manager.stack.with_bond_information(|bonds| {
                         assert_eq!(bonds.len(), 1);
                         assert_eq!(bonds[0].ltk, LongTermKey(selected.into()));
@@ -415,7 +573,11 @@ mod tests {
             assert!(!current_ble_status().bonded);
             assert!(manager.bond_info(1).is_none());
             assert!(manager.bond_info(0).is_some());
-            manager.stack.with_bond_information(|bonds| assert!(bonds.is_empty()));
+            manager.stack.with_bond_information(|bonds| {
+                assert_eq!(bonds.len(), 1);
+                assert_eq!(bonds[0].ltk, LongTermKey(0));
+                assert!(!manager.accepts_peer(1, &bonds[0].identity));
+            });
         });
     }
 

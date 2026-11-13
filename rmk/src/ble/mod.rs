@@ -669,6 +669,9 @@ async fn run_ble_keyboard<
                 continue;
             }
 
+            // No previous host session remains here: profile selection can
+            // replace security state only after teardown has completed.
+            profile_manager.update_stack_bonds();
             let profile = crate::state::current_profile();
             #[cfg(feature = "ble_profile_names")]
             let product_name = {
@@ -735,9 +738,7 @@ async fn run_ble_keyboard<
             match select(advertising, profile_manager.update_profile()).await {
                 Either::First(Ok(conn)) => {
                     // Check the bond info after the connection is just created.
-                    if let Some(bond) = profile_manager.bond_info(profile)
-                        && !bond.info.identity.match_identity(&conn.raw().peer_identity())
-                    {
+                    if !profile_manager.accepts_peer(profile, &conn.raw().peer_identity()) {
                         warn!("[ble] connected peer doesn't match the active profile, disconnecting");
                         disconnect_and_wait(&conn).await;
                         continue;
@@ -2375,6 +2376,13 @@ async fn serve_keyboard_connection<
 
     // CCCD lookup uses cached bond info to avoid a cancellable flash read while
     // this future is racing other arms of an outer `select`.
+    // trouble retains disconnected bonded clients in RAM. Start from zero so
+    // an explicitly forgotten peer cannot reuse subscriptions in a new pairing;
+    // only this profile's valid saved table may restore them below.
+    if let Some(mut table) = server.get_client_att_table(conn.raw()) {
+        table.clear();
+        server.set_client_att_table(conn.raw(), &table.view());
+    }
     if let Some(bond_info) = profiles.bond_info(profile)
         && bond_info.info.identity.match_identity(&conn.raw().peer_identity())
     {
