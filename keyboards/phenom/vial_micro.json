@@ -5,9 +5,9 @@
   "productId": "0x0054",
   "firmware": {
     "name": "RMK",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
-  "firmwareVersion": "0.2.0",
+  "firmwareVersion": "0.3.0",
   "lighting": "none",
   "matrix": {
     "rows": 10,

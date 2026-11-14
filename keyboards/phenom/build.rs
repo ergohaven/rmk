@@ -7,8 +7,8 @@ use const_gen::*;
 use xz2::read::XzEncoder;
 
 fn main() {
-    const FIRMWARE_VERSION: &str = "0.2.0";
-    const FIRMWARE_VERSION_BCD: &str = "0x0200";
+    const FIRMWARE_VERSION: &str = "0.3.0";
+    const FIRMWARE_VERSION_BCD: &str = "0x0300";
 
     let vial_path = configured_path("VIAL_JSON_PATH", "vial.json");
     let keyboard_path = configured_path("KEYBOARD_TOML_PATH", "keyboard.toml");

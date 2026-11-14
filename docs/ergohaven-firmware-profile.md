@@ -13,16 +13,20 @@ profiles share this software contract:
 - Bluetooth reconnect and pairing windows of 60 seconds
 - persistent layer names at QSID 200–215, up to 12 UTF-8 bytes each
 - Universal Symbols, the `universal_symbols` RMK feature
-- firmware version 0.2.0 and manufacturer `Ergohaven`
+- firmware version 0.3.0 and manufacturer `Ergohaven`
 
 Phenom Series is wired and has no batteries, so the Bluetooth and battery
 parts of the contract do not apply to it.
 
-Every profile speaks Rynk with Ergohaven's commands (rmk feature
-`ergohaven_rynk`, `[host] rynk_enabled = true`). Over Rynk the same QSIDs,
-layer names, board definition and host data are served, writes need no unlock,
-as over Vial, and keymap and macro writes reach flash after a quiet period or a
-host commit.
+Default profiles speak Rynk with Ergohaven's commands (rmk feature
+`ergohaven_rynk`, `[host] rynk_enabled = true`). The official workflow also
+builds separate Vial standalone variants for K:03, K:04 Micro, Imperial44,
+OP36 and Velvet. Full-size K:04 Vial is excluded from production; Mini and
+Qube have no separate official Vial variant. Select matching protocol images
+and use a compatible configurator. Over Rynk the same QSIDs, layer names,
+board definition and host data are served, writes need no unlock, as over
+Vial, and keymap and macro writes reach flash after a quiet period or a host
+commit.
 
 Standard keyboard profiles expose the factory layer names `Base`,
 `Navigation`, `Symbols`, and `Adjust`. Layer 4 is `Mouse` only on keyboards

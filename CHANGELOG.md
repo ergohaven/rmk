@@ -1,34 +1,53 @@
 # Changelog
 
-## Unreleased
+## v0.3.0 (local release candidate)
 
-### Breaking changes
-
-- Merged upstream RMK through `f78d138cc` and moved every keyboard from Vial to Rynk with Ergohaven's commands. The storage format and the RMK feature set changed, so the first boot erases the keymap, macros, combos, forks, Morse entries, module settings, host bonds, and the halves' pairing on every part. Export the layout in Entropy before flashing and import it afterwards
-- K:04, K:04 Mini, K:04 Micro, K:03, OP36, Imperial44, Velvet, the classic Qube, and the Phenom Series need an Entropy build with Rynk support and Ergohaven wire revision 2. Vial clients, vial-gui included, no longer configure them
-- Flash both halves and the Qube dongle together, because the split wire format changed, then pair the hosts and the halves again
-- The USB and BLE serial number starts with `rynk:` instead of `vial:f64c2b3c:`; the device ID after it is unchanged
-- K:04 Micro (Qube) is now named `K:04 Micro(Qube)`, because upstream limits BLE names to 16 bytes
+Default firmware moves from Vial to Rynk with Ergohaven wire revision 2 and
+adds the wired Phenom Series. Separate Vial standalone variants remain for
+K:03, K:04 Micro, Imperial44, OP36 and Velvet; full-size K:04 Vial is excluded
+from production. The official matrix has 22 profiles / 51 keyboard UF2 roles.
 
 ### Features
 
-- Doubled the macro pool to 4096 bytes, with a 4128-byte Rynk frame that holds the whole pool
-- Made the Qube screen show up to 64 bytes per media field (32 Cyrillic characters), scrolling long titles in the header
-- Added RMK firmware for the Phenom Series (Phenom, Phenom Mini, and Phenom Micro): a wired RP2040 split on Rynk that runs the K:04 module stack on each half, with Universal Symbols and Layout Sync and the shared limits of 32 combos, 32 forks, 32 Morse entries, and 4096 bytes of macro storage; layers 5–15 compile as `No`
-- Added the Phenom Series layer LED: the WS2812 on each half shows the active layer in its Entropy color, with the K:04 LED brightness and timeout settings in a new `LEDs settings` tab
+- Added Phenom, Phenom Mini and Phenom Micro with the K:04 module stack and per-half layer LEDs
+- Added Rynk Ergohaven commands, staged writes and a 4096-byte macro pool (2048 bytes on Vial)
+- Added Qube display brightness, background and font options, 64-byte media fields and scrolling titles
+- Added persistent sticky-mode keys, PC/macOS Universal Symbols mode, numero and model-specific ISO geometry
+- Added Universal actions in extended Vial macros and standalone K:04-family BT0–BT4 discovery names
+
+### Improvements
+
+- Integrated upstream RMK through `a0ccc40f0933366b5a076562104071f1e3281bb0`
+- Improved K:04 Qube radio scheduling while retaining its USB-only computer connection and BLE half links
+- Coalesced settings/macro writes, bounded flash waits and adopted the upstream Nordic flash-lock fix
 
 ### Fixes
 
-- Replaced K:04 Series yellow/green charging LEDs with steady cyan USB-power indication on the base layer, so USB presence no longer claims battery charging or completion; the existing `Charge indicator` setting remains compatible
-- Gave the K:04 Qube trackball link every connection event. The Qube placed the two half links 7.5 ms apart, so every other event of the 7.5 ms trackball link fell on the other half's link and the trackball arrived in pairs every 15 ms. K:04, K:04 Mini, and K:04 Micro through Qube now reserve 3 ms per event and space the links 3.75 ms apart
-- Stopped the K:04 Qube from advertising to a BLE host. It reaches the PC over USB, and the advertising took radio time from the half links every minute
-- Switched all six standalone K:04 Series images to the `production_v30g` profile derived from the field-validated K:04 build: host-first split wake ordering, accepted-anchor low-duty BLE parameters, fixed 15 ms vector-preserving HID pacing, and configured 1M PHY preservation; K:04 Qube and other keyboards retain their existing production profiles
-- Prevented K:04 split LED reconciliation from starting a status phase after the render timestamp, avoiding an `Instant` underflow panic during reconnect
-- Resent the central's state, module settings, and active layer to a wired split peripheral that rebooted on its own, so the Phenom right-half module no longer stays off after flashing only that half
+- Preserved host-selected standalone K:04 BLE intervals, selected-profile security admission and GATT subscriptions
+- Restored legacy K:04-family LED colors and timing; the intermediate cyan USB-only indication is superseded
+- Fixed modifier-assisted pointing, held drags, touchpad holds, unbound-key auto-layer deactivation and cadence-aware acceleration
+- Fixed local pointing wake activity, macOS Caps Lock report ordering and modifier-bearing shortcuts
+- Made Fast typing window enable/disable inherited Flow Tap while retaining explicit per-key overrides
+- Restored independently rebooted wired peripheral state/settings/layer synchronization and Phenom module behavior
 
-### Notes
+### Compatibility and verification
 
-- Phenom settings from the QMK firmware do not carry over. After flashing, the board starts with the factory keymap and both module slots set to `None`, as on K:04, so set the modules in Entropy
+Export layouts **before** flashing: the transition from v0.2.0 changes storage
+and clears settings and host/split pairing on every part. Update Entropy,
+flash both halves plus the Qube dongle where applicable, re-pair and import.
+Protocol/feature changes can reset storage again; nonzero QSID 27 in a restored
+backup now enables default Flow Tap. Back up before downgrading Qube display
+settings too. Phenom starts with both modules set to `None`; QMK settings do
+not carry over. USB LED indication uses cached battery state, not a measured
+charging-current/completion signal.
+
+Release preparation performs source/profile checks only. Fresh candidate CI,
+firmware builds, pure Rust parser execution, binary/archive verification and
+hardware regression remain pending. The original v0.2.0 tag is `a06f0506`;
+its refreshed published assets used `347cf14f`, still version 0.2.0. Their
+classic factory-layout/task-join fixes are already shipped, not new here.
+
+See [complete release notes, contributor credits and flashing caveats](docs/releases/v0.3.0.md).
 
 ## v0.1.10
 

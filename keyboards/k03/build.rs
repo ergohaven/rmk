@@ -29,8 +29,8 @@ fn main() {
         "universal_mac_iso is only supported by the Vial standalone profile"
     );
     // Test-only cache-busting version for the runtime encoder settings build.
-    const FIRMWARE_VERSION: &str = "0.2.0";
-    const FIRMWARE_VERSION_BCD: &str = "0x0200";
+    const FIRMWARE_VERSION: &str = "0.3.0";
+    const FIRMWARE_VERSION_BCD: &str = "0x0300";
 
     println!("cargo:rerun-if-changed=vial.json");
     println!("cargo:rerun-if-changed=keyboard.toml");

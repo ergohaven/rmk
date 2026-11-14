@@ -649,37 +649,47 @@ mapfile -t build_scripts < <(
 )
 for file in "${build_scripts[@]}"; do
     if [[ "$file" == "keyboards/k04/build.rs" ]]; then
-        rg -q 'const STANDALONE_RELEASE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: K:04 Standalone release version must be 0.2.0"
-        rg -q 'const STANDALONE_FIRMWARE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: K:04 Standalone numeric firmware version must be 0.2.0"
-        rg -q 'const STANDALONE_FIRMWARE_VERSION_BCD: &str = "0x0200";' "$file" \
-            || fail "$file: K:04 Standalone BCD firmware version must be 0x0200"
-        rg -q 'const QUBE_FIRMWARE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: K:04 Qube firmware version must be 0.2.0"
-        rg -q 'const QUBE_FIRMWARE_VERSION_BCD: &str = "0x0200";' "$file" \
-            || fail "$file: K:04 Qube BCD firmware version must be 0x0200"
+        rg -q 'const STANDALONE_RELEASE_VERSION: &str = "0\.3\.0";' "$file" \
+            || fail "$file: K:04 Standalone release version must be 0.3.0"
+        rg -q 'const STANDALONE_FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
+            || fail "$file: K:04 Standalone numeric firmware version must be 0.3.0"
+        rg -q 'const STANDALONE_FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
+            || fail "$file: K:04 Standalone BCD firmware version must be 0x0300"
+        rg -q 'const QUBE_FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
+            || fail "$file: K:04 Qube firmware version must be 0.3.0"
+        rg -q 'const QUBE_FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
+            || fail "$file: K:04 Qube BCD firmware version must be 0x0300"
     elif [[ "$file" == "keyboards/k03/build.rs" || "$file" == "keyboards/imperial44/build.rs" ]]; then
-        rg -q 'const FIRMWARE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: firmware version must be 0.2.0"
-        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0200";' "$file" \
-            || fail "$file: BCD firmware version must be 0x0200"
+        rg -q 'const FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
+            || fail "$file: firmware version must be 0.3.0"
+        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
+            || fail "$file: BCD firmware version must be 0x0300"
     elif [[ "$file" == "keyboards/classic_qube/build.rs" ]]; then
         rg -Fq 'let encoder_profile = matches!(product_id, 0x0044 | 0x0070);' "$file" \
             || fail "$file: K03 and Imperial44 Qube must select the encoder profile"
-        rg -Fq '("0.2.0", "0x0200")' "$file" \
-            || fail "$file: K03 and Imperial44 Qube firmware version must be 0.2.0/0x0200"
-        rg -Fq '("0.2.0", "0x0200")' "$file" \
-            || fail "$file: OP36 and Velvet Qube firmware version must be 0.2.0/0x0200"
+        python3 - "$file" <<'PY' || fail "$file: both Qube version branches must be 0.3.0/0x0300"
+import pathlib
+import re
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text()
+branches = re.search(
+    r'let \(version, version_bcd\) = if encoder_profile \{(.*?)\} else \{(.*?)\};',
+    source, re.S,
+)
+assert branches, "missing classic Qube version selector"
+for branch in branches.groups():
+    assert '("0.3.0", "0x0300")' in branch, "stale classic Qube version branch"
+PY
         rg -Fq 'cargo:rustc-env=RMK_FIRMWARE_VERSION={version}' "$file" \
             || fail "$file: selected firmware version is not exported"
         rg -Fq 'cargo:rustc-env=RMK_FIRMWARE_VERSION_BCD={version_bcd}' "$file" \
             || fail "$file: selected BCD firmware version is not exported"
     else
-        rg -q 'const FIRMWARE_VERSION: &str = "0\.2\.0";' "$file" \
-            || fail "$file: firmware version must be 0.2.0"
-        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0200";' "$file" \
-            || fail "$file: BCD firmware version must be 0x0200"
+        rg -q 'const FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
+            || fail "$file: firmware version must be 0.3.0"
+        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
+            || fail "$file: BCD firmware version must be 0x0300"
     fi
 done
 
@@ -690,14 +700,14 @@ mapfile -t vial_definitions < <(
         done
 )
 for file in "${vial_definitions[@]}"; do
-    expected_version="0.2.0"
+    expected_version="0.3.0"
     case "$file" in
         keyboards/k03/vial.json|keyboards/imperial44/vial.json)
-            expected_version="0.2.0"
+            expected_version="0.3.0"
             ;;
         keyboards/k04/vial.json|keyboards/k04/vial_mini.json|keyboards/k04/vial_micro.json|\
         keyboards/k04/vial_qube.json|keyboards/k04/vial_qube_mini.json|keyboards/k04/vial_qube_micro.json)
-            expected_version="0.2.0"
+            expected_version="0.3.0"
             ;;
     esac
     jq -e '.manufacturer == "Ergohaven"' "$file" >/dev/null \
@@ -1073,4 +1083,4 @@ if ((failures > 0)); then
     exit 1
 fi
 
-echo "Ergohaven firmware profile contract OK (${#profiles[@]} production profiles)."
+echo "Ergohaven firmware profile contract OK (${#profiles[@]} core Bluetooth profiles; see build.yml for the full production matrix)."
