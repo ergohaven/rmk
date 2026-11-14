@@ -164,6 +164,27 @@ class StableToolchainTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('exact stable release', result.stderr)
 
+    def test_root_toolchain_installs_targets_for_inheriting_firmware_profiles(self):
+        jobs = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']
+        root_targets = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['targets']
+        inherited = []
+        for owner in ('build', 'build-qube'):
+            for row in jobs[owner]['strategy']['matrix']['include']:
+                directory = ROOT / 'keyboards' / row['keyboard']
+                current = directory
+                while current != ROOT and not (current / 'rust-toolchain.toml').exists():
+                    self.assertFalse((current / 'rust-toolchain').exists())
+                    current = current.parent
+                if current != ROOT:
+                    continue
+                inherited.append(row['output_name'])
+                target = tomllib.loads((directory / '.cargo/config.toml').read_text())['build']['target']
+                with self.subTest(profile=row['output_name'], target=target):
+                    self.assertEqual(target, row.get('target', 'thumbv7em-none-eabihf'))
+                    self.assertIn(target, root_targets,
+                                  'The exact root compiler must install its own firmware target')
+        self.assertTrue(inherited)
+
     def test_bootstrap_exports_exact_canonical_release(self):
         expected = channel()
         self.assertRegex(expected, r'^\d+\.\d+\.\d+$')

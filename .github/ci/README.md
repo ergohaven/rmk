@@ -10,7 +10,10 @@ Keep the allowed `dtolnay/rust-toolchain@stable` action reference and select the
 compiler through its `toolchain` input, not a new versioned action reference.
 Bare Cargo commands in the QEMU verifier inherit the root toolchain through
 rustup's directory lookup. Do not add a nested toolchain or an environment
-override to bypass that baseline.
+override to bypass that baseline. Firmware profiles without a nested toolchain
+also inherit this exact compiler; keep their `.cargo/config.toml` build targets
+in the root toolchain's `targets` list. Installing a target for floating stable
+in a workflow does not install it for the separate exact root compiler.
 
 The current baseline is Rust **1.99.1** and the macro-expansion tool is
 **cargo-expand 1.0.127**, installed with `--locked`. This pair passed all owners
