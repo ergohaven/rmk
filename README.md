@@ -43,20 +43,6 @@ on every push and pull request.
 
 ## [User Documentation](https://rmk.rs/docs/user_guide/guide_overview) | [API Reference](https://docs.rs/rmk/latest/rmk/) | [FAQs](https://rmk.rs/docs/getting_started/faq) | [Changelog](https://github.com/rmk-rs/rmk/blob/main/rmk/CHANGELOG.md)
 
-## Real-World Implementations
-
-| [rmk-ble-keyboard](https://github.com/rmk-rs/rmk-ble-keyboard) | [dactyl-lynx-rmk](https://github.com/whitelynx/dactyl-lynx-rmk) | [sessile](https://github.com/willpuckett/sessile) |
-| --- | --- | --- |
-| <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/rmk_ble_keyboard.jpg" width="300"> | <img src="https://raw.githubusercontent.com/whitelynx/dactyl-lynx-keyboard/refs/heads/main/resources/skeleton-prototype.jpg" width="300"> | <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/sessile.png" width="300"> |
-
-| [moonlander-rmk-1](https://github.com/MrFixThis/moonlander-rmk-1) | [rmk-zsa-planck-ez](https://github.com/atvari-eu/rmk-zsa-planck-ez) | [rmk-zsa-voyager](https://github.com/jpds/rmk-zsa-voyager) |
-| --- | --- | --- |
-| <img src="docs/docs/main/images/zsa-moonlander.jpg" width="300"> | <img src="docs/docs/main/images/zsa-planck-ez.webp" width="300"> | <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/zsa-voyager.webp" width="300"> |
-
-| [Urchin](https://github.com/TimoBbz/urchin-rmk-firmware) |[zx66](https://github.com/zongxin1993/zx66-keybord) | [Lunakbd](https://github.com/gbPagano/lunakbd) |
-| --- | --- | --- |
-| <img src="https://raw.githubusercontent.com/rmk-rs/rmk/refs/heads/main/docs/docs/main/images/urchin.png" width="300"> | <img src="https://raw.githubusercontent.com/zongxin1993/zx66-keybord/refs/heads/master/Images/zx66-keybord_03.jpg" width="300"> | <img src="https://raw.githubusercontent.com/gbPagano/lunakbd/main/photos/up-down-4-web.jpg" width="300"> |
-
 ## Getting Started
 
 ### Option 1: Start with a Template
