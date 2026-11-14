@@ -18,6 +18,17 @@
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
+# One stable baseline for explicit selectors and workflow installers.
+RMK_STABLE_TOOLCHAIN="$(awk -F'"' '
+    /^\[/ { section = $0; next }
+    section == "[toolchain]" && /^[[:space:]]*channel[[:space:]]*=/ { print $2 }
+' "$repo_root/rust-toolchain.toml")"
+if [[ ! "$RMK_STABLE_TOOLCHAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf 'rust-toolchain.toml must select an exact stable release\n' >&2
+    return 1
+fi
+export RMK_STABLE_TOOLCHAIN
+
 export CARGO_TERM_COLOR=always
 export CARGO_TERM_PROGRESS_WHEN=never
 export CARGO_NET_GIT_FETCH_WITH_CLI=true

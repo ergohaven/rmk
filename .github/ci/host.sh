@@ -12,20 +12,20 @@ export CARGO_BUILD_TARGET="${CARGO_BUILD_TARGET:-x86_64-unknown-linux-gnu}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$target_root/host}"
 
 log_section "Tests"
-cargo +stable test --workspace --lib --tests
+cargo +"$RMK_STABLE_TOOLCHAIN" test --workspace --lib --tests
 
 log_section "Doctests"
-cargo +stable test -p rynk --doc
+cargo +"$RMK_STABLE_TOOLCHAIN" test -p rynk --doc
 
 log_section "No-alloc smoke check"
 # The dongle build: every other job runs `rynk` with default features (std ⇒
 # alloc), so without this its `#[cfg(not(feature = "alloc"))]` half is never
 # compiled.
-cargo +stable clippy -p rynk --lib --no-default-features -- -D warnings
+cargo +"$RMK_STABLE_TOOLCHAIN" clippy -p rynk --lib --no-default-features -- -D warnings
 
 log_section "Wasm smoke check"
-cargo +stable check -p rynk --lib --target wasm32-unknown-unknown
-cargo +stable check -p rynk-wasm --target wasm32-unknown-unknown
+cargo +"$RMK_STABLE_TOOLCHAIN" check -p rynk --lib --target wasm32-unknown-unknown
+cargo +"$RMK_STABLE_TOOLCHAIN" check -p rynk-wasm --target wasm32-unknown-unknown
 
 log_section "Wasm tests"
 # The JS byte link's cancel-safety needs a real JS event loop; node has one and
@@ -43,5 +43,5 @@ npx --yes --package typescript@5.9.3 tsc \
     rynk-wasm/pkg/rynk_wasm.d.ts
 
 log_section "Clippy"
-cargo +stable clippy --workspace --lib --tests --examples -- -D warnings
-cargo +stable clippy -p rynk-wasm --target wasm32-unknown-unknown -- -D warnings
+cargo +"$RMK_STABLE_TOOLCHAIN" clippy --workspace --lib --tests --examples -- -D warnings
+cargo +"$RMK_STABLE_TOOLCHAIN" clippy -p rynk-wasm --target wasm32-unknown-unknown -- -D warnings

@@ -38,13 +38,15 @@ class WorkflowGraphTests(unittest.TestCase):
         # Pre-policy owner payloads from 89a6f853; build.yml since gained the Phenom
         # rows, selectable Vial-only rows and isolated Qube descriptors; ci.yml keeps
         # the target QEMU/LLVM runner dependencies and step-local builtin ESP token.
+        # Its four host/core installers now consume the canonical stable channel;
+        # cargo-expand is characterized and pinned. All coverage payloads remain.
         # Intentional future
         # coverage edits must review/update these baselines, not drop this test.
         # build.yml retains macOS geometry profiles, display storage and sticky key regressions.
         # The standalone K:04 Vial artifact is intentionally excluded; other rows are retained.
         expected = {
             'build.yml': '54705410ee6442ac0c6ed8d7cd2ff5e3a1e2e451055ecc833d2a666c85afdf67',
-            'ci.yml': '911607762e45264261657e42913c164ee41c4a5ae1f6cd4c157c9e4641070bab',
+            'ci.yml': 'b7453c5ec7c7c6aab407bcee2c4a92ff8e0d9285e7d8a601292e7991264fb708',
         }
         for name, (_, owners) in OWNERS.items():
             jobs = load(name)['jobs']

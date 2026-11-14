@@ -16,12 +16,12 @@ if [[ "$mode" != nightly ]]; then
         args=(--no-default-features)
         [[ -z "$feats" ]] || args+=(--features "$feats")
         log_section "Clippy: rmk, default features disabled, features: ${feats:-none}"
-        cargo +stable clippy --target-dir "$target_root/check" \
+        cargo +"$RMK_STABLE_TOOLCHAIN" clippy --target-dir "$target_root/check" \
             --manifest-path rmk/Cargo.toml "${args[@]}" -- -D warnings
     done
     for crate in rmk rmk-config rmk-macro rmk-types; do
         log_section "Clippy: $crate, default features"
-        cargo +stable clippy --target-dir "$target_root/check" \
+        cargo +"$RMK_STABLE_TOOLCHAIN" clippy --target-dir "$target_root/check" \
             --manifest-path "$crate/Cargo.toml" -- -D warnings
     done
 fi

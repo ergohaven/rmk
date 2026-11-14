@@ -67,8 +67,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Read canonical stable toolchain
+        id: toolchain
+        run: |
+          source .github/ci/_lib.sh
+          printf 'channel=%s\n' "$RMK_STABLE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy, rustfmt, llvm-tools
           targets: thumbv6m-none-eabi,thumbv7m-none-eabi,thumbv7em-none-eabi,thumbv7em-none-eabihf,thumbv8m.main-none-eabihf,riscv32imc-unknown-none-elf,riscv32imac-unknown-none-elf
       - uses: dtolnay/rust-toolchain@nightly
@@ -91,8 +97,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Read canonical stable toolchain
+        id: toolchain
+        run: |
+          source .github/ci/_lib.sh
+          printf 'channel=%s\n' "$RMK_STABLE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy, rustfmt, llvm-tools
           targets: thumbv6m-none-eabi,thumbv7m-none-eabi,thumbv7em-none-eabi,thumbv7em-none-eabihf,thumbv8m.main-none-eabihf,riscv32imc-unknown-none-elf,riscv32imac-unknown-none-elf
       - uses: Swatinem/rust-cache@v2
@@ -106,7 +118,7 @@ jobs:
         with:
           tool: nextest@0.9
       - name: Install cargo-expand
-        run: cargo install --locked cargo-expand
+        run: cargo install --locked cargo-expand --version 1.0.127
       - run: .github/ci/test.sh
 
   # Discover buildable examples for the matrix
@@ -117,8 +129,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Read canonical stable toolchain
+        id: toolchain
+        run: |
+          source .github/ci/_lib.sh
+          printf 'channel=%s\n' "$RMK_STABLE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy
           targets: wasm32-unknown-unknown
       - name: Install host system dependencies
@@ -150,8 +168,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+      - name: Read canonical stable toolchain
+        id: toolchain
+        run: |
+          source .github/ci/_lib.sh
+          printf 'channel=%s\n' "$RMK_STABLE_TOOLCHAIN" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
           targets: riscv32imac-unknown-none-elf
       - uses: Swatinem/rust-cache@v2
         with:
