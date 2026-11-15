@@ -23,7 +23,7 @@ for suffix in ["", "_mini", "_micro"]:
 
 board_constants = "\n".join(
     line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines()
-    if line.startswith("pub const DEFAULT_")
+    if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES"))
 )
 assert board_constants, "Board factory defaults missing"
 

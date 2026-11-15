@@ -147,6 +147,7 @@ mod battery_nrf {
     pub fn usb_powered() -> bool { USB.load(Ordering::Relaxed) }
     pub fn usb_power_status() -> (bool, bool) { (usb_powered(), false) }
 }
+mod board { pub const AUTO_MODULES: bool = false; }
 mod module_settings {
     use super::*;
     @SETTINGS@

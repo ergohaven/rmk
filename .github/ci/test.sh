@@ -69,3 +69,5 @@ rustc +"$RMK_STABLE_TOOLCHAIN" --edition 2021 --test --cfg 'feature="production_
 "$k04_tests/motion_pacing_production"
 rustc +"$RMK_STABLE_TOOLCHAIN" --edition 2021 --test keyboards/k04/src/media_label.rs -o "$k04_tests/media_label"
 "$k04_tests/media_label"
+
+python3 scripts/test_phenom_auto_modules.py

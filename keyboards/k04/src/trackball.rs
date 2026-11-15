@@ -171,7 +171,7 @@ impl Trackball {
     async fn run_loop(&mut self) -> ! {
         loop {
             let selection = module_settings::module_selection(self.device_id);
-            if selection != module_settings::ModuleSelection::Trackball {
+            if !selection.allows(module_settings::ModuleSelection::Trackball) {
                 self.deactivate();
                 let _ = module_settings::wait_for_module_selection_change(self.device_id, selection).await;
                 continue;
@@ -183,10 +183,7 @@ impl Trackball {
                 // asleep. A configured PMW3610 follows MOTION below instead.
                 if sleeping {
                     match select(
-                        module_settings::wait_for_module_selection_change(
-                            self.device_id,
-                            module_settings::ModuleSelection::Trackball,
-                        ),
+                        module_settings::wait_for_module_selection_change(self.device_id, selection),
                         module_settings::wait_for_module_sleep_change(sleeping),
                     )
                     .await
@@ -201,10 +198,7 @@ impl Trackball {
                 if now < self.next_probe {
                     match select3(
                         Timer::at(self.next_probe),
-                        module_settings::wait_for_module_selection_change(
-                            self.device_id,
-                            module_settings::ModuleSelection::Trackball,
-                        ),
+                        module_settings::wait_for_module_selection_change(self.device_id, selection),
                         module_settings::wait_for_module_sleep_change(sleeping),
                     )
                     .await
@@ -345,10 +339,7 @@ impl Trackball {
             };
             let motion_woke = match select3(
                 motion_or_deadline,
-                module_settings::wait_for_module_selection_change(
-                    self.device_id,
-                    module_settings::ModuleSelection::Trackball,
-                ),
+                module_settings::wait_for_module_selection_change(self.device_id, selection),
                 module_settings::wait_for_module_sleep_change(sleeping),
             )
             .await
