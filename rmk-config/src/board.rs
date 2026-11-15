@@ -153,8 +153,8 @@ fn validate_split_config(split: &SplitConfig, layout: Option<&LayoutTomlConfig>)
         return Err("usb_maintenance_unlock_keys is only valid on split peripherals".into());
     }
     for (id, board) in split.peripheral.iter().enumerate() {
-        if let Some(keys) = &board.usb_maintenance_unlock_keys {
-            if id > u8::MAX as usize
+        if let Some(keys) = &board.usb_maintenance_unlock_keys
+            && (id > u8::MAX as usize
                 || keys.is_empty()
                 || keys.len() > crate::protocol_limits::MAX_UNLOCK_KEYS_SIZE
                 || board
@@ -163,12 +163,11 @@ fn validate_split_config(split: &SplitConfig, layout: Option<&LayoutTomlConfig>)
                     .is_none_or(|bytes| bytes > 30)
                 || keys.iter().enumerate().any(|(i, [r, c])| {
                     *r as usize >= board.rows || *c as usize >= board.cols || keys[..i].contains(&[*r, *c])
-                })
-            {
-                return Err(format!(
-                    "peripheral #{id}: USB maintenance needs a nonempty, distinct local unlock challenge within a matrix of at most 30 bytes"
-                ));
-            }
+                }))
+        {
+            return Err(format!(
+                "peripheral #{id}: USB maintenance needs a nonempty, distinct local unlock challenge within a matrix of at most 30 bytes"
+            ));
         }
     }
     let boards = || {
