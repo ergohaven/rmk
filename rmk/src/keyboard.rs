@@ -2073,15 +2073,8 @@ impl<'a> Keyboard<'a> {
             self.send_universal_symbols_report(ModifierCombination::new(), released_keys)
                 .await;
         }
-        // TEST4 diagnostic: reduce only Mac settle wait, 500 -> 50 ms.
-        // This is a fixed wait, not confirmation that the host switched sources.
-        // Keep the legacy PC delay and all report/key/storage semantics intact.
-        Timer::after_millis(if platform == crate::universal_symbols::Platform::Mac {
-            50
-        } else {
-            50
-        })
-        .await;
+        // This fixed settle wait does not confirm that the host switched sources.
+        Timer::after_millis(50).await;
         self.send_keyboard_report_with_resolved_modifiers(false).await;
         true
     }
