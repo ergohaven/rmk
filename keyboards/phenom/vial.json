@@ -211,7 +211,9 @@
     {"name": "EH_L_STK_OFF", "shortName": "L Sticky\nOff", "title": "Disable sticky mode for the left pointing device"},
     {"name": "EH_R_STK_TG", "shortName": "R Sticky\nToggle", "title": "Toggle sticky mode for the right pointing device"},
     {"name": "EH_R_STK_ON", "shortName": "R Sticky\nOn", "title": "Enable sticky mode for the right pointing device"},
-    {"name": "EH_R_STK_OFF", "shortName": "R Sticky\nOff", "title": "Disable sticky mode for the right pointing device"}
+    {"name": "EH_R_STK_OFF", "shortName": "R Sticky\nOff", "title": "Disable sticky mode for the right pointing device"},
+    {"name": "WRD_NXT", "shortName": "Word next", "title": "Move one word forward (Ctrl/Option + Right)"},
+    {"name": "WRD_PRV", "shortName": "Word prev", "title": "Move one word backward (Ctrl/Option + Left)"}
   ],
   "settings": [
     {

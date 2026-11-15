@@ -1519,6 +1519,25 @@ impl<'a> Keyboard<'a> {
             Action::KeyboardControl(c) => self.process_action_keyboard_control(c, event).await,
             Action::Special(special_key) => self.process_action_special(special_key, event).await,
             Action::User(id) => {
+                #[cfg(feature = "ergohaven_word_navigation")]
+                if (50..=51).contains(&id) {
+                    let modifiers = match self.universal_symbols.platform() {
+                        crate::universal_symbols::Platform::Pc => ModifierCombination::LCTRL,
+                        crate::universal_symbols::Platform::Mac => ModifierCombination::LALT,
+                    };
+                    let key = if id == 50 { HidKeyCode::Right } else { HidKeyCode::Left };
+                    self.process_action_key(key, modifiers, event).await;
+                    if event.pressed {
+                        for entry in self
+                            .registered
+                            .iter_mut()
+                            .filter(|entry| entry.source == event.source && entry.keycode == key)
+                        {
+                            entry.hold_modifiers = true;
+                        }
+                    }
+                    return;
+                }
                 #[cfg(feature = "universal_symbols")]
                 let had_action_report = self.process_universal_symbols_user_action(id, event).await;
                 #[cfg(not(feature = "universal_symbols"))]
@@ -2076,12 +2095,7 @@ impl<'a> Keyboard<'a> {
         // TEST4 diagnostic: reduce only Mac settle wait, 500 -> 50 ms.
         // This is a fixed wait, not confirmation that the host switched sources.
         // Keep the legacy PC delay and all report/key/storage semantics intact.
-        Timer::after_millis(if platform == crate::universal_symbols::Platform::Mac {
-            50
-        } else {
-            50
-        })
-        .await;
+        Timer::after_millis(50).await;
         self.send_keyboard_report_with_resolved_modifiers(false).await;
         true
     }
@@ -2158,6 +2172,10 @@ impl<'a> Keyboard<'a> {
         } else {
             // `KeyWithModifier` modifiers apply only until the next press.
             for k in self.registered.iter_mut().filter(|k| k.keycode != HidKeyCode::No) {
+                #[cfg(feature = "ergohaven_word_navigation")]
+                if k.hold_modifiers {
+                    continue;
+                }
                 k.mods = ModifierCombination::new();
             }
             let _ = self.registered.push(key);
@@ -2210,6 +2228,9 @@ struct RegisteredKey {
     keycode: HidKeyCode,
     /// A modifier action's modifiers, or a `KeyWithModifier` key's.
     mods: ModifierCombination,
+    /// QMK word movement keeps its modifier down until this source releases.
+    #[cfg(feature = "ergohaven_word_navigation")]
+    hold_modifiers: bool,
 }
 
 impl RegisteredKey {
@@ -2219,6 +2240,8 @@ impl RegisteredKey {
             source,
             keycode: if key.is_modifier() { HidKeyCode::No } else { key },
             mods: mods | key.to_hid_modifiers(),
+            #[cfg(feature = "ergohaven_word_navigation")]
+            hold_modifiers: false,
         }
     }
 
@@ -2354,6 +2377,117 @@ mod test {
             fork: cfg,
             ..BehaviorConfig::default()
         })
+    }
+
+    #[cfg(feature = "ergohaven_word_navigation")]
+    #[test]
+    fn phenom_navigation_words_follow_platform_and_hold_modifiers_until_release() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{Platform, USER_TOGGLE_MACOS};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            for platform in [Platform::Pc, Platform::Mac] {
+                if keyboard.universal_symbols.platform() != platform {
+                    keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+                }
+                for (id, key) in [(50, HidKeyCode::Right), (51, HidKeyCode::Left)] {
+                    let modifiers = if platform == Platform::Pc {
+                        ModifierCombination::LCTRL
+                    } else {
+                        ModifierCombination::LALT
+                    };
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_key_action_normal(Action::User(id), KeyboardEvent::key(0, 0, true))
+                        .await;
+                    assert_eq!(keyboard.held_keycodes()[0], key);
+                    assert_eq!(keyboard.resolve_modifiers(true), modifiers);
+                    let mut saw_arrow = false;
+                    while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                        if let Report::KeyboardReport(report) = report.into_report() {
+                            if report.keycodes.contains(&(key as u8)) {
+                                saw_arrow = true;
+                                assert_eq!(report.modifier, modifiers.into_bits());
+                            }
+                        }
+                    }
+                    assert!(saw_arrow, "the word shortcut reaches the host");
+                    keyboard
+                        .process_action_key(
+                            HidKeyCode::A,
+                            ModifierCombination::new(),
+                            KeyboardEvent::key(0, 1, true),
+                        )
+                        .await;
+                    assert_eq!(
+                        keyboard.resolve_modifiers(true),
+                        modifiers,
+                        "word modifier remains held while another key is down"
+                    );
+                    keyboard
+                        .process_action_key(
+                            HidKeyCode::A,
+                            ModifierCombination::new(),
+                            KeyboardEvent::key(0, 1, false),
+                        )
+                        .await;
+                    keyboard
+                        .process_key_action_normal(Action::User(id), KeyboardEvent::key(0, 0, false))
+                        .await;
+                    assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+                    assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+                    let mut last = None;
+                    while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                        if let Report::KeyboardReport(report) = report.into_report() {
+                            last = Some(report);
+                        }
+                    }
+                    let last = last.expect("word release reaches the host");
+                    assert_eq!(last.modifier, 0);
+                    assert_eq!(last.keycodes, [0; 6]);
+                }
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_word_navigation")]
+    #[test]
+    fn phenom_navigation_word_release_preserves_physically_held_modifiers() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(50), KeyboardEvent::key(0, 0, true))
+                .await;
+            USB_REPORT_CHANNEL.clear();
+            assert_eq!(
+                keyboard.resolve_modifiers(true),
+                ModifierCombination::LSHIFT | ModifierCombination::LCTRL
+            );
+            keyboard
+                .process_key_action_normal(Action::User(50), KeyboardEvent::key(0, 0, false))
+                .await;
+            assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::LSHIFT);
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 2, false),
+                )
+                .await;
+            assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+        });
     }
 
     #[cfg(all(

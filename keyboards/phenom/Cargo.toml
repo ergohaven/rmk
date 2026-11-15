@@ -38,6 +38,7 @@ pmw_axes_600 = []
 rmk = { path = "../../rmk", default-features = false, features = [
     "defmt",
     "ergohaven_rynk",
+    "ergohaven_word_navigation",
     "rp2040",
     "split",
     "storage",
