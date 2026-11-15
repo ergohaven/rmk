@@ -13,7 +13,7 @@ mod layout;
 mod macros;
 mod morse;
 mod status;
-mod system;
+pub(super) mod system;
 
 /// Fixed-size endpoints: a request → response function. [`serve`] adds the
 /// decode → handle → encode wire glue.

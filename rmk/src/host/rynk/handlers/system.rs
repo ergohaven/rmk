@@ -15,7 +15,7 @@ use crate::host::lock::HostLock;
 
 /// The `rmk` crate version baked into the firmware, so hosts can key
 /// version-specific behavior off the library release, not the user's app.
-const RMK_VERSION: FirmwareVersion = {
+pub(in crate::host::rynk) const RMK_VERSION: FirmwareVersion = {
     const fn component(s: &str) -> u8 {
         let bytes = s.as_bytes();
         let mut i = 0;
@@ -134,14 +134,18 @@ impl Handle<Lock> for HostLock<'_> {
 
 impl Handle<GetDeviceInfo> for RynkService<'_> {
     async fn handle(&self, _: ()) -> Result<DeviceInfo, RynkError> {
-        Ok(DeviceInfo {
-            rmk_version: RMK_VERSION,
-            vendor_id: self.device.vid,
-            product_id: self.device.pid,
-            manufacturer: truncated(self.device.manufacturer),
-            product_name: truncated(self.device.product_name),
-            serial_number: self.device.serial_number.clone(),
-        })
+        Ok(device_info(&self.device))
+    }
+}
+
+pub(in crate::host::rynk) fn device_info(device: &crate::config::DeviceConfig<'_>) -> DeviceInfo {
+    DeviceInfo {
+        rmk_version: RMK_VERSION,
+        vendor_id: device.vid,
+        product_id: device.pid,
+        manufacturer: truncated(device.manufacturer),
+        product_name: truncated(device.product_name),
+        serial_number: device.serial_number.clone(),
     }
 }
 

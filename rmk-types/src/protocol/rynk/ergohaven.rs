@@ -22,12 +22,12 @@ use super::{FirmwareVersion, LayoutChunk};
 
 /// The Rynk wire this build speaks, upstream and Ergohaven commands together.
 /// Bump it whenever [`ERGOHAVEN_RYNK_WIRE_HASH`] changes.
-pub const ERGOHAVEN_RYNK_REVISION: u16 = 2;
+pub const ERGOHAVEN_RYNK_REVISION: u16 = 3;
 
 /// FNV-1a over the wire snapshots (`snapshots/wire_values.snap`,
 /// `snapshots/wire_frames.snap`, `snapshots/ergohaven.snap`) at
 /// [`ERGOHAVEN_RYNK_REVISION`].
-pub const ERGOHAVEN_RYNK_WIRE_HASH: u32 = 0x2c6f_b985;
+pub const ERGOHAVEN_RYNK_WIRE_HASH: u32 = 0xdc45_826e;
 
 /// [`ErgohavenInfo::caps`] bits: what the firmware can do. Whether a board has
 /// something to do it with (a screen, layout options) is in its definition.
@@ -51,6 +51,20 @@ pub mod caps {
     pub const STAGED_WRITES: u32 = 1 << 7;
     /// Universal Symbols include numero (`Action::User(0xB4)`).
     pub const UNIVERSAL_NUMERO: u32 = 1 << 8;
+    /// `GetFirmwareTarget` identifies the directly addressed firmware component.
+    pub const FIRMWARE_TARGET: u32 = 1 << 9;
+    /// A USB maintenance service, without keymap/settings editing or topics.
+    pub const USB_MAINTENANCE: u32 = 1 << 10;
+}
+
+/// Fixed build role of the component answering over Rynk. USB does not change
+/// its split role. A peripheral index is its zero-based `split.peripheral`
+/// entry, not a physical-unit identifier or an assumption about left/right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
+pub enum FirmwareTarget {
+    Standalone,
+    Central,
+    Peripheral(u8),
 }
 
 /// What `GetErgohavenInfo` reports.
@@ -167,6 +181,9 @@ endpoints! {
     /// before they land.
     CommitWrites = 0x7E50: () => WriteStatus;
     GetWriteStatus = 0x7E51: () => WriteStatus;
+    /// Query the directly connected component, including on a peripheral's
+    /// maintenance interface. Its lock challenge uses local matrix positions.
+    GetFirmwareTarget = 0x7E60: () => FirmwareTarget;
 }
 
 #[cfg(not(feature = "host"))]
@@ -207,6 +224,13 @@ mod tests {
     #[test]
     fn every_payload_round_trips_within_its_max_size() {
         assert_max_size_bound(&round_trip(&info()));
+        for target in [
+            FirmwareTarget::Standalone,
+            FirmwareTarget::Central,
+            FirmwareTarget::Peripheral(u8::MAX),
+        ] {
+            assert_max_size_bound(&round_trip(&target));
+        }
         let value = SettingValue(heapless::Vec::from_slice(&[0xAB; SETTING_VALUE_MAX_LEN]).unwrap());
         assert_max_size_bound(&round_trip(&value));
         assert_max_size_bound(&round_trip(&SetSettingRequest { id: u16::MAX, value }));
@@ -285,6 +309,14 @@ mod tests {
         };
         let entries: Vec<(&str, Vec<u8>)> = alloc::vec![
             ("ErgohavenInfo", encode(&info())),
+            ("FirmwareTarget::Standalone", encode(&FirmwareTarget::Standalone)),
+            ("FirmwareTarget::Central", encode(&FirmwareTarget::Central)),
+            ("FirmwareTarget::Peripheral", encode(&FirmwareTarget::Peripheral(1))),
+            ("GetFirmwareTarget request", frame(Cmd::GetFirmwareTarget, &())),
+            (
+                "GetFirmwareTarget reply",
+                frame(Cmd::GetFirmwareTarget, &ok(FirmwareTarget::Peripheral(1)))
+            ),
             ("SettingValue", encode(&value)),
             ("SetSettingRequest", encode(&set)),
             ("SettingKeysPage", encode(&keys)),

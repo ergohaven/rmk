@@ -76,6 +76,25 @@ class FactoryUnlockTests(unittest.TestCase):
                     self.assertLess(row, config["layout"]["rows"])
                     self.assertLess(col, config["layout"]["cols"])
 
+    def test_native_maintenance_challenges_are_factory_keys_on_the_local_half(self):
+        paths = [("phenom", n) for n in ("keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml")]
+        paths += [("k04", n) for n in ("keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml",
+                                          "keyboard_qube.toml", "keyboard_qube_mini.toml", "keyboard_qube_micro.toml")]
+        for folder, name in paths:
+            config = tomllib.loads((ROOT / "keyboards" / folder / name).read_text())
+            coordinates = [tuple(map(int, pair)) for pair in re.findall(r"\((\d+),(\d+),[^)]+\)", config["layout"]["map"])]
+            keys = config["keymap"]["layer"][0]["keys"].split()
+            for index, board in enumerate(config["split"]["peripheral"]):
+                with self.subTest(profile=f"{folder}/{name}", target=index):
+                    expected = []
+                    for letter in (("D", "F") if board["row_offset"] == 0 else ("J", "K")):
+                        matches = [coordinates[i] for i, key in enumerate(keys)
+                                   if key == letter or re.fullmatch(r"MT\(" + letter + r",[^()]+\)", key)]
+                        self.assertEqual(len(matches), 1)
+                        row, col = matches[0]
+                        expected.append([row - board["row_offset"], col - board["col_offset"]])
+                    self.assertEqual(board["usb_maintenance_unlock_keys"], expected)
+
     def test_factory_home_row_mod_taps_are_recognized_without_changing_layers(self):
         fixture = {
             "layout": {"map": "(1,2,L) (1,1,L)"},

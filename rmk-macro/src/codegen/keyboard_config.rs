@@ -1,7 +1,7 @@
 use quote::quote;
-use rmk_config::KeyboardTomlConfig;
 use rmk_config::resolved::hardware::ChipSeries;
 use rmk_config::resolved::{Hardware, Host, Identity, Keymap};
+use rmk_config::KeyboardTomlConfig;
 
 pub(crate) fn read_keyboard_toml_config() -> KeyboardTomlConfig {
     // Get the path of the keyboard config file from the environment variable
@@ -101,7 +101,7 @@ fn device_settings_tokens() -> proc_macro2::TokenStream {
 }
 
 /// `RMK_FIRMWARE_VERSION` packed as `major << 16 | minor << 8 | patch`.
-fn configured_firmware_version() -> u32 {
+pub(crate) fn configured_firmware_version() -> u32 {
     std::env::var("RMK_FIRMWARE_VERSION")
         .ok()
         .map(|value| {

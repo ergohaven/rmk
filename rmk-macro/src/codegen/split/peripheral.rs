@@ -1,11 +1,11 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use rmk_config::SplitConnection;
-use rmk_config::resolved::Hardware;
 use rmk_config::resolved::hardware::{
     BoardConfig, ChipModel, ChipSeries, DfuConfig, InputDeviceConfig, MatrixType, SplitBoardConfig,
     SplitConfig,
 };
+use rmk_config::resolved::Hardware;
+use rmk_config::SplitConnection;
 use syn::ItemMod;
 
 use super::central::expand_serial_init;
@@ -24,7 +24,9 @@ use crate::codegen::input_device::encoder::expand_encoder_device;
 use crate::codegen::input_device::iqs5xx::{expand_iqs5xx_device, expand_iqs5xx_interrupts};
 use crate::codegen::input_device::pmw33xx::expand_pmw33xx_device;
 use crate::codegen::input_device::pmw3610::expand_pmw3610_device;
-use crate::codegen::keyboard_config::{expand_device_config, read_keyboard_toml_config};
+use crate::codegen::keyboard_config::{
+    configured_firmware_version, expand_device_config, read_keyboard_toml_config,
+};
 use crate::codegen::matrix::{
     expand_bootmagic_check, expand_matrix_direct_pins, expand_matrix_input_output_pins,
 };
@@ -109,6 +111,32 @@ pub(crate) fn parse_split_peripheral_mod(
     }
 }
 
+/// An explicit board challenge opts in only native Ergohaven Rynk builds.
+fn peripheral_usb_maintenance_enabled(
+    hardware: &Hardware,
+    id: usize,
+    features: &Option<Vec<String>>,
+) -> bool {
+    let BoardConfig::Split(split) = &hardware.board else {
+        return false;
+    };
+    if split.peripheral[id].usb_maintenance_unlock_keys.is_none()
+        || !is_feature_enabled(features, "ergohaven_rynk")
+    {
+        return false;
+    }
+    assert!(
+        hardware.communication.get_usb_info().is_some(),
+        "Peripheral USB maintenance requires a USB-capable chip"
+    );
+    assert!(
+        (hardware.chip.series == ChipSeries::Rp2040 && is_feature_enabled(features, "rp2040"))
+            || (hardware.chip.chip == "nrf52840" && is_feature_enabled(features, "adafruit_bl")),
+        "Peripheral USB maintenance currently supports RP2040 ROM and nRF52840 Adafruit bootloaders"
+    );
+    true
+}
+
 fn expand_bind_interrupt_for_split_peripheral(
     chip: &ChipModel,
     hardware: &Hardware,
@@ -154,7 +182,9 @@ fn expand_bind_interrupt_for_split_peripheral(
 
     let dfu_enabled = cfg!(feature = "_dfu");
     let usb_log_enabled = is_feature_enabled(rmk_features, "usb_log");
-    let usb_enabled = dfu_enabled || usb_log_enabled;
+    let usb_enabled = dfu_enabled
+        || usb_log_enabled
+        || peripheral_usb_maintenance_enabled(hardware, peripheral_id, rmk_features);
 
     match chip.series {
         ChipSeries::Nrf52 => {
@@ -322,7 +352,7 @@ fn expand_bind_interrupt_for_split_peripheral(
             } else if !display_interrupt.is_empty()
                 || !iqs5xx_interrupt.is_empty()
                 || !extern_irqs.is_empty()
-                || dfu_enabled
+                || usb_enabled
             {
                 // DFU external SPI flash DMA channels
                 let dfu_dma_channels = dfu
@@ -382,7 +412,9 @@ fn expand_split_peripheral(
 
     // True exactly when the flash init defines `state_partition`/`dfu_partition`.
     let dfu_enabled = cfg!(feature = "_dfu");
-    let usb_enabled = dfu_enabled || is_feature_enabled(rmk_features, "usb_log");
+    let maintenance_enabled = peripheral_usb_maintenance_enabled(hardware, id, rmk_features);
+    let usb_enabled =
+        dfu_enabled || is_feature_enabled(rmk_features, "usb_log") || maintenance_enabled;
 
     let imports = expand_custom_imports(&item_mod);
     let mut chip_init = expand_chip_init(hardware, Some(id), &item_mod);
@@ -401,7 +433,39 @@ fn expand_split_peripheral(
         chip_init.extend(quote! { #flash_init });
     }
 
-    // Run usb device if dfu or usb_log is enabled.
+    // Maintenance adds only a vendor Rynk interface, alongside optional logger/DFU.
+    let usb_run = if maintenance_enabled {
+        let keys = peripheral_config
+            .usb_maintenance_unlock_keys
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|[r, c]| quote! { (#r, #c) });
+        let (id, rows, cols) = (
+            id as u8,
+            peripheral_config.rows as u8,
+            peripheral_config.cols as u8,
+        );
+        let firmware_version = configured_firmware_version();
+        quote! {
+            {
+                mod maintenance_identity {
+                    include!(concat!(env!("OUT_DIR"), "/config_generated.rs"));
+                }
+                let identity = ::rmk::config::ErgohavenConfig {
+                    keyboard_uid: &maintenance_identity::VIAL_KEYBOARD_ID,
+                    board_definition: &maintenance_identity::VIAL_KEYBOARD_DEF,
+                    firmware_version: #firmware_version,
+                    device_settings: None,
+                };
+                ::rmk::usb::run_peripheral_usb_maintenance(
+                    driver, keyboard_device_config, identity, #id, #rows, #cols, &[#(#keys),*],
+                ).await
+            }
+        }
+    } else {
+        quote! { ::rmk::usb::run_peripheral_usb(driver, keyboard_device_config).await }
+    };
     let (usb_task_future, dfu_task) = if usb_enabled {
         let usb_init = expand_usb_init(hardware, &item_mod);
         chip_init.extend(usb_init);
@@ -412,12 +476,7 @@ fn expand_split_peripheral(
         } else {
             None
         };
-        (
-            Some(quote! {
-                ::rmk::usb::run_peripheral_usb(driver, keyboard_device_config)
-            }),
-            dfu_task,
-        )
+        (Some(quote! { async { #usb_run } }), dfu_task)
     } else {
         (None, None)
     };
@@ -811,6 +870,97 @@ pub(crate) fn expand_peripheral_input_device_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "RP2040 ROM")]
+    fn maintenance_requires_the_rp2040_bootloader_feature() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../keyboards/phenom/keyboard.toml");
+        let hardware = rmk_config::KeyboardTomlConfig::new_from_toml_path(&path)
+            .hardware()
+            .unwrap();
+        peripheral_usb_maintenance_enabled(&hardware, 0, &Some(vec!["ergohaven_rynk".into()]));
+    }
+
+    #[test]
+    fn native_profiles_generate_maintenance_usb_but_vial_does_not() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        for (folder, profiles, features, interrupt) in [
+            (
+                "phenom",
+                vec!["keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml"],
+                vec!["split", "ergohaven_rynk", "rp2040"],
+                "USBCTRL_IRQ",
+            ),
+            (
+                "k04",
+                vec![
+                    "keyboard.toml",
+                    "keyboard_mini.toml",
+                    "keyboard_micro.toml",
+                    "keyboard_qube.toml",
+                    "keyboard_qube_mini.toml",
+                    "keyboard_qube_micro.toml",
+                ],
+                vec!["split", "ergohaven_rynk", "adafruit_bl"],
+                "USBD",
+            ),
+        ] {
+            for profile in profiles {
+                let config = rmk_config::KeyboardTomlConfig::new_from_toml_path(
+                    &root.join("keyboards").join(folder).join(profile),
+                );
+                let hardware = config.hardware().unwrap();
+                let BoardConfig::Split(split) = &hardware.board else {
+                    panic!("split profile");
+                };
+                for id in 0..split.peripheral.len() {
+                    for native in [true, false] {
+                        let features = Some(if native {
+                            features.iter().map(|s| s.to_string()).collect()
+                        } else {
+                            vec!["split".into(), "vial".into()]
+                        });
+                        let generated = expand_split_peripheral(
+                            id,
+                            &config.identity().unwrap(),
+                            &hardware,
+                            syn::parse_quote!(
+                                mod keyboard {}
+                            ),
+                            &features,
+                            None,
+                        )
+                        .to_string();
+                        let irqs = expand_bind_interrupt_for_split_peripheral(
+                            &hardware.chip,
+                            &hardware,
+                            id,
+                            &features,
+                            None,
+                            Vec::new(),
+                        )
+                        .to_string();
+                        assert_eq!(
+                            generated.contains("run_peripheral_usb_maintenance"),
+                            native,
+                            "{folder}/{profile}/{id}"
+                        );
+                        assert_eq!(
+                            irqs.contains(interrupt),
+                            native || cfg!(feature = "_dfu"),
+                            "missing maintenance USB interrupt: {folder}/{profile}/{id}"
+                        );
+                        assert!(generated.contains("run_rmk_split_peripheral"));
+                        assert!(
+                            !generated.contains("HostService"),
+                            "peripherals must not create a full editor service"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn nrf_serial_peripheral_does_not_initialize_host_ble() {

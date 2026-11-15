@@ -1166,6 +1166,10 @@ pub enum UpdatePolicy {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SplitBoardConfig {
+    /// Opt in to Ergohaven Rynk maintenance over this peripheral's USB port.
+    /// Challenge positions are local to this board, before row/column offsets.
+    /// Only used with `ergohaven_rynk`; Vial builds keep their existing USB path.
+    pub usb_maintenance_unlock_keys: Option<Vec<[u8; 2]>>,
     /// Row number of the split board
     pub rows: usize,
     /// Col number of the split board

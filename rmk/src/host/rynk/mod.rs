@@ -7,6 +7,8 @@
 #[cfg(feature = "ergohaven_rynk")]
 mod ergohaven;
 mod handlers;
+#[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+pub(crate) mod maintenance;
 mod topics;
 
 use core::pin::pin;
