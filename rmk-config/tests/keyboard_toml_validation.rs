@@ -741,3 +741,20 @@ fn host_advertising_off_needs_a_usb_host_link() {
         }
     }
 }
+
+#[test]
+fn input_activity_reserves_one_subscriber_per_split_link() {
+    for peripherals in [1, 3, 5] {
+        let content = format!("{MINIMAL_KEYBOARD_TOML}\n[rmk]\nsplit_peripherals_num = {peripherals}\n[event.input_activity]\nsubs = 1\n");
+        let path = write_temp_keyboard_toml("activity-subs", &content);
+        let config = KeyboardTomlConfig::new_from_toml_path_with_event_defaults(&path);
+        std::fs::remove_file(path).unwrap();
+        let constants = config.build_constants(&["split"]).unwrap();
+        let activity = constants
+            .events
+            .iter()
+            .find(|event| event.name == "input_activity")
+            .unwrap();
+        assert_eq!(activity.subs, peripherals + 1); // board LED plus one per link
+    }
+}

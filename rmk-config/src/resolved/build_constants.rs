@@ -173,6 +173,7 @@ impl crate::KeyboardTomlConfig {
             ble_advertising_mode,
             modifier,
             keyboard,
+            input_activity,
             layer_change,
             wpm_update,
             led_indicator,
@@ -216,6 +217,13 @@ impl crate::KeyboardTomlConfig {
         if active_features.contains(&"custom_message")
             && active_features.contains(&"split")
             && let Some(event) = events.iter_mut().find(|event| event.name == "custom_message_out")
+        {
+            event.subs += split_peripherals_num;
+        }
+
+        // Every PeripheralManager mirrors activity to its own link.
+        if active_features.contains(&"split")
+            && let Some(event) = events.iter_mut().find(|event| event.name == "input_activity")
         {
             event.subs += split_peripherals_num;
         }
