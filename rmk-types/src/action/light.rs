@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 
 /// Actions for controlling lights.
 ///
-/// Not implemented yet: the firmware accepts these in the keymap but ignores
-/// them when pressed.
+/// Board processors can implement these by subscribing to `ActionEvent`.
+/// The core keyboard processor forwards them without changing the lights itself.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[cfg_attr(feature = "_codegen", derive(strum::VariantNames))]

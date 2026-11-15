@@ -83,6 +83,15 @@ pub struct VialDeviceSettings<'a> {
     pub deserialize: fn(&[u8]),
 }
 
+impl VialDeviceSettings<'_> {
+    /// Queue the current board settings for the normal deferred flash write.
+    /// Does nothing on builds without persistent device settings.
+    pub fn queue_save(&self) {
+        #[cfg(all(feature = "storage", any(feature = "vial", feature = "ergohaven_rynk")))]
+        crate::storage::queue_device_settings_flash_write((self.serialize)());
+    }
+}
+
 /// Config for [vial](https://get.vial.today/).
 ///
 /// You can generate automatically using [`build.rs`](https://github.com/rmk-rs/rmk/blob/main/examples/use_rust/stm32h7/build.rs).

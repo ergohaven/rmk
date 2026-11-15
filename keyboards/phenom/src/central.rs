@@ -2,6 +2,7 @@
 #![no_std]
 
 mod board;
+mod brightness;
 #[path = "../../common/default_layer_names.rs"]
 mod default_layer_names;
 mod layer_led;
@@ -30,6 +31,11 @@ mod keyboard_central {
         I2C0_IRQ => ::embassy_rp::i2c::InterruptHandler<::embassy_rp::peripherals::I2C0>;
         PIO0_IRQ_0 => ::embassy_rp::pio::InterruptHandler<::embassy_rp::peripherals::PIO0>;
     );
+
+    #[register_processor]
+    fn brightness() -> crate::brightness::Brightness {
+        crate::brightness::Brightness::new()
+    }
 
     #[register_processor]
     fn module_settings_sync() -> crate::module_settings::ModuleSettingsSync {
