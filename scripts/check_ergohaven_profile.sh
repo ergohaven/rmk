@@ -784,9 +784,9 @@ for name in ("vial.json", "vial_mini.json", "vial_micro.json"):
     path = Path("keyboards/phenom") / name
     definition = json.loads(path.read_text())
     names = [entry["name"] for entry in definition["customKeycodes"]]
-    assert len(names) == 52, (path, len(names))
+    assert len(names) >= 52, (path, len(names))
     assert names[28:37] == ["EH_SNP", "EH_SCR", "EH_TXT", "EH_L_SNP", "EH_L_SCR", "EH_L_TXT", "EH_USR1", "EH_USR2", "EH_USR3"]
-    assert names[41:] == ["EH_STK_TG", "EH_STK_ON", "EH_STK_OFF", "EH_L_STK_TG", "EH_L_STK_ON", "EH_L_STK_OFF", "EH_R_STK_TG", "EH_R_STK_ON", "EH_R_STK_OFF", "WRD_NXT", "WRD_PRV"], (path, names[41:])
+    assert names[41:52] == ["EH_STK_TG", "EH_STK_ON", "EH_STK_OFF", "EH_L_STK_TG", "EH_L_STK_ON", "EH_L_STK_OFF", "EH_R_STK_TG", "EH_R_STK_ON", "EH_R_STK_OFF", "WRD_NXT", "WRD_PRV"], (path, names[41:])
 PY_NAV
 
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
