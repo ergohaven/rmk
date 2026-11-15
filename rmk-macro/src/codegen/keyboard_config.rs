@@ -1,7 +1,7 @@
 use quote::quote;
+use rmk_config::KeyboardTomlConfig;
 use rmk_config::resolved::hardware::ChipSeries;
 use rmk_config::resolved::{Hardware, Host, Identity, Keymap};
-use rmk_config::KeyboardTomlConfig;
 
 pub(crate) fn read_keyboard_toml_config() -> KeyboardTomlConfig {
     // Get the path of the keyboard config file from the environment variable

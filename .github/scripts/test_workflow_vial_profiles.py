@@ -29,7 +29,7 @@ class VialProfiles(unittest.TestCase):
                                 'velvet': 'universal_symbols_iso_bit1'}
                 self.assertEqual(features['universal_mac_iso'], ['rmk/' + expected_iso[model]])
 
-    def test_vial_toml_changes_only_protocol(self):
+    def test_vial_toml_preserves_hardware_and_excludes_rynk_maintenance(self):
         for model in MODELS:
             names = ['keyboard.toml', 'keyboard_micro.toml'] if model == 'k04' else ['keyboard.toml']
             for name in names:
@@ -38,6 +38,15 @@ class VialProfiles(unittest.TestCase):
                     vial = tomllib.loads((ROOT / 'keyboards' / model / name.replace('.toml', '_vial.toml')).read_text())
                     original['host']['vial_enabled'] = True
                     original['host']['rynk_enabled'] = False
+                    expected_maintenance = {
+                        'keyboard.toml': [[2, 1], [2, 2]],
+                        'keyboard_micro.toml': [[1, 1], [1, 2]],
+                    }.get(name) if model == 'k04' else None
+                    for native_board, vial_board in zip(
+                            original['split']['peripheral'], vial['split']['peripheral'], strict=True):
+                        self.assertNotIn('usb_maintenance_unlock_keys', vial_board)
+                        self.assertEqual(native_board.pop('usb_maintenance_unlock_keys', None),
+                                         expected_maintenance)
                     self.assertEqual(original, vial)
 
     def test_descriptor_masks_and_build_selectors(self):
