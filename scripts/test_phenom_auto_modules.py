@@ -17,7 +17,7 @@ functions = ["module_selection_value", "module_set_module_selection", "serialize
              "module_set_bt_profile_color_index", "module_settings_sync_packet"]
 harness = r'''#![allow(dead_code)]
 use std::sync::atomic::{AtomicU8, Ordering};
-mod board { pub const AUTO_MODULES: bool = cfg!(feature="auto_modules"); pub const DEFAULT_BALL_AXIS: [u8; 2] = [2,2]; pub const DEFAULT_TOUCH_AXIS: [u8;2] = [3,1]; }
+mod board { @BOARD@ }
 '''
 harness += constants
 harness += "\nstatic MODULE_SETTINGS: [AtomicU8; MODULE_SETTINGS_LEN] = [const { AtomicU8::new(0) }; MODULE_SETTINGS_LEN];\n"
@@ -85,8 +85,11 @@ fn defaults_manual_overrides_legacy_storage_and_auto_round_trip() {
 '''
 with tempfile.TemporaryDirectory(prefix="phenom-auto-modules-") as directory:
     root = Path(directory)
-    (root / "test.rs").write_text(harness)
     for enabled in [False, True]:
+        board = "phenom" if enabled else "k04"
+        constants = "\n".join(line for line in (ROOT / f"keyboards/{board}/src/board.rs").read_text().splitlines()
+                              if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES", "pub const LED_TIMEOUT_MAX_SEC")))
+        (root / "test.rs").write_text(harness.replace("@BOARD@", constants))
         toolchain = os.environ.get("RMK_STABLE_TOOLCHAIN") or re.search(r'channel\s*=\s*"([^"\n]+)"', (ROOT / "rust-toolchain.toml").read_text()).group(1)
         args = ["rustup", "run", toolchain, "rustc", "--edition=2021", "--cfg", 'feature="standalone"', "--test", str(root / "test.rs"), "-o", str(root / "test")]
         if enabled: args += ["--cfg", 'feature="auto_modules"']
