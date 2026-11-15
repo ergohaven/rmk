@@ -5,7 +5,7 @@ use rmk::event::{PeripheralSettingsEvent, SleepStateEvent};
 use rmk::macros::processor;
 
 const VERSION: u8 = if cfg!(feature = "standalone") { 10 } else { 9 };
-const SETTINGS_LEN: usize = 45;
+const SETTINGS_LEN: usize = 46;
 const TOUCH_DPI_BASE: u16 = 400;
 
 const IDX_LEFT_MODE: usize = 1;
@@ -35,6 +35,7 @@ const IDX_MODULE_SELECT: usize = 39;
 const IDX_AXIS_FLAGS: usize = 42;
 const IDX_LEFT_ENCODER_STEPS: usize = 43;
 const IDX_RIGHT_ENCODER_STEPS: usize = 44;
+const IDX_LED_TIMEOUT_HIGH: usize = 45;
 const AUTO_FLAG_TOUCH_GESTURES_LEFT: u8 = 1 << 4;
 const AUTO_FLAG_TOUCH_GESTURES_RIGHT: u8 = 1 << 5;
 const AUTO_FLAG_CHARGE_INDICATOR_DISABLED: u8 = 1 << 6;
@@ -113,8 +114,8 @@ pub fn charge_indicator_enabled() -> bool {
     byte(IDX_AUTO_FLAGS) & AUTO_FLAG_CHARGE_INDICATOR_DISABLED == 0
 }
 
-pub fn led_timeout_sec() -> u8 {
-    byte(IDX_LED_TIMEOUT_SEC)
+pub fn led_timeout_sec() -> u16 {
+    u16::from_le_bytes([byte(IDX_LED_TIMEOUT_SEC), byte(IDX_LED_TIMEOUT_HIGH)])
 }
 
 pub fn layer_color(layer: u8) -> Rgb {
@@ -193,6 +194,11 @@ pub(crate) fn apply_settings_packet(data: &[u8; 27]) {
         SETTINGS[IDX_RIGHT_ENCODER_STEPS].store(right_steps, Ordering::Relaxed);
         rmk::input_device::rotary_encoder::set_encoder_steps(0, left_steps + 1);
         rmk::input_device::rotary_encoder::set_encoder_steps(1, right_steps + 1);
+        if crate::board::LED_TIMEOUT_MAX_SEC > 255 && data[6] == 1 {
+            let timeout = u16::from_le_bytes([data[4], data[5]]).min(crate::board::LED_TIMEOUT_MAX_SEC);
+            SETTINGS[IDX_LED_TIMEOUT_SEC].store(timeout as u8, Ordering::Relaxed);
+            SETTINGS[IDX_LED_TIMEOUT_HIGH].store((timeout >> 8) as u8, Ordering::Relaxed);
+        }
         return;
     }
     if data[0] == VERSION | 0x80 {
@@ -228,7 +234,12 @@ pub(crate) fn apply_settings_packet(data: &[u8; 27]) {
     SETTINGS[IDX_FLAGS].store(data[11], Ordering::Relaxed);
     SETTINGS[IDX_AUTO_FLAGS].store(data[12], Ordering::Relaxed);
     SETTINGS[IDX_LED_BRIGHTNESS].store(data[13], Ordering::Relaxed);
-    SETTINGS[IDX_LED_TIMEOUT_SEC].store(data[14], Ordering::Relaxed);
+    if crate::board::LED_TIMEOUT_MAX_SEC <= 255 || data[25] & 0x80 == 0 {
+        // Legacy packets still carry one-byte seconds. Tagged Phenom packets
+        // defer to the full value, regardless of main/encoder delivery order.
+        SETTINGS[IDX_LED_TIMEOUT_SEC].store(data[14], Ordering::Relaxed);
+        SETTINGS[IDX_LED_TIMEOUT_HIGH].store(0, Ordering::Relaxed);
+    }
 
     let mut layer = 0u8;
     while layer < 16 {
@@ -256,8 +267,9 @@ fn ensure_initialized() {
     SETTINGS[IDX_RIGHT_SCROLL_SENS].store(8, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_SNIPER_SENS].store(4, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_TEXT_SENS].store(16, Ordering::Relaxed);
-    SETTINGS[IDX_LED_BRIGHTNESS].store(8, Ordering::Relaxed);
-    SETTINGS[IDX_LED_TIMEOUT_SEC].store(1, Ordering::Relaxed);
+    SETTINGS[IDX_LED_BRIGHTNESS].store(crate::board::DEFAULT_LED_BRIGHTNESS, Ordering::Relaxed);
+    SETTINGS[IDX_LED_TIMEOUT_SEC].store(crate::board::DEFAULT_LED_TIMEOUT_SEC as u8, Ordering::Relaxed);
+    SETTINGS[IDX_LED_TIMEOUT_HIGH].store((crate::board::DEFAULT_LED_TIMEOUT_SEC >> 8) as u8, Ordering::Relaxed);
     SETTINGS[IDX_LEFT_ENCODER_STEPS].store(0, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_ENCODER_STEPS].store(0, Ordering::Relaxed);
     rmk::input_device::rotary_encoder::set_encoder_steps(0, 1);

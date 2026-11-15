@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "keyboards/k04/src/layer_names.rs").read_text()
 # The factory axis defaults the codec reads through `crate::board`.
 board_constants = "\n".join(
-    line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines() if line.startswith("pub const DEFAULT_")
+    line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines() if line.startswith(("pub const DEFAULT_", "pub const LED_TIMEOUT_MAX_SEC"))
 )
 assert board_constants, "keyboards/k04/src/board.rs lost its factory defaults"
 

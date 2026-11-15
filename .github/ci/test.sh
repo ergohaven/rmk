@@ -34,6 +34,8 @@ cargo +"$RMK_STABLE_TOOLCHAIN" test --manifest-path rmk-types/Cargo.toml --featu
 log_section "Doctests: rmk-config, default features"
 cargo +"$RMK_STABLE_TOOLCHAIN" test --manifest-path rmk-config/Cargo.toml --doc
 
+python3 scripts/test_phenom_led_defaults.py
+
 log_section "Macro tests and expansion snapshots"
 log_section "Tests: rmk-macro, default features + _simulator,steno"
 cargo +"$RMK_STABLE_TOOLCHAIN" "${nx[@]}" --manifest-path rmk-macro/Cargo.toml --features _simulator,steno

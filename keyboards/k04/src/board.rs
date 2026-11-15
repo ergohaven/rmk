@@ -18,6 +18,11 @@ pub type TouchpadI2c = embassy_nrf::twim::Twim<'static>;
 pub const DEFAULT_BALL_AXIS: [u8; 2] = [0, 0];
 pub const DEFAULT_TOUCH_AXIS: [u8; 2] = [0, 0];
 
+/// Factory LED values; saved settings override these defaults.
+pub const DEFAULT_LED_BRIGHTNESS: u8 = 8;
+pub const DEFAULT_LED_TIMEOUT_SEC: u16 = 1;
+pub const LED_TIMEOUT_MAX_SEC: u16 = 255;
+
 /// The PMW3610 pins of the K:04 module connector, the same on both halves.
 pub struct TrackballPins {
     pub sck: TrackballSck,

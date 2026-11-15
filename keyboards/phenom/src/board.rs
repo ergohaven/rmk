@@ -22,6 +22,11 @@ pub type TouchpadI2c = embassy_rp::i2c::I2c<'static, I2C0, embassy_rp::i2c::Asyn
 pub const DEFAULT_BALL_AXIS: [u8; 2] = [2, 2];
 pub const DEFAULT_TOUCH_AXIS: [u8; 2] = [3, 1];
 
+/// Factory LED values; saved settings override these defaults.
+pub const DEFAULT_LED_BRIGHTNESS: u8 = 128;
+pub const DEFAULT_LED_TIMEOUT_SEC: u16 = 600;
+pub const LED_TIMEOUT_MAX_SEC: u16 = 3600;
+
 /// The PMW3610 pins of the module slot, the same on both halves. The slot has
 /// no MOTION line, so the trackball polls the sensor.
 pub struct TrackballPins {

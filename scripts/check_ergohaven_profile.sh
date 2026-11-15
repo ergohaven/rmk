@@ -768,12 +768,12 @@ for file in "${vial_definitions[@]}"; do
         || fail "$file: split devices must advertise entropy.batteryHalves"
 done
 
-# Phenom serves the K:04 Standalone module and LED settings, so entropy must get
-# the same tabs. It has no Bluetooth or battery to configure.
-k04_module_tabs="$(jq -cS '[.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")]' keyboards/k04/vial.json)"
+# Phenom shares the K:04 module tabs, with a wider LED timeout for QMK parity.
+# It has no Bluetooth or battery to configure.
+k04_module_tabs="$(jq -cS '[.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")] | walk(if type == "object" and .qsid? == 317 then .width = 2 | .max = 3600 else . end)' keyboards/k04/vial.json)"
 for file in keyboards/phenom/vial{,_mini,_micro}.json; do
     [[ "$(jq -cS '.settings' "$file")" == "$k04_module_tabs" ]] \
-        || fail "$file: settings must be the K:04 Standalone module and LED tabs"
+        || fail "$file: settings must match the Phenom module and LED contract"
 done
 
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do

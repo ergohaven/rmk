@@ -85,7 +85,7 @@ const _: () = {
     assert!(migrate_legacy_timeout_index(4) == 12);
     assert!(migrate_legacy_timeout_index(5) == 13);
 };
-const MODULE_SETTINGS_LEN: usize = 46;
+const MODULE_SETTINGS_LEN: usize = 47;
 const LEGACY_MODULE_SETTINGS_STORAGE_LEN: usize = 32;
 const V4_MODULE_SETTINGS_STORAGE_LEN: usize = 33;
 const MODULE_SETTINGS_STORAGE_LEN: usize = 34;
@@ -127,6 +127,7 @@ const IDX_RIGHT_ENCODER_STEPS: usize = 44;
 // Ball travel before the auto layer switches, 0..=100 over 0..=255 sensor
 // counts (the Qube converts); 0 = first count.
 const IDX_AUTO_LAYER_THRESHOLD: usize = 45;
+const IDX_LED_TIMEOUT_HIGH: usize = 46;
 
 const FLAG_LEFT_INVERT_SCROLL_Y: u8 = 1 << 0;
 const FLAG_RIGHT_INVERT_SCROLL_Y: u8 = 1 << 1;
@@ -172,8 +173,9 @@ const MODULE_DEFAULTS: [u8; MODULE_SETTINGS_LEN] = {
     data[IDX_RIGHT_TEXT_SENS] = 16;
     data[IDX_AUTO_LAYER] = 4;
     data[IDX_AUTO_FLAGS] = DEFAULT_AUTO_FLAGS;
-    data[IDX_LED_BRIGHTNESS] = 8;
-    data[IDX_LED_TIMEOUT_SEC] = 1;
+    data[IDX_LED_BRIGHTNESS] = crate::board::DEFAULT_LED_BRIGHTNESS;
+    data[IDX_LED_TIMEOUT_SEC] = crate::board::DEFAULT_LED_TIMEOUT_SEC as u8;
+    data[IDX_LED_TIMEOUT_HIGH] = (crate::board::DEFAULT_LED_TIMEOUT_SEC >> 8) as u8;
     // Keep the former 30-minute index for downgrade compatibility.
     data[IDX_RESERVED_HOST_DISCONNECT_TIMEOUT] = 3;
     data[IDX_AUTO_LAYER_TIMEOUT] = if cfg!(feature = "standalone") { 9 } else { 1 };
@@ -519,12 +521,16 @@ fn module_get_setting(qsid: u16, out: &mut [u8]) -> Option<usize> {
     }
     out[..width].fill(0);
     out[0] = value;
+    if qsid == 317 && width == 2 {
+        out[1] = module_byte(IDX_LED_TIMEOUT_HIGH);
+    }
     Some(width)
 }
 
 const fn module_qsid_width(qsid: u16) -> Option<usize> {
     match qsid {
         336..=338 if cfg!(feature = "qube") => Some(1),
+        317 if crate::board::LED_TIMEOUT_MAX_SEC > 255 => Some(2),
         120..=152 | 300..=315 | 317..=335 => Some(1),
         316 => Some(2),
         _ => None,
@@ -576,7 +582,18 @@ fn module_set_setting(qsid: u16, data: &[u8]) -> bool {
         152 => module_set_touch_gestures(1, value != 0),
         300..=315 => module_set_layer_color_index((qsid - 300) as u8, value.min(24)),
         316 => module_set_byte(IDX_LED_BRIGHTNESS, value),
-        317 => module_set_byte(IDX_LED_TIMEOUT_SEC, value),
+        317 => {
+            let timeout = if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
+                let Some(&high) = data.get(1) else {
+                    return false;
+                };
+                u16::from_le_bytes([value, high]).min(crate::board::LED_TIMEOUT_MAX_SEC)
+            } else {
+                u16::from(value)
+            };
+            module_set_byte(IDX_LED_TIMEOUT_SEC, timeout as u8);
+            module_set_byte(IDX_LED_TIMEOUT_HIGH, (timeout >> 8) as u8);
+        }
         318..=322 => module_set_bt_profile_color_index((qsid - 318) as u8, value.min(24)),
         324 => module_set_byte(IDX_AUTO_LAYER_TIMEOUT, value.min(AUTO_LAYER_TIMEOUT_MAX_INDEX)),
         325 => module_set_byte(IDX_LEFT_ENCODER_INTERVAL, value.min(9)),
@@ -645,6 +662,12 @@ fn module_encoder_settings_sync_packet() -> [u8; MODULE_SETTINGS_SYNC_LEN] {
     data[2] = module_byte(IDX_RIGHT_ENCODER_STEPS).min(7);
     // Read by the Qube pointing processor (QUBE_ENCODER_PACKET_AUTO_LAYER_THRESHOLD).
     data[3] = module_byte(IDX_AUTO_LAYER_THRESHOLD);
+    if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
+        // The encoder packet has spare bytes for Phenom's full seconds value.
+        data[4] = module_byte(IDX_LED_TIMEOUT_SEC);
+        data[5] = module_byte(IDX_LED_TIMEOUT_HIGH);
+        data[6] = 1;
+    }
     data
 }
 
@@ -678,6 +701,11 @@ fn module_settings_sync_packet() -> [u8; MODULE_SETTINGS_SYNC_LEN] {
         layer += 1;
     }
     data[25] = module_byte(IDX_MODULE_SELECT) & 0x0f;
+    if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
+        // New Phenom receivers take the timeout from the encoder packet.
+        // Old receivers ignore this bit and retain the legacy low-byte value.
+        data[25] |= 0x80;
+    }
     data[26] = (module_byte(IDX_AXIS_FLAGS) & 0x0f)
         | ((module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX) & 0x0f) << 4);
     data
@@ -772,6 +800,11 @@ fn serialize_module_settings() -> [u8; MODULE_SETTINGS_STORAGE_LEN] {
         pack_color(&mut data, 15, i, module_bt_profile_color_index(i - 16));
         i += 1;
     }
+    if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
+        // Byte 28 bit 0 belongs to the last packed profile color. Bits 6/7
+        // are reserved for Auto module selections; timeout uses only 2..5.
+        data[28] |= (module_byte(IDX_LED_TIMEOUT_HIGH) & 0x0f) << 2;
+    }
     data[29] = (module_byte(IDX_RESERVED_HOST_DISCONNECT_TIMEOUT) & 0x0f)
         | ((module_byte(IDX_LEFT_ENCODER_INTERVAL).min(9) & 0x0f) << 4);
     data[30] = module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX)
@@ -816,7 +849,13 @@ fn deserialize_module_settings(data: &[u8]) {
     MODULE_SETTINGS[IDX_FLAGS].store(data[11], Ordering::Relaxed);
     MODULE_SETTINGS[IDX_AUTO_FLAGS].store(data[12], Ordering::Relaxed);
     MODULE_SETTINGS[IDX_LED_BRIGHTNESS].store(data[13], Ordering::Relaxed);
-    MODULE_SETTINGS[IDX_LED_TIMEOUT_SEC].store(data[14], Ordering::Relaxed);
+    let timeout = if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
+        u16::from_le_bytes([data[14], (data[28] >> 2) & 0x0f]).min(crate::board::LED_TIMEOUT_MAX_SEC)
+    } else {
+        u16::from(data[14])
+    };
+    MODULE_SETTINGS[IDX_LED_TIMEOUT_SEC].store(timeout as u8, Ordering::Relaxed);
+    MODULE_SETTINGS[IDX_LED_TIMEOUT_HIGH].store((timeout >> 8) as u8, Ordering::Relaxed);
 
     let mut i = 0u8;
     while i < 16 {
