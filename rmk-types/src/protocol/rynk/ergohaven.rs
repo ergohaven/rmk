@@ -141,9 +141,10 @@ pub struct BatteryHalves {
     pub right: u8,
 }
 
-/// Writes waiting for flash.
+/// Writes queued for flash or still being written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
 pub struct WriteStatus {
+    /// Keymap entries plus the pending board-settings block.
     pub pending_keys: u16,
     pub pending_macro_chunks: u16,
     /// A staged write failed since the last `CommitWrites`.
