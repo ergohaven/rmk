@@ -45,7 +45,6 @@ fn factory_defaults_legacy_values_full_range_and_split_packets() {
     let width = if phenom {2} else {1};
     assert_eq!(module_get_setting(317, &mut out), Some(width));
     assert_eq!(u16::from_le_bytes(out), if phenom {600} else {1});
-    let original = serialize_module_settings();
     for old_timeout in [0,1,42,255] {
         for fixture in @LEGACY_BLOBS@ { for len in [32,33,34] {
             let mut old = fixture;

@@ -179,7 +179,7 @@ def harness(name):
     delivered = re.findall(r'\b\w+Event\b', subscriptions)
     prefix = PRELUDE.replace('@SETTINGS@', settings_source())
     board = (ROOT / 'keyboards/k04/src/board.rs').read_text()
-    defaults = '\n'.join(line for line in board.splitlines() if line.startswith(('pub const DEFAULT_', 'pub const LED_TIMEOUT_MAX_SEC')))
+    defaults = '\n'.join(line for line in board.splitlines() if line.startswith(('pub const DEFAULT_', 'pub const LED_TIMEOUT_MAX_SEC', 'pub const AUTO_MODULES')))
     prefix += '\nmod board {\n' + defaults + '\n}\n'
     ble_path = 'rmk-types/src/ble.rs'
     con_path = 'rmk-types/src/connection.rs'
