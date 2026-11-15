@@ -147,7 +147,6 @@ mod battery_nrf {
     pub fn usb_powered() -> bool { USB.load(Ordering::Relaxed) }
     pub fn usb_power_status() -> (bool, bool) { (usb_powered(), false) }
 }
-mod board { pub const AUTO_MODULES: bool = false; }
 mod module_settings {
     use super::*;
     @SETTINGS@
@@ -179,6 +178,9 @@ def harness(name):
     subscriptions = match.group(1)
     delivered = re.findall(r'\b\w+Event\b', subscriptions)
     prefix = PRELUDE.replace('@SETTINGS@', settings_source())
+    board = (ROOT / 'keyboards/k04/src/board.rs').read_text()
+    defaults = '\n'.join(line for line in board.splitlines() if line.startswith(('pub const DEFAULT_', 'pub const LED_TIMEOUT_MAX_SEC', 'pub const AUTO_MODULES')))
+    prefix += '\nmod board {\n' + defaults + '\n}\n'
     ble_path = 'rmk-types/src/ble.rs'
     con_path = 'rmk-types/src/connection.rs'
     bat_path = 'rmk-types/src/battery.rs'
