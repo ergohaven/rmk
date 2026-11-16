@@ -17,7 +17,8 @@ for board, suffixes, first, sides in [
     for suffix in suffixes:
         path = ROOT / f"keyboards/{board}/vial{suffix}.json"
         codes = json.loads(path.read_text())["customKeycodes"]
-        assert [entry["name"] for entry in codes[first:]] == SHARED + (SIDES if sides else []), path
+        expected = SHARED + (SIDES if sides else [])
+        assert [entry["name"] for entry in codes[first:first + len(expected)]] == expected, path
 
 for board, suffixes, minimum in [
     ("k04", ("", "_mini", "_micro", "_vial", "_micro_vial", "_qube", "_qube_mini", "_qube_micro"), 3),

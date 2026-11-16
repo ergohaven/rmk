@@ -1519,6 +1519,15 @@ impl<'a> Keyboard<'a> {
             Action::KeyboardControl(c) => self.process_action_keyboard_control(c, event).await,
             Action::Special(special_key) => self.process_action_special(special_key, event).await,
             Action::User(id) => {
+                #[cfg(feature = "ergohaven_layer_cycling")]
+                if matches!(id, 52 | 53) {
+                    if event.pressed && self.keymap.cycle_layer(id == 52, event.source) {
+                        // Cycling replaced the whole layer mask; pending OSL no longer owns it.
+                        self.osl_state = OneShotState::None;
+                        self.osl_deadline = None;
+                    }
+                    return;
+                }
                 #[cfg(feature = "universal_symbols")]
                 let had_action_report = self.process_universal_symbols_user_action(id, event).await;
                 #[cfg(not(feature = "universal_symbols"))]
@@ -2330,6 +2339,183 @@ mod test {
 
     fn create_test_keyboard() -> Keyboard<'static> {
         create_test_keyboard_with_config(BehaviorConfig::default())
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_skips_no_and_preserves_press_release_lookup() {
+        block_on(async {
+            let mut layers = [[[KeyAction::No; 2]]; 16];
+            layers[0][0] = [KeyAction::Single(Action::User(52)), KeyAction::Single(Action::User(53))];
+            for layer in [1, 4, 15] {
+                layers[layer][0] = [KeyAction::Transparent; 2];
+            }
+            let mut data = crate::keymap::KeymapData::new(layers);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 2>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            for (col, expected) in [(0, 1), (0, 4), (0, 15), (0, 0), (1, 15), (1, 4), (1, 1), (1, 0)] {
+                keyboard.process_inner(KeyboardEvent::key(0, col, true)).await;
+                assert_eq!(keymap.active_layer(), expected);
+                keyboard.process_inner(KeyboardEvent::key(0, col, false)).await;
+                assert_eq!(keymap.active_layer(), expected, "release must not cycle");
+            }
+            assert_eq!(
+                keymap.get_action_at(KeyboardEventSource::key_pos(0, 0), 5),
+                KeyAction::No,
+                "cycling must preserve explicit No bindings"
+            );
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_replaces_active_mask_and_preserves_default() {
+        block_on(async {
+            let mut data = crate::keymap::KeymapData::<1, 1, 16>::new([[[KeyAction::Single(Action::User(52))]]; 16]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            keymap.set_default_layer(5);
+            keymap.activate_layer(3);
+            keymap.activate_layer(15);
+            keyboard
+                .process_key_action_normal(Action::User(52), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keymap.get_default_layer(), 5);
+            assert_eq!(keymap.active_layer(), 5);
+            assert!(!keymap.is_layer_active(3));
+            assert!(!keymap.is_layer_active(15));
+            keymap.set_default_layer(0);
+            for expected in 1..16 {
+                keyboard
+                    .process_key_action_normal(Action::User(52), KeyboardEvent::key(0, 0, true))
+                    .await;
+                assert_eq!(keymap.active_layer(), expected);
+            }
+            keyboard
+                .process_key_action_normal(Action::User(52), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keymap.active_layer(), 0);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_uses_encoder_direction_and_synthetic_sources() {
+        use rmk_types::action::EncoderAction;
+
+        use crate::input_device::rotary_encoder::Direction;
+        block_on(async {
+            let next = KeyAction::Single(Action::User(52));
+            let prev = KeyAction::Single(Action::User(53));
+            let encoders = [
+                EncoderAction {
+                    clockwise: next,
+                    counter_clockwise: prev,
+                },
+                EncoderAction {
+                    clockwise: KeyAction::No,
+                    counter_clockwise: KeyAction::No,
+                },
+                EncoderAction {
+                    clockwise: KeyAction::Transparent,
+                    counter_clockwise: KeyAction::Transparent,
+                },
+            ];
+            let mut data = crate::keymap::KeymapData::<1, 1, 3, 1>::new_with_encoder(
+                [[[KeyAction::No]]; 3],
+                encoders.map(|a| [a]),
+            );
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            for (direction, expected) in [
+                (Direction::Clockwise, 2),
+                (Direction::Clockwise, 0),
+                (Direction::CounterClockwise, 2),
+                (Direction::CounterClockwise, 0),
+            ] {
+                keyboard
+                    .process_inner(KeyboardEvent::rotary_encoder(0, direction, true))
+                    .await;
+                keyboard
+                    .process_inner(KeyboardEvent::rotary_encoder(0, direction, false))
+                    .await;
+                assert_eq!(keymap.active_layer(), expected);
+            }
+            keyboard
+                .process_key_action_normal(
+                    Action::User(52),
+                    KeyboardEvent {
+                        pressed: true,
+                        source: KeyboardEventSource::Macro,
+                    },
+                )
+                .await;
+            assert_eq!(
+                keymap.active_layer(),
+                1,
+                "macro actions have no physical position to filter"
+            );
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_nonzero_default_changes_visible_layer_on_every_press() {
+        block_on(async {
+            let mut data = crate::keymap::KeymapData::<1, 2, 5>::new(
+                [[[KeyAction::Single(Action::User(52)), KeyAction::Single(Action::User(53))]]; 5],
+            );
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 2>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            keymap.set_default_layer(2);
+            for (col, expected) in [(0, 3), (0, 4), (0, 2), (1, 4), (1, 3), (1, 2)] {
+                keyboard.process_inner(KeyboardEvent::key(0, col, true)).await;
+                assert_eq!(keymap.active_layer(), expected);
+                keyboard.process_inner(KeyboardEvent::key(0, col, false)).await;
+                assert_eq!(keymap.active_layer(), expected);
+                assert_eq!(keymap.get_default_layer(), 2);
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_releases_one_shot_layer_ownership() {
+        block_on(async {
+            let mut data = crate::keymap::KeymapData::<1, 1, 3>::new([[[KeyAction::Single(Action::User(52))]]; 3]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            keyboard.process_action_osl(1, KeyboardEvent::key(0, 0, true)).await;
+            keyboard.process_action_osl(1, KeyboardEvent::key(0, 0, false)).await;
+            for expected in [2, 0, 1] {
+                keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+                keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+                assert_eq!(keymap.active_layer(), expected);
+            }
+            keyboard.osl_deadline = Some(Instant::now());
+            keyboard.fire_oneshot_timeout().await;
+            assert_eq!(
+                keymap.active_layer(),
+                1,
+                "old OSL timeout must not clear the manual layer"
+            );
+            keyboard.update_osl(KeyboardEvent::key(0, 0, false));
+            assert_eq!(
+                keymap.active_layer(),
+                1,
+                "old OSL release must not clear the manual layer"
+            );
+        });
     }
 
     async fn force_timeout_first_hold(keyboard: &mut Keyboard<'static>) {

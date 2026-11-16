@@ -776,6 +776,16 @@ for file in keyboards/phenom/vial{,_mini,_micro}.json; do
         || fail "$file: settings must be the K:04 Standalone module and LED tabs"
 done
 
+python3 - <<'PY_CYCLE' || fail "Phenom layer cycling user slots must remain at 52 and 53"
+import json
+from pathlib import Path
+
+for path in Path("keyboards/phenom").glob("vial*.json"):
+    names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
+    assert len(names) >= 54, (path, len(names))
+    assert names[52:54] == ["LNEXT", "LPREV"], (path, names[52:54])
+PY_CYCLE
+
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
     jq -e '
         .entropy.batteryHalves == true

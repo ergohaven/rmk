@@ -1133,6 +1133,8 @@ pub struct QubePointingModeProcessor<'a> {
     /// (`MO`/`TG`), and is cleared once a layer key names the layer or something
     /// else switches it off, so a keypress never tears down a manually held layer.
     auto_layer_self_activated: bool,
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    manual_layer_generation: u32,
     /// Unique positions pressed during this auto-layer activation.
     auto_layer_held_keys: heapless::Vec<KeyboardEventSource, QUBE_AUTO_LAYER_HELD_CAPACITY>,
     last_auto_motion_ms: u32,
@@ -1148,6 +1150,8 @@ impl<'a> QubePointingModeProcessor<'a> {
             settings: QubePointingSettings::new(),
             active_auto_layer: QUBE_AUTO_LAYER_NONE,
             auto_layer_self_activated: false,
+            #[cfg(feature = "ergohaven_layer_cycling")]
+            manual_layer_generation: keymap.manual_layer_generation(),
             auto_layer_held_keys: heapless::Vec::new(),
             last_auto_motion_ms: 0,
             auto_layer_arming: AutoLayerArming::new(),
@@ -1204,6 +1208,8 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     async fn on_layer_change_event(&mut self, _event: LayerChangeEvent) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         // Something else switched the auto layer off (`TO`, an expiring `OSL`, ...),
         // so whoever turns it back on owns it. Only ownership is dropped: the
         // timeout keeps tracking the layer exactly as before.
@@ -1213,6 +1219,8 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     async fn on_action_event(&mut self, event: ActionEvent) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         // A layer key naming the auto layer hands it to the user, even when the
         // layer never reads as off (`MO` over it, `TO` re-enabling it at once).
         // `ActionEvent`s arrive in order, so this lands before the next keypress.
@@ -1404,6 +1412,8 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     async fn poll(&mut self) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         let mut released = false;
         for side in &mut self.sides {
             if side.touch_buttons != 0
@@ -1503,6 +1513,8 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     fn reevaluate_auto_layer(&mut self) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         if self.active_auto_layer != QUBE_AUTO_LAYER_NONE
             && (self.settings.auto_layer == 0
                 || self.settings.auto_layer != self.active_auto_layer
@@ -1515,6 +1527,8 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     fn sync_auto_layer_for_motion(&mut self, mode: QubePointingMode, source: QubePointingSource, x: i16, y: i16) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         if self.sticky_keeps_auto_layer_access() {
             self.last_auto_motion_ms = now_ms_u32();
             return;
@@ -1556,6 +1570,16 @@ impl<'a> QubePointingModeProcessor<'a> {
         self.active_auto_layer = layer;
         self.auto_layer_held_keys.clear();
         self.auto_layer_self_activated = self.keymap.activate_layer_if_inactive(layer);
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    fn sync_manual_layer_generation(&mut self) {
+        let generation = self.keymap.manual_layer_generation();
+        if generation != self.manual_layer_generation {
+            self.manual_layer_generation = generation;
+            self.auto_layer_self_activated = false;
+            self.deactivate_auto_layer();
+        }
     }
 
     fn deactivate_auto_layer(&mut self) {
@@ -4020,6 +4044,39 @@ mod tests {
             Timer::after_millis(timeout + 1).await;
             processor.poll().await;
             assert!(!keymap.is_layer_active(TEST_AUTO_LAYER));
+        });
+    }
+
+    #[cfg(all(feature = "split", feature = "ergohaven_layer_cycling"))]
+    #[test]
+    fn phenom_layer_cycling_manual_target_survives_auto_timeout_and_settings() {
+        use rmk_types::action::KeyAction;
+        block_on(async {
+            let mut data = KeymapData::<1, 1, 4>::new([[[KeyAction::Single(Action::User(53))]]; 4]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut processor = QubePointingModeProcessor::new(&keymap);
+            processor.settings.auto_layer = TEST_AUTO_LAYER;
+            processor.settings.auto_flags = TEST_AUTO_FLAGS_NORMAL;
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            assert!(processor.auto_layer_self_activated);
+            keymap.activate_layer(TEST_AUTO_LAYER + 1);
+            keymap.cycle_layer(false, KeyboardEventSource::key_pos(0, 0));
+            assert_eq!(keymap.active_layer(), TEST_AUTO_LAYER);
+            processor.last_auto_motion_ms = now_ms_u32().wrapping_sub(processor.settings.auto_layer_timeout_ms());
+            // A timer can fire before the queued layer-change event is processed.
+            processor.poll().await;
+            assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+            processor.settings.auto_layer = 0;
+            processor.reevaluate_auto_layer();
+            assert!(keymap.is_layer_active(TEST_AUTO_LAYER));
+            processor.settings.auto_layer = TEST_AUTO_LAYER;
+            processor.sync_auto_layer_for_motion(QubePointingMode::Normal, TEST_BALL_SOURCE, 1, 0);
+            assert!(
+                !processor.auto_layer_self_activated,
+                "new motion must not reclaim the manual layer"
+            );
         });
     }
 
