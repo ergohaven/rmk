@@ -57,14 +57,14 @@ pub(crate) enum HostLayout {
 }
 
 impl HostLayout {
-    const fn toggled(self) -> Self {
+    pub(crate) const fn toggled(self) -> Self {
         match self {
             Self::English => Self::Russian,
             Self::Russian => Self::English,
         }
     }
 
-    const fn from_host_code(code: u8) -> Option<Self> {
+    pub(crate) const fn from_host_code(code: u8) -> Option<Self> {
         match code {
             0 => Some(Self::English),
             1 => Some(Self::Russian),
@@ -249,11 +249,16 @@ impl State {
         Some(command)
     }
 
+    #[cfg(feature = "ergohaven_language_helpers")]
+    pub(crate) const fn layout(&self) -> HostLayout {
+        self.layout
+    }
+
     pub(crate) const fn platform(&self) -> Platform {
         self.platform
     }
 
-    fn set_layout(&mut self, layout: HostLayout) -> Command {
+    pub(crate) fn set_layout(&mut self, layout: HostLayout) -> Command {
         if self.layout == layout {
             Command::None
         } else {

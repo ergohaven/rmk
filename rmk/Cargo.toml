@@ -55,6 +55,8 @@ host = ["dep:byteorder"]
 
 ## Enable firmware-native EN/RU Universal Symbols actions.
 universal_symbols = []
+# Stateful Phenom language helpers occupy board user slots 56..59.
+ergohaven_language_helpers = ["universal_symbols"]
 # Opt-in layout-options bit 2 contract (ISO, left-hide, right-hide).
 universal_symbols_iso = ["universal_symbols"]
 # Scoped contracts for boards with zero or one existing one-bit option.

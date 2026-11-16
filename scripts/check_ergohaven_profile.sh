@@ -776,6 +776,17 @@ for file in keyboards/phenom/vial{,_mini,_micro}.json; do
         || fail "$file: settings must be the K:04 Standalone module and LED tabs"
 done
 
+python3 - <<'PY_RUEN' || fail "Phenom language helpers must retain user slots 56 to 59"
+import json
+from pathlib import Path
+
+for name in ("vial.json", "vial_mini.json", "vial_micro.json"):
+    path = Path("keyboards/phenom") / name
+    names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
+    assert len(names) >= 60, (path, len(names))
+    assert names[56:60] == ["LG_WORD", "LG_MOD", "LG_STORE", "LG_REVERT"], (path, names[56:60])
+PY_RUEN
+
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
     jq -e '
         .entropy.batteryHalves == true
