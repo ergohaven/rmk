@@ -461,13 +461,14 @@ check_projection(
     {
         (4, 0): ("_", "LeftBracket"), (9, 0): ("_", "RightBracket"),
         (4, 5): ("Delete", "LGui"), (4, 4): ("LGui", "LAlt"),
-        (9, 3): ("RAlt", "RCtrl"), (9, 4): ("LeftBracket", "RAlt"),
+        (9, 3): ("LAlt", "RCtrl"), (9, 4): ("LeftBracket", "LAlt"),
         (9, 5): ("RightBracket", "RGui"),
     },
 )
 PY
 
 python3 scripts/test_approved_factory_layouts.py || fail "approved factory layout regression tests failed"
+python3 -B scripts/test_factory_alt.py || fail "factory layouts must use Left Alt"
 
 for file in "${non_k04_profiles[@]}"; do
     expect_toml "$file" combo_max_length 4
@@ -533,7 +534,7 @@ from pathlib import Path
 workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 expected_features = {
     "k04_series_k04": "production_v30g,universal_mac_iso",
-    "k04_series_mini": "production_v30g",
+    "k04_series_mini": "production_v30g,universal_mac_iso",
     "k04_series_micro": "production_v30g,universal_mac_iso",
 }
 for output_name, features in expected_features.items():
@@ -545,10 +546,10 @@ for output_name, features in expected_features.items():
 
 assert "cargo build --release --bin central ${{ matrix.build_features }}" in workflow
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
-assert workflow.count('build_features: "--features production_v30g"') == 1
-assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 2
-# Only K:04 Micro retains a separate Vial production row.
-assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 1
+assert workflow.count('build_features: "--features production_v30g"') == 0
+assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 3
+# Vial remains manually buildable, but has no official production row.
+assert 'vial_standalone' not in workflow
 PY
 
 python3 - <<'PY' || fail "K:04 local build instructions drifted from the production profile"
@@ -565,7 +566,7 @@ assert 'local features=production_v30g' in standalone_body
 assert 'features+=,universal_mac_iso' in standalone_body
 for call in (
     "build_k04_series_profile k04 keyboard.toml vial_universal.json",
-    "build_k04_series_profile mini keyboard_mini.toml vial_mini.json",
+    "build_k04_series_profile mini keyboard_mini.toml vial_mini_universal.json",
     "build_k04_series_profile micro keyboard_micro.toml vial_micro_universal.json",
 ):
     assert script.count(call) == 1, call
@@ -575,24 +576,24 @@ standalone_command = (
     "cargo build --release --bin central --bin peripheral --bin hardreset "
     "--features production_v30g"
 )
-assert standalone_readme.count(standalone_command + ",universal_mac_iso") == 2
-assert standalone_readme.count(standalone_command + "\n") == 1
+assert standalone_readme.count(standalone_command + ",universal_mac_iso") == 3
+assert standalone_readme.count(standalone_command + "\n") == 0
 
 k04_qube_body = script.split("build_k04_qube_profile() {", 1)[1].split(
     'echo "Using BINDGEN_EXTRA_CLANG_ARGS=', 1
 )[0]
 assert k04_qube_body.count(
-    "cargo build --release --bin qube --no-default-features --features qube"
+    "cargo build --release --bin qube --no-default-features --features qube,universal_mac_iso"
 ) == 1
 assert k04_qube_body.count(
-    "cargo build --release --bin left --bin right --no-default-features --features qube-half"
+    "cargo build --release --bin left --bin right --no-default-features --features qube-half,universal_mac_iso"
 ) == 1
 assert "production_v30g" not in k04_qube_body
 assert qube_readme.count(
-    "cargo build --release --bin qube --no-default-features --features qube"
+    "cargo build --release --bin qube --no-default-features --features qube,universal_mac_iso"
 ) == 1
 assert qube_readme.count(
-    "cargo build --release --bin left --bin right --no-default-features --features qube-half"
+    "cargo build --release --bin left --bin right --no-default-features --features qube-half,universal_mac_iso"
 ) == 1
 assert "production_v30g" not in qube_readme
 PY

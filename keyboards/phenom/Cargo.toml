@@ -33,6 +33,7 @@ default = ["standalone", "production_v22"]
 standalone = ["rmk/k04_standalone_timeout_14"]
 production_v22 = ["pmw_axes_600"]
 pmw_axes_600 = []
+universal_mac_iso = ["rmk/universal_symbols_iso"]
 
 [dependencies]
 rmk = { path = "../../rmk", default-features = false, features = [

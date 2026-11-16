@@ -1,0 +1,1499 @@
+{
+  "provenance": "513718e941e3a6f2f0990f5e9db97b952588b54c (before all-profile geometry expansion)",
+  "rows": {
+    "build": [
+      {
+        "keyboard": "k03",
+        "output_name": "k03",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial.json"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_series_k04",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial_universal.json",
+        "build_features": "--features production_v30g,universal_mac_iso"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_series_mini",
+        "keyboard_toml": "keyboard_mini.toml",
+        "vial_json": "vial_mini.json",
+        "build_features": "--features production_v30g"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_series_micro",
+        "keyboard_toml": "keyboard_micro.toml",
+        "vial_json": "vial_micro_universal.json",
+        "build_features": "--features production_v30g,universal_mac_iso"
+      },
+      {
+        "keyboard": "imperial44",
+        "output_name": "imperial44",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial.json"
+      },
+      {
+        "keyboard": "op36",
+        "output_name": "op36",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial.json"
+      },
+      {
+        "keyboard": "velvet",
+        "output_name": "velvet",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial.json",
+        "central_output_name": "velvet_standalone_right_main.uf2",
+        "peripheral_output_name": "velvet_standalone_left_peripheral.uf2"
+      },
+      {
+        "keyboard": "phenom",
+        "output_name": "phenom",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial.json",
+        "target": "thumbv6m-none-eabi",
+        "uf2_base": "0x10000000",
+        "uf2_family": "0xE48BFF56"
+      },
+      {
+        "keyboard": "phenom",
+        "output_name": "phenom_mini",
+        "keyboard_toml": "keyboard_mini.toml",
+        "vial_json": "vial_mini.json",
+        "target": "thumbv6m-none-eabi",
+        "uf2_base": "0x10000000",
+        "uf2_family": "0xE48BFF56"
+      },
+      {
+        "keyboard": "phenom",
+        "output_name": "phenom_micro",
+        "keyboard_toml": "keyboard_micro.toml",
+        "vial_json": "vial_micro.json",
+        "target": "thumbv6m-none-eabi",
+        "uf2_base": "0x10000000",
+        "uf2_family": "0xE48BFF56"
+      },
+      {
+        "keyboard": "k03",
+        "output_name": "k03_vial",
+        "keyboard_toml": "keyboard_vial.toml",
+        "vial_json": "vial_universal.json",
+        "build_features": "--no-default-features --features vial_standalone,universal_mac_iso"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_series_micro_vial",
+        "keyboard_toml": "keyboard_micro_vial.toml",
+        "vial_json": "vial_micro_universal.json",
+        "build_features": "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"
+      },
+      {
+        "keyboard": "imperial44",
+        "output_name": "imperial44_vial",
+        "keyboard_toml": "keyboard_vial.toml",
+        "vial_json": "vial_universal.json",
+        "build_features": "--no-default-features --features vial_standalone,universal_mac_iso"
+      },
+      {
+        "keyboard": "op36",
+        "output_name": "op36_vial",
+        "keyboard_toml": "keyboard_vial.toml",
+        "vial_json": "vial_universal.json",
+        "build_features": "--no-default-features --features vial_standalone,universal_mac_iso"
+      },
+      {
+        "keyboard": "velvet",
+        "output_name": "velvet_vial",
+        "keyboard_toml": "keyboard_vial.toml",
+        "vial_json": "vial_universal.json",
+        "central_output_name": "velvet_standalone_right_main_vial.uf2",
+        "peripheral_output_name": "velvet_standalone_left_peripheral_vial.uf2",
+        "build_features": "--no-default-features --features vial_standalone,universal_mac_iso"
+      }
+    ],
+    "build-qube": [
+      {
+        "keyboard": "classic_qube",
+        "output_name": "op36_qube",
+        "keyboard_toml": "keyboard.toml",
+        "vial_json": "vial.json"
+      },
+      {
+        "keyboard": "classic_qube",
+        "output_name": "k03_qube",
+        "keyboard_toml": "keyboard_k03.toml",
+        "vial_json": "vial_k03.json"
+      },
+      {
+        "keyboard": "classic_qube",
+        "output_name": "velvet_qube",
+        "keyboard_toml": "keyboard_velvet.toml",
+        "vial_json": "vial_velvet.json"
+      },
+      {
+        "keyboard": "classic_qube",
+        "output_name": "imperial44_qube",
+        "keyboard_toml": "keyboard_imperial44.toml",
+        "vial_json": "vial_imperial44.json"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_qube_k04",
+        "keyboard_toml": "keyboard_qube.toml",
+        "vial_json": "vial_qube.json",
+        "half_no_default": "--no-default-features",
+        "half_features": "--features qube-half"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_qube_mini",
+        "keyboard_toml": "keyboard_qube_mini.toml",
+        "vial_json": "vial_qube_mini.json",
+        "half_no_default": "--no-default-features",
+        "half_features": "--features qube-half"
+      },
+      {
+        "keyboard": "k04",
+        "output_name": "k04_qube_micro",
+        "keyboard_toml": "keyboard_qube_micro.toml",
+        "vial_json": "vial_qube_micro.json",
+        "half_no_default": "--no-default-features",
+        "half_features": "--features qube-half"
+      }
+    ]
+  },
+  "descriptors": {
+    "keyboards/classic_qube/vial.json": "2e1b28160143bbe19546446ba4e2664dab701c42280880686d433f225618beb0",
+    "keyboards/classic_qube/vial_imperial44.json": "34af16939694734c98ec758a9fcc2fb310b76549178df8cd7df658246555ff86",
+    "keyboards/classic_qube/vial_k03.json": "98f9f7b713c90b660ed6a264d15f8220335194f57b1170f6bb59e0610714078e",
+    "keyboards/classic_qube/vial_velvet.json": "0f213765b7be5d45706eb9c05da4aa4956e9c6ed3f902741643588ff403387d3",
+    "keyboards/imperial44/vial.json": "34af16939694734c98ec758a9fcc2fb310b76549178df8cd7df658246555ff86",
+    "keyboards/imperial44/vial_universal.json": "28dc88f62463bb5cba5f8bfe58a2767c68c738550841791d6a65d43e3c52ce34",
+    "keyboards/k03/vial.json": "98f9f7b713c90b660ed6a264d15f8220335194f57b1170f6bb59e0610714078e",
+    "keyboards/k03/vial_universal.json": "bd019a73f6ac45f031fb5484b9eb578576211f41b62a7c0128cc4900f53debed",
+    "keyboards/k04/vial_micro_universal.json": "74cc5aecbf7a078b593b3aba10f421106e780bcb5333624ae7a2de57040cbd73",
+    "keyboards/k04/vial_mini.json": "1c6b56ea92c7d80fa770d4d159bdf7528ac3ce50324388f61bcce31ee78a74a7",
+    "keyboards/k04/vial_qube.json": "48b066a6b7b9d6f81112a028c4ffad840e7a88a23f09715953dcb4b02a004ca9",
+    "keyboards/k04/vial_qube_micro.json": "65bf7a5566a5dbc440f5a95b9bff9a9f52cddb59f1795c2fc3fcc75f787a244e",
+    "keyboards/k04/vial_qube_mini.json": "0ad164e774a6ca3cd00b2f49d5c96a9a23873ce6c8620b51cb9698f3cbca1dc8",
+    "keyboards/k04/vial_universal.json": "f1f41f52f4b6a913cf5dd20f4e64565a9876ae7be099aa10eefedcf515b6c2e5",
+    "keyboards/op36/vial.json": "6eb54677fa8d1054973333987de30f1c2a501328e17c22bf30d3dae7514e66cd",
+    "keyboards/op36/vial_universal.json": "6ae47b1babc89d14c18a3e37424006e282ca68d387d6585a95268ae27b4dc51e",
+    "keyboards/phenom/vial.json": "c4b4d9c80a8803f6fbb0e24f2b7a60671f421c9339de6586dce8b6aae8ea1ca6",
+    "keyboards/phenom/vial_micro.json": "c0c1a854ff9ec3ddacb9f3d612a9e5183d55bfc2bb26fda0c9a2c3e45033f1f2",
+    "keyboards/phenom/vial_mini.json": "5d0056d0368c655fad76bf9c9be50832d0296a9abbf91dad89a72859e59851b8",
+    "keyboards/velvet/vial.json": "0f213765b7be5d45706eb9c05da4aa4956e9c6ed3f902741643588ff403387d3",
+    "keyboards/velvet/vial_universal.json": "b938233b114bd11a3fb603d30ceff4ca72948e41705c08e113ea5e4c39c28fca"
+  },
+  "manifests": {
+    "classic_qube": {
+      "package": {
+        "name": "classic_qube",
+        "version": "0.1.0",
+        "description": "Shared RMK BLE dongle firmware for Ergohaven classic splits + Qube",
+        "homepage": "https://github.com/ergohaven/rmk",
+        "repository": "https://github.com/ergohaven/rmk",
+        "readme": "README.md",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "features": {
+        "default": [],
+        "qube": [
+          "rmk/st7789",
+          "dep:lcd-async",
+          "dep:embedded-hal-bus",
+          "dep:embedded-graphics",
+          "dep:rmk-types"
+        ]
+      },
+      "dependencies": {
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "usb_log",
+            "storage",
+            "ergohaven_rynk",
+            "universal_symbols",
+            "nrf52840_ble",
+            "split",
+            "async_matrix",
+            "adafruit_bl",
+            "display"
+          ]
+        },
+        "embedded-hal-bus": {
+          "version": "0.3",
+          "features": [
+            "async"
+          ],
+          "optional": true
+        },
+        "embedded-graphics": {
+          "version": "0.8",
+          "optional": true
+        },
+        "lcd-async": {
+          "version": "0.1",
+          "optional": true
+        },
+        "rmk-types": {
+          "path": "../../rmk-types",
+          "optional": true
+        },
+        "heapless": "0.9",
+        "embassy-futures": "0.1",
+        "nrf-sdc": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "peripheral",
+            "central",
+            "nrf52840"
+          ]
+        },
+        "nrf-mpsl": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "critical-section-impl",
+            "nrf52840"
+          ]
+        },
+        "bt-hci": {
+          "version": "0.11",
+          "default-features": false,
+          "features": [
+            "defmt"
+          ]
+        },
+        "cortex-m": "0.7.7",
+        "cortex-m-rt": "0.7.5",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "tick-hz-32_768",
+            "defmt",
+            "defmt-timestamp-uptime"
+          ]
+        },
+        "embassy-nrf": {
+          "version": "0.11",
+          "features": [
+            "defmt",
+            "nrf52840",
+            "time-driver-rtc1",
+            "gpiote",
+            "unstable-pac",
+            "nfc-pins-as-gpio",
+            "time"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "platform-cortex-m",
+            "executor-thread"
+          ]
+        },
+        "defmt": "1.0",
+        "defmt-rtt": "1.0",
+        "panic-probe": {
+          "version": "1.0",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "static_cell": "2",
+        "rand": {
+          "version": "0.8.4",
+          "default-features": false
+        },
+        "rand_core": {
+          "version": "0.6"
+        },
+        "rand_chacha": {
+          "version": "0.3",
+          "default-features": false
+        },
+        "embassy-usb-driver": "=0.2.2"
+      },
+      "build-dependencies": {
+        "xz2": "0.1.7",
+        "json": "0.12",
+        "const-gen": "1.6"
+      },
+      "bin": [
+        {
+          "name": "qube",
+          "path": "src/qube.rs",
+          "required-features": [
+            "qube"
+          ],
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "left",
+          "path": "src/left.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "right",
+          "path": "src/right.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat"
+        }
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      }
+    },
+    "imperial44": {
+      "package": {
+        "name": "imperial44",
+        "version": "0.1.0",
+        "description": "RMK BLE split firmware for Ergohaven imperial44 (nRF52840)",
+        "homepage": "https://github.com/eh-fws/k03-rmk",
+        "repository": "https://github.com/eh-fws/k03-rmk",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "features": {
+        "default": [
+          "protocol_rynk"
+        ],
+        "protocol_rynk": [
+          "rmk/ergohaven_rynk"
+        ],
+        "protocol_vial": [
+          "rmk/vial",
+          "rmk/host_lock"
+        ],
+        "vial_standalone": [
+          "protocol_vial"
+        ],
+        "universal_mac_iso": [
+          "rmk/universal_symbols_iso_bit0"
+        ]
+      },
+      "dependencies": {
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "usb_log",
+            "storage",
+            "universal_symbols",
+            "nrf52840_ble",
+            "split",
+            "async_matrix",
+            "adafruit_bl"
+          ]
+        },
+        "embassy-futures": "0.1",
+        "nrf-sdc": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "peripheral",
+            "central",
+            "nrf52840"
+          ]
+        },
+        "nrf-mpsl": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "critical-section-impl",
+            "nrf52840"
+          ]
+        },
+        "bt-hci": {
+          "version": "0.11",
+          "default-features": false,
+          "features": [
+            "defmt"
+          ]
+        },
+        "cortex-m": "0.7.7",
+        "cortex-m-rt": "0.7.5",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "tick-hz-32_768",
+            "defmt",
+            "defmt-timestamp-uptime"
+          ]
+        },
+        "embassy-nrf": {
+          "version": "0.11",
+          "features": [
+            "defmt",
+            "nrf52840",
+            "time-driver-rtc1",
+            "gpiote",
+            "unstable-pac",
+            "nfc-pins-as-gpio",
+            "time"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "platform-cortex-m",
+            "executor-thread"
+          ]
+        },
+        "defmt": "1.0",
+        "defmt-rtt": "1.0",
+        "panic-probe": {
+          "version": "1.0",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "static_cell": "2",
+        "embassy-usb-driver": "=0.2.2",
+        "rand": {
+          "version": "0.8.4",
+          "default-features": false
+        },
+        "rand_core": {
+          "version": "0.6"
+        },
+        "rand_chacha": {
+          "version": "0.3",
+          "default-features": false
+        }
+      },
+      "build-dependencies": {
+        "xz2": "0.1.7",
+        "json": "0.12",
+        "const-gen": "1.6"
+      },
+      "bin": [
+        {
+          "name": "central",
+          "path": "src/central.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "peripheral",
+          "path": "src/peripheral.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat"
+        }
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      }
+    },
+    "k03": {
+      "package": {
+        "name": "k03",
+        "version": "0.1.0",
+        "description": "RMK BLE split firmware for Ergohaven K:03 (nRF52840)",
+        "homepage": "https://github.com/eh-fws/k03-rmk",
+        "repository": "https://github.com/eh-fws/k03-rmk",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "features": {
+        "default": [
+          "protocol_rynk"
+        ],
+        "protocol_rynk": [
+          "rmk/ergohaven_rynk"
+        ],
+        "protocol_vial": [
+          "rmk/vial",
+          "rmk/host_lock"
+        ],
+        "vial_standalone": [
+          "protocol_vial"
+        ],
+        "universal_mac_iso": [
+          "rmk/universal_symbols_iso_bit0"
+        ]
+      },
+      "dependencies": {
+        "embedded-storage": "0.3",
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "usb_log",
+            "storage",
+            "universal_symbols",
+            "nrf52840_ble",
+            "split",
+            "async_matrix",
+            "adafruit_bl"
+          ]
+        },
+        "embassy-futures": "0.1",
+        "nrf-sdc": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "peripheral",
+            "central",
+            "nrf52840"
+          ]
+        },
+        "nrf-mpsl": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "critical-section-impl",
+            "nrf52840"
+          ]
+        },
+        "bt-hci": {
+          "version": "0.11",
+          "default-features": false,
+          "features": [
+            "defmt"
+          ]
+        },
+        "cortex-m": "0.7.7",
+        "cortex-m-rt": "0.7.5",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "tick-hz-32_768",
+            "defmt",
+            "defmt-timestamp-uptime"
+          ]
+        },
+        "embassy-nrf": {
+          "version": "0.11",
+          "features": [
+            "defmt",
+            "nrf52840",
+            "time-driver-rtc1",
+            "gpiote",
+            "unstable-pac",
+            "nfc-pins-as-gpio",
+            "time"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "platform-cortex-m",
+            "executor-thread"
+          ]
+        },
+        "defmt": "1.0",
+        "defmt-rtt": "1.0",
+        "panic-probe": {
+          "version": "1.0",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "static_cell": "2",
+        "embassy-usb-driver": "=0.2.2",
+        "rand": {
+          "version": "0.8.4",
+          "default-features": false
+        },
+        "rand_core": {
+          "version": "0.6"
+        },
+        "rand_chacha": {
+          "version": "0.3",
+          "default-features": false
+        }
+      },
+      "build-dependencies": {
+        "xz2": "0.1.7",
+        "json": "0.12",
+        "const-gen": "1.6"
+      },
+      "bin": [
+        {
+          "name": "central",
+          "path": "src/central.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "peripheral",
+          "path": "src/peripheral.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "hardreset",
+          "path": "src/bin/hardreset.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat"
+        }
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      }
+    },
+    "k04": {
+      "package": {
+        "name": "k04",
+        "version": "0.1.0",
+        "description": "Shared RMK BLE firmware for Ergohaven K:04 Series, standalone and Qube (nRF52840)",
+        "homepage": "https://github.com/ergohaven/rmk",
+        "repository": "https://github.com/ergohaven/rmk",
+        "readme": "README.md",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "features": {
+        "default": [
+          "standalone",
+          "protocol_rynk"
+        ],
+        "protocol_rynk": [
+          "rmk/ergohaven_rynk"
+        ],
+        "protocol_vial": [
+          "rmk/vial",
+          "rmk/host_lock"
+        ],
+        "vial_standalone": [
+          "protocol_vial",
+          "standalone"
+        ],
+        "standalone": [
+          "rmk/defmt",
+          "rmk/k04_standalone_timeout_14"
+        ],
+        "usb_debug": [
+          "rmk/usb_log"
+        ],
+        "usb_debug_force_ble": [
+          "usb_debug"
+        ],
+        "rtt_diag": [
+          "rmk/rtt_diag"
+        ],
+        "mouse_interval_control": [
+          "rmk/mouse_interval_control"
+        ],
+        "mouse_vector_preserve": [
+          "mouse_interval_control",
+          "rmk/mouse_vector_preserve"
+        ],
+        "fixed_mouse_pacing_15ms": [
+          "mouse_vector_preserve",
+          "rmk/fixed_mouse_pacing_15ms"
+        ],
+        "host_fixed_15ms": [
+          "rtt_diag",
+          "rmk/host_fixed_15ms"
+        ],
+        "pmw_axes_600": [],
+        "production_v22": [
+          "mouse_vector_preserve",
+          "pmw_axes_600",
+          "right_uf2_cleanup"
+        ],
+        "production_v30g": [
+          "production_v22",
+          "fixed_mouse_pacing_15ms",
+          "rmk/host_first_split_wake"
+        ],
+        "universal_mac_iso": [
+          "rmk/universal_symbols_iso"
+        ],
+        "pmw_force_awake_diag": [
+          "mouse_interval_control",
+          "rtt_diag"
+        ],
+        "pmw_smart_off_diag": [
+          "mouse_interval_control",
+          "rtt_diag"
+        ],
+        "pmw_raw_600_diag": [
+          "mouse_interval_control",
+          "rtt_diag"
+        ],
+        "pmw_raw_1000_diag": [
+          "mouse_interval_control",
+          "rtt_diag"
+        ],
+        "pmw_axes_600_diag": [
+          "mouse_vector_preserve",
+          "pmw_axes_600",
+          "rtt_diag"
+        ],
+        "right_uf2_cleanup": [],
+        "qube": [
+          "protocol_rynk",
+          "rmk/usb_log",
+          "rmk/st7789",
+          "dep:lcd-async",
+          "dep:embedded-hal-bus",
+          "dep:embedded-graphics",
+          "dep:rmk-types",
+          "dep:u8g2-fonts"
+        ],
+        "qube-half": [
+          "protocol_rynk",
+          "rmk/defmt"
+        ]
+      },
+      "dependencies": {
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "storage",
+            "ble_profile_names",
+            "universal_symbols",
+            "nrf52840_ble",
+            "split",
+            "async_matrix",
+            "adafruit_bl",
+            "display"
+          ]
+        },
+        "embedded-hal-bus": {
+          "version": "0.3",
+          "features": [
+            "async"
+          ],
+          "optional": true
+        },
+        "embedded-graphics": {
+          "version": "0.8",
+          "optional": true
+        },
+        "lcd-async": {
+          "version": "0.1",
+          "optional": true
+        },
+        "rmk-types": {
+          "path": "../../rmk-types",
+          "optional": true
+        },
+        "u8g2-fonts": {
+          "version": "0.5.2",
+          "features": [
+            "embedded_graphics_textstyle"
+          ],
+          "optional": true
+        },
+        "heapless": "0.9",
+        "embassy-futures": "0.1",
+        "embassy-sync": "0.8",
+        "embedded-hal-async": "1.0",
+        "portable-atomic": "1",
+        "nrf-sdc": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "peripheral",
+            "central",
+            "nrf52840"
+          ]
+        },
+        "nrf-mpsl": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "critical-section-impl",
+            "nrf52840"
+          ]
+        },
+        "bt-hci": {
+          "version": "0.11",
+          "default-features": false,
+          "features": [
+            "defmt"
+          ]
+        },
+        "cortex-m": "0.7.7",
+        "cortex-m-rt": "0.7.5",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "tick-hz-32_768",
+            "defmt",
+            "defmt-timestamp-uptime"
+          ]
+        },
+        "embassy-nrf": {
+          "version": "0.11",
+          "features": [
+            "defmt",
+            "nrf52840",
+            "time-driver-rtc1",
+            "gpiote",
+            "unstable-pac",
+            "nfc-pins-as-gpio",
+            "time"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "platform-cortex-m",
+            "executor-thread"
+          ]
+        },
+        "defmt": "1.0",
+        "defmt-rtt": "1.0",
+        "panic-probe": {
+          "version": "1.0",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "static_cell": "2",
+        "rand": {
+          "version": "0.8.4",
+          "default-features": false
+        },
+        "rand_core": {
+          "version": "0.6"
+        },
+        "rand_chacha": {
+          "version": "0.3",
+          "default-features": false
+        },
+        "embassy-usb-driver": "=0.2.2"
+      },
+      "build-dependencies": {
+        "xz2": "0.1.7",
+        "json": "0.12",
+        "const-gen": "1.6"
+      },
+      "bin": [
+        {
+          "name": "central",
+          "path": "src/central.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "peripheral",
+          "path": "src/peripheral.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "qube",
+          "path": "src/qube.rs",
+          "required-features": [
+            "qube"
+          ],
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "left",
+          "path": "src/left.rs",
+          "required-features": [
+            "qube-half"
+          ],
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "right",
+          "path": "src/right.rs",
+          "required-features": [
+            "qube-half"
+          ],
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "hardreset",
+          "path": "src/bin/hardreset.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": false,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat",
+          "strip": "symbols"
+        }
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      }
+    },
+    "op36": {
+      "package": {
+        "name": "op36",
+        "version": "0.1.0",
+        "description": "RMK BLE split firmware for Ergohaven op36 (nRF52840)",
+        "homepage": "https://github.com/eh-fws/k03-rmk",
+        "repository": "https://github.com/eh-fws/k03-rmk",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "features": {
+        "default": [
+          "protocol_rynk"
+        ],
+        "protocol_rynk": [
+          "rmk/ergohaven_rynk"
+        ],
+        "protocol_vial": [
+          "rmk/vial",
+          "rmk/host_lock"
+        ],
+        "vial_standalone": [
+          "protocol_vial"
+        ],
+        "universal_mac_iso": [
+          "rmk/universal_symbols_iso_bit0"
+        ]
+      },
+      "dependencies": {
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "usb_log",
+            "storage",
+            "universal_symbols",
+            "nrf52840_ble",
+            "split",
+            "async_matrix",
+            "adafruit_bl"
+          ]
+        },
+        "embassy-futures": "0.1",
+        "nrf-sdc": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "peripheral",
+            "central",
+            "nrf52840"
+          ]
+        },
+        "nrf-mpsl": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "critical-section-impl",
+            "nrf52840"
+          ]
+        },
+        "bt-hci": {
+          "version": "0.11",
+          "default-features": false,
+          "features": [
+            "defmt"
+          ]
+        },
+        "cortex-m": "0.7.7",
+        "cortex-m-rt": "0.7.5",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "tick-hz-32_768",
+            "defmt",
+            "defmt-timestamp-uptime"
+          ]
+        },
+        "embassy-nrf": {
+          "version": "0.11",
+          "features": [
+            "defmt",
+            "nrf52840",
+            "time-driver-rtc1",
+            "gpiote",
+            "unstable-pac",
+            "nfc-pins-as-gpio",
+            "time"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "platform-cortex-m",
+            "executor-thread"
+          ]
+        },
+        "defmt": "1.0",
+        "defmt-rtt": "1.0",
+        "panic-probe": {
+          "version": "1.0",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "static_cell": "2",
+        "embassy-usb-driver": "=0.2.2",
+        "rand": {
+          "version": "0.8.4",
+          "default-features": false
+        },
+        "rand_core": {
+          "version": "0.6"
+        },
+        "rand_chacha": {
+          "version": "0.3",
+          "default-features": false
+        }
+      },
+      "build-dependencies": {
+        "xz2": "0.1.7",
+        "json": "0.12",
+        "const-gen": "1.6"
+      },
+      "bin": [
+        {
+          "name": "central",
+          "path": "src/central.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "peripheral",
+          "path": "src/peripheral.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat"
+        }
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      }
+    },
+    "phenom": {
+      "package": {
+        "name": "phenom",
+        "version": "0.1.0",
+        "description": "RMK wired split firmware for Ergohaven Phenom Series (RP2040)",
+        "homepage": "https://github.com/ergohaven/rmk",
+        "repository": "https://github.com/ergohaven/rmk",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      },
+      "bin": [
+        {
+          "name": "central",
+          "path": "src/central.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "peripheral",
+          "path": "src/peripheral.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "features": {
+        "default": [
+          "standalone",
+          "production_v22"
+        ],
+        "standalone": [
+          "rmk/k04_standalone_timeout_14"
+        ],
+        "production_v22": [
+          "pmw_axes_600"
+        ],
+        "pmw_axes_600": []
+      },
+      "dependencies": {
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "defmt",
+            "ergohaven_rynk",
+            "rp2040",
+            "split",
+            "storage",
+            "universal_symbols",
+            "watchdog"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "executor-thread",
+            "platform-cortex-m"
+          ]
+        },
+        "embassy-futures": {
+          "version": "0.1",
+          "features": [
+            "defmt"
+          ]
+        },
+        "embassy-rp": {
+          "version": "0.10",
+          "features": [
+            "critical-section-impl",
+            "defmt",
+            "rp2040",
+            "time-driver"
+          ]
+        },
+        "embassy-sync": "0.8",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "defmt"
+          ]
+        },
+        "embedded-hal-async": "1.0",
+        "heapless": "0.9",
+        "cortex-m-rt": "0.7.5",
+        "defmt": "1",
+        "defmt-rtt": "1",
+        "panic-probe": {
+          "version": "1",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "portable-atomic": {
+          "version": "1",
+          "features": [
+            "critical-section"
+          ]
+        },
+        "smart-leds": "0.4",
+        "static_cell": "2"
+      },
+      "build-dependencies": {
+        "const-gen": "1.6",
+        "json": "0.12",
+        "xz2": "0.1.7"
+      },
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat"
+        }
+      }
+    },
+    "velvet": {
+      "package": {
+        "name": "velvet",
+        "version": "0.1.0",
+        "description": "RMK BLE split firmware for Ergohaven velvet (nRF52840)",
+        "homepage": "https://github.com/eh-fws/k03-rmk",
+        "repository": "https://github.com/eh-fws/k03-rmk",
+        "edition": "2021",
+        "license": "MIT OR Apache-2.0",
+        "autotests": false,
+        "autobenches": false,
+        "autoexamples": false
+      },
+      "features": {
+        "default": [
+          "protocol_rynk"
+        ],
+        "protocol_rynk": [
+          "rmk/ergohaven_rynk"
+        ],
+        "protocol_vial": [
+          "rmk/vial",
+          "rmk/host_lock"
+        ],
+        "vial_standalone": [
+          "protocol_vial"
+        ],
+        "universal_mac_iso": [
+          "rmk/universal_symbols_iso_bit1"
+        ]
+      },
+      "dependencies": {
+        "rmk": {
+          "path": "../../rmk",
+          "default-features": false,
+          "features": [
+            "usb_log",
+            "storage",
+            "universal_symbols",
+            "nrf52840_ble",
+            "split",
+            "async_matrix",
+            "adafruit_bl"
+          ]
+        },
+        "embassy-futures": "0.1",
+        "nrf-sdc": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "peripheral",
+            "central",
+            "nrf52840"
+          ]
+        },
+        "nrf-mpsl": {
+          "git": "https://github.com/alexmoon/nrf-sdc",
+          "rev": "a0eafe07808e496fe9937add099bb4eec1a8ee17",
+          "features": [
+            "defmt",
+            "critical-section-impl",
+            "nrf52840"
+          ]
+        },
+        "bt-hci": {
+          "version": "0.11",
+          "default-features": false,
+          "features": [
+            "defmt"
+          ]
+        },
+        "cortex-m": "0.7.7",
+        "cortex-m-rt": "0.7.5",
+        "embassy-time": {
+          "version": "0.5",
+          "features": [
+            "tick-hz-32_768",
+            "defmt",
+            "defmt-timestamp-uptime"
+          ]
+        },
+        "embassy-nrf": {
+          "version": "0.11",
+          "features": [
+            "defmt",
+            "nrf52840",
+            "time-driver-rtc1",
+            "gpiote",
+            "unstable-pac",
+            "nfc-pins-as-gpio",
+            "time"
+          ]
+        },
+        "embassy-executor": {
+          "version": "0.10",
+          "features": [
+            "defmt",
+            "platform-cortex-m",
+            "executor-thread"
+          ]
+        },
+        "defmt": "1.0",
+        "defmt-rtt": "1.0",
+        "panic-probe": {
+          "version": "1.0",
+          "features": [
+            "print-defmt"
+          ]
+        },
+        "static_cell": "2",
+        "embassy-usb-driver": "=0.2.2",
+        "rand": {
+          "version": "0.8.4",
+          "default-features": false
+        },
+        "rand_core": {
+          "version": "0.6"
+        },
+        "rand_chacha": {
+          "version": "0.3",
+          "default-features": false
+        }
+      },
+      "build-dependencies": {
+        "xz2": "0.1.7",
+        "json": "0.12",
+        "const-gen": "1.6"
+      },
+      "bin": [
+        {
+          "name": "central",
+          "path": "src/central.rs",
+          "test": false,
+          "bench": false
+        },
+        {
+          "name": "peripheral",
+          "path": "src/peripheral.rs",
+          "test": false,
+          "bench": false
+        }
+      ],
+      "profile": {
+        "dev": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": 1,
+          "overflow-checks": true,
+          "lto": false,
+          "panic": "unwind"
+        },
+        "release": {
+          "codegen-units": 1,
+          "debug": true,
+          "opt-level": "z",
+          "overflow-checks": false,
+          "lto": "fat"
+        }
+      },
+      "workspace": {
+        "members": [
+          "."
+        ]
+      }
+    }
+  },
+  "runtime_hashes": {
+    "rmk/src/universal_symbols/mod.rs": "0ebfc620e48ee0bf90bb2c36e8cfbfe7d2b225d302082225a04f7f5fe9faae34",
+    "rmk/build.rs": "be6961ff2ad45bcc945bd937f11107605a5832eee290c8c88561298765281a9f"
+  }
+}

@@ -1,11 +1,22 @@
-# Selectable Vial Universal Symbols profiles
+# Universal Symbols ANSI/ISO profiles
 
-Rynk remains the default protocol. Existing keyboard TOMLs, descriptors,
-hardware mappings, topology and production features are unchanged. Vial builds
-use separate TOMLs (only `host.vial_enabled` / `host.rynk_enabled` differ) and
-separate descriptors. Mini and Qube do not opt into the new ISO contract.
+All 17 official RMK profiles use Rynk and expose the existing ANSI/ISO selector
+in Entropy's Universal Symbols live features: ten standalone profiles and seven
+Qube profiles. Hardware mappings and production features are unchanged.
 
-From the repository root, select both files and all standalone options explicitly:
+Separate Vial firmware artifacts are no longer built or published by the official
+firmware matrix, including the former K:03, K:04 Micro, Imperial44, OP36 and
+Velvet variants. Existing published releases are historical and are not removed.
+Vial runtime support, Cargo aliases, TOMLs and descriptors remain available for
+manual builds; this does not change QMK/Vial firmware. Official Rynk firmware
+uses Entropy/Rynk, not the Vial application.
+
+Manual Vial builds use separate TOMLs (only `host.vial_enabled` /
+`host.rynk_enabled` differ). Each official Rynk row and manual Vial profile
+selects a matching static `*_universal.json` descriptor.
+
+For a manual Vial build, select both files and all standalone options explicitly
+from the repository root:
 
 ```sh
 KEYBOARD_TOML_PATH="$PWD/keyboards/k04/keyboard_vial.toml" \
@@ -20,25 +31,46 @@ Use `--bin peripheral` for the other role. For K:04 Micro use
 For `k03`, `imperial44`, `op36`, and `velvet`, use `keyboard_vial.toml`,
 `vial_universal.json`, and `--features vial_standalone,universal_mac_iso` in that
 model's crate. Their hardware configurations and role offsets are not copied
-from K:04. The ISO masks are respectively K:04/Micro=4, K:03/I44/OP36=1, Velvet=2.
+from K:04. The ISO masks are K:04/Mini/Micro and Phenom/Mini/Micro=4,
+K:03/I44/OP36=1, and Velvet=2, including their Qube profiles.
 Build scripts reject both/no protocols, Vial without its complete standalone
-alias, Rynk with the ISO alias, and ISO without the matching descriptor.
+alias, and ISO without the matching descriptor on the selectable-protocol boards.
 
 `protocol_rynk` selects the existing Ergohaven Rynk features;
 `protocol_vial` selects Vial plus the current `host_lock` feature. The
 `vial_standalone` alias preserves K:04's nonprotocol `standalone` options when
-Cargo defaults are disabled. Qube aliases retain Rynk explicitly. CI keeps every
-existing Rynk row and adds six separately named Vial rows, each building both roles.
+Cargo defaults are disabled. Qube aliases retain Rynk explicitly. CI retains
+every Rynk row and no separate Vial firmware rows. Core Vial protocol tests remain
+enabled; manual availability does not imply an official Vial firmware release.
 Board build scripts forward their active feature aliases to the configuration
 macro through `RMK_BOARD_FEATURES`; this avoids mistaking manifest dependency
 features for the actually selected protocol.
 
+## Feature and layout-option ownership
+
+Standalone rows use the board's `universal_mac_iso` alias without replacing
+their existing feature flags. K:04 Qube dongle and both halves enable that same
+alias. Classic Qube rows explicitly use `rmk/universal_symbols_iso_bit0` for
+OP36/K:03/I44 or `rmk/universal_symbols_iso_bit1` for Velvet on all three roles;
+no model-specific runtime switch is needed. `.github/workflows/build.yml` is the
+official profile inventory; `scripts/build_k04_matrix.sh` mirrors the Rynk rows.
+
+The geometry selector is prepended, not appended. Layout options pack from the
+last label toward bit zero, so existing encoder-hide and trackball bits keep
+their positions. KLE condition indices and Velvet's `layoutOption` setting
+reference advance by one; coordinates, encoder markers and custom keycodes do
+not change. ANSI is value zero and remains the default for existing stored
+options. ISO changes only macOS Universal Symbols grave/tilde, including their
+Russian fallback; ordinary keys and PC strokes are unchanged.
+
 ## Persistence boundary
 
-The existing schema hash includes **all RMK features**. Enabling ISO changes that
-hash and can trigger the existing storage reset policy. No hash/reset migration
-is changed here. Export before flashing a different feature build; do not infer
-upgrade persistence from the same-build restore tests. Within the same build,
+The existing Rynk schema hash excludes the three geometry feature flags; this
+exclusion and the runtime/storage implementation are unchanged. No new setting,
+storage format or migration is introduced. Other feature changes can still
+trigger the existing reset policy; Vial does not share the Rynk exclusion.
+Export before flashing a different feature build; do not infer general upgrade
+persistence from the same-build restore tests. Within the same build,
 platform and packed options restore without rewriting absent default records;
 keymaps and default layers retain their independent records. Host layout-option
 SET still updates the live keymap and returns a persistence failure rather than
