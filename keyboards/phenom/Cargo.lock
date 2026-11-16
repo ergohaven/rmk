@@ -1625,6 +1625,7 @@ name = "phenom"
 version = "0.1.0"
 dependencies = [
  "const-gen",
+ "cortex-m",
  "cortex-m-rt",
  "defmt 1.1.1",
  "defmt-rtt",
