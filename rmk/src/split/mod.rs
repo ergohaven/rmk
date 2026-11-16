@@ -180,7 +180,10 @@ mod tests {
         let mut buffer = [0_u8; SPLIT_MESSAGE_MAX_SIZE];
         let encoded = postcard::to_slice(&SplitMessage::InputActivity, &mut buffer).unwrap();
         assert_eq!(encoded, &[12 + u8::from(cfg!(feature = "_ble"))]);
-        assert!(matches!(postcard::from_bytes::<SplitMessage>(encoded), Ok(SplitMessage::InputActivity)));
+        assert!(matches!(
+            postcard::from_bytes::<SplitMessage>(encoded),
+            Ok(SplitMessage::InputActivity)
+        ));
     }
 
     #[test]
