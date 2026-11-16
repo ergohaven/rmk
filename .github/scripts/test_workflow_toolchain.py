@@ -15,8 +15,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Complete pre-stabilization argv inventories, with only the stable selector
 # normalized. Review every feature/filter/flag change before refreshing these.
 ROUTING_DIGESTS = {
-    'check.sh': '3c47c337b35b9467b80111f76754db87c143d077096577976c3f27f4a9ed9a9f',
-    'test.sh': 'a09c290191996d9dbc37f142227c890a9c1c3b0333b6c45e648150e79c9d4e5c',
+    'check.sh': '9e85792b74970549c72a09e000515d04daf18ef4b90ce43d80516d80fbbfd383',
+    'test.sh': '2a72affa94fb734723c52a7bf7d5afe7d8af99e849ae94a2e55bc8699b5f6ce2',
     'host.sh': '69c395a139754b8c23891a2cea9a67193dbbce81deb247a0b80f57550d3c3478',
 }
 
@@ -136,7 +136,7 @@ class StableToolchainTests(unittest.TestCase):
         self.assertRegex(channel(), r'^\d+\.\d+\.\d+$')
 
     def test_shell_owners_route_every_stable_command(self):
-        for script, count in [('check.sh', 36), ('test.sh', 30), ('host.sh', 7)]:
+        for script, count in [('check.sh', 37), ('test.sh', 31), ('host.sh', 7)]:
             with self.subTest(script=script):
                 commands = route_commands(script, *(['stable'] if script == 'check.sh' else []))
                 selected = [row for row in commands if row[0] in ('cargo', 'rustc')]

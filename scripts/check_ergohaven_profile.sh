@@ -776,6 +776,17 @@ for file in keyboards/phenom/vial{,_mini,_micro}.json; do
         || fail "$file: settings must be the K:04 Standalone module and LED tabs"
 done
 
+python3 - <<'PY_WINDOW' || fail "Phenom window helpers must retain user slots 54 and 55"
+import json
+from pathlib import Path
+
+for name in ("vial.json", "vial_mini.json", "vial_micro.json"):
+    path = Path("keyboards/phenom") / name
+    names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
+    assert len(names) >= 56, (path, len(names))
+    assert names[54:56] == ["WNEXT", "WPREV"], (path, names[54:56])
+PY_WINDOW
+
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
     jq -e '
         .entropy.batteryHalves == true
