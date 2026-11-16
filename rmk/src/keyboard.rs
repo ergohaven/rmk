@@ -34,6 +34,8 @@ use crate::{COMBO_MAX_NUM, FORK_MAX_NUM, boot};
 
 pub(crate) mod auto_mouse_layer;
 pub mod combo;
+#[cfg(feature = "ergohaven_delayed_english")]
+mod english_fallback;
 pub(crate) mod fork;
 pub(crate) mod held_buffer;
 pub(crate) mod macros;
@@ -258,6 +260,8 @@ pub struct Keyboard<'a> {
     /// Firmware-native EN/RU punctuation state.
     #[cfg(feature = "universal_symbols")]
     universal_symbols: crate::universal_symbols::State,
+    #[cfg(feature = "ergohaven_delayed_english")]
+    english_fallback: Option<Instant>,
 
     /// Plover HID stenography chord accumulator
     #[cfg(feature = "steno")]
@@ -291,6 +295,8 @@ impl<'a> Keyboard<'a> {
             combo_on: true,
             #[cfg(feature = "universal_symbols")]
             universal_symbols: crate::universal_symbols::State::default(),
+            #[cfg(feature = "ergohaven_delayed_english")]
+            english_fallback: None,
             #[cfg(feature = "steno")]
             steno: crate::keyboard::steno::StenoChord::new(),
             #[cfg(feature = "passkey_entry")]
@@ -340,6 +346,8 @@ impl<'a> Keyboard<'a> {
             one_shot,
             buffered,
             self.mouse.next_deadline(),
+            #[cfg(feature = "ergohaven_delayed_english")]
+            self.english_fallback,
             self.keymap.macros(|m| m.is_playing()).then_some(self.macro_due),
         ]
         .into_iter()
@@ -350,6 +358,8 @@ impl<'a> Keyboard<'a> {
     /// Handle every deadline that is due. Each step checks its own deadline, so
     /// calling this too early does nothing.
     async fn fire_expired(&mut self) {
+        #[cfg(feature = "ergohaven_delayed_english")]
+        self.expire_english_fallback().await;
         match self.next_buffered_key() {
             // `next_deadline` hides the one-shot while a key is buffered, so at most
             // one of these two can be due.
@@ -399,6 +409,8 @@ impl<'a> Keyboard<'a> {
 
     /// Process an input source's press or release.
     pub async fn process_inner(&mut self, event: KeyboardEvent) {
+        #[cfg(feature = "ergohaven_delayed_english")]
+        self.expire_english_fallback().await;
         // Check for mode transitions (e.g., entering/exiting passkey entry)
         #[cfg(feature = "passkey_entry")]
         self.passkey_entry_state.check_mode_transition();
@@ -1773,6 +1785,9 @@ impl<'a> Keyboard<'a> {
             }
         }
 
+        #[cfg(feature = "ergohaven_delayed_english")]
+        self.finish_english_fallback_for_key(key, event.pressed).await;
+
         // Pre-check
         if event.pressed {
             // Record last press time, only for the simple key
@@ -1979,7 +1994,29 @@ impl<'a> Keyboard<'a> {
             return false;
         }
 
+        #[cfg(feature = "ergohaven_delayed_english")]
+        if crate::universal_symbols::RussianLetter::from_user_id(user_id).is_some() {
+            self.restore_english_fallback().await;
+        }
         let host_layout = crate::host_data::snapshot().layout;
+        #[cfg(feature = "ergohaven_delayed_english")]
+        let previous_fallback = self.english_fallback;
+        #[cfg(feature = "ergohaven_delayed_english")]
+        let host_layout = if self.english_fallback.is_some() {
+            // Consume observations without letting host notification latency end fallback.
+            self.universal_symbols.observe_host_layout(host_layout);
+            if matches!(
+                user_id,
+                crate::universal_symbols::USER_SET_ENGLISH
+                    | crate::universal_symbols::USER_SET_RUSSIAN
+                    | crate::universal_symbols::USER_TOGGLE
+            ) {
+                self.english_fallback = None;
+            }
+            None
+        } else {
+            host_layout
+        };
         #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "storage"))]
         let previous_platform = self.universal_symbols.platform();
         let previous_state = self.universal_symbols;
@@ -2001,17 +2038,39 @@ impl<'a> Keyboard<'a> {
                 let sent = self.send_universal_symbols_layout_switch(platform).await;
                 if !sent {
                     self.universal_symbols = previous_state;
+                    #[cfg(feature = "ergohaven_delayed_english")]
+                    {
+                        self.english_fallback = previous_fallback;
+                    }
                 }
                 sent
             }
             crate::universal_symbols::Command::Type(resolved) => {
+                #[cfg(feature = "ergohaven_delayed_english")]
+                let delayed = resolved.temporary_layout_switch
+                    && self.universal_symbols.layout() == crate::universal_symbols::HostLayout::Russian;
+                #[cfg(not(feature = "ergohaven_delayed_english"))]
+                let delayed = false;
                 if resolved.temporary_layout_switch {
-                    self.send_universal_symbols_layout_switch(platform).await;
+                    if !self.send_universal_symbols_layout_switch(platform).await && delayed {
+                        return false;
+                    }
+                    #[cfg(feature = "ergohaven_delayed_english")]
+                    if delayed {
+                        self.universal_symbols
+                            .set_layout(crate::universal_symbols::HostLayout::English);
+                    }
                 }
                 self.send_universal_symbols_tap(resolved.stroke.keycode, resolved.stroke.modifiers)
                     .await;
-                if resolved.temporary_layout_switch {
+                if resolved.temporary_layout_switch && !delayed {
                     self.send_universal_symbols_layout_switch(platform).await;
+                }
+                #[cfg(feature = "ergohaven_delayed_english")]
+                if delayed {
+                    self.english_fallback = Some(Instant::now() + Duration::from_millis(500));
+                } else {
+                    self.extend_english_fallback(user_id);
                 }
                 true
             }
@@ -2610,6 +2669,292 @@ mod test {
                 );
                 assert!(flash_channel.try_receive().is_err());
             }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_keeps_english_until_a_following_letter() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let russian = keyboard.universal_symbols;
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols,
+                State::default(),
+                "fallback must leave English active"
+            );
+            keyboard
+                .process_action_key(
+                    HidKeyCode::F1,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 1, true),
+                )
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols,
+                State::default(),
+                "function keys do not end fallback"
+            );
+            keyboard
+                .process_action_key(
+                    HidKeyCode::A,
+                    ModifierCombination::LSHIFT,
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols, russian,
+                "restore Russian before the following shifted letter"
+            );
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_restores_russian_before_russian_letter_actions() {
+        block_on(async {
+            use crate::universal_symbols::{
+                HostLayout, State, USER_RUSSIAN_LETTER_START, USER_SET_RUSSIAN, USER_SYMBOL_START,
+            };
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let press = KeyboardEvent::key(0, 0, true);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            crate::channel::USB_REPORT_CHANNEL.clear();
+            assert!(
+                keyboard
+                    .process_universal_symbols_user_action(USER_RUSSIAN_LETTER_START, press)
+                    .await
+            );
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+            let mut saw_letter = false;
+            let mut saw_switch = false;
+            while let Ok(report) = crate::channel::USB_REPORT_CHANNEL.try_receive() {
+                if let Report::KeyboardReport(report) = report.into_report() {
+                    if report.keycodes.contains(&(HidKeyCode::Space as u8)) {
+                        saw_switch = true;
+                    }
+                    if report.keycodes.contains(&(HidKeyCode::LeftBracket as u8)) {
+                        assert!(saw_switch, "restore Russian before emitting the letter");
+                        saw_letter = true;
+                    }
+                }
+            }
+            assert!(saw_letter, "the assigned Russian letter must not be dropped");
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_defers_the_return_switch_for_500_millis() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let russian = keyboard.universal_symbols;
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            crate::channel::USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            let mut switches = 0;
+            while let Ok(report) = crate::channel::USB_REPORT_CHANNEL.try_receive() {
+                if let Report::KeyboardReport(report) = report.into_report() {
+                    if report.modifier == ModifierCombination::LGUI.into_bits()
+                        && report.keycodes.contains(&(HidKeyCode::Space as u8))
+                    {
+                        switches += 1;
+                    }
+                }
+            }
+            assert_eq!(switches, 1, "the return switch must be deferred");
+            Timer::after_millis(499).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols, State::default());
+            Timer::after_millis(1).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols, russian);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_extends_only_for_english_punctuation_and_honors_explicit_english() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let press = KeyboardEvent::key(0, 0, true);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            Timer::after_millis(450).await;
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 16, press)
+                .await;
+            Timer::after_millis(100).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            keyboard
+                .process_universal_symbols_user_action(USER_SET_ENGLISH, press)
+                .await;
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_timeout_is_not_starved_by_queued_function_keys() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            Timer::after_millis(501).await;
+            keyboard
+                .process_inner(KeyboardEvent {
+                    source: KeyboardEventSource::KeyCode(HidKeyCode::F1),
+                    pressed: true,
+                })
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_retries_a_full_report_and_keeps_numero_symmetric() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_NUMERO, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard
+                .process_universal_symbols_user_action(USER_NUMERO, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            assert!(keyboard.english_fallback.is_none());
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            let held = [
+                HidKeyCode::A,
+                HidKeyCode::B,
+                HidKeyCode::C,
+                HidKeyCode::D,
+                HidKeyCode::E,
+                HidKeyCode::F,
+            ];
+            for (index, key) in held.into_iter().enumerate() {
+                keyboard.register_key(
+                    key,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(1, index as u8, true),
+                );
+            }
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            assert!(keyboard.english_fallback.is_some());
+            keyboard.unregister_key(
+                HidKeyCode::F,
+                ModifierCombination::new(),
+                KeyboardEvent::key(1, 5, false),
+            );
+            Timer::after_millis(10).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_timeout_preserves_held_modifiers() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            keyboard.register_key(
+                HidKeyCode::No,
+                ModifierCombination::LSHIFT,
+                KeyboardEvent::key(0, 1, true),
+            );
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            crate::channel::USB_REPORT_CHANNEL.clear();
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            let mut last_report = None;
+            while let Ok(report) = crate::channel::USB_REPORT_CHANNEL.try_receive() {
+                if let Report::KeyboardReport(report) = report.into_report() {
+                    last_report = Some(report);
+                }
+            }
+            let report = last_report.expect("restore emits a final held-key report");
+            assert_eq!(report.modifier, ModifierCombination::LSHIFT.into_bits());
+            assert_eq!(report.keycodes, [0; 6]);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_consumes_host_observations_and_toggle_cancels_the_timer() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_SYMBOL_START, USER_TOGGLE};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            crate::host_data::update_layout(1);
+            let press = KeyboardEvent::key(0, 0, true);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            // The host finally announces the English switch during the fallback window.
+            crate::host_data::update_layout(0);
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START, press)
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols.layout(),
+                HostLayout::Russian,
+                "a consumed English notice must not undo the return"
+            );
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            keyboard.process_universal_symbols_user_action(USER_TOGGLE, press).await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
         });
     }
 

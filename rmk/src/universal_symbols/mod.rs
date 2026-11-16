@@ -253,8 +253,19 @@ impl State {
         self.platform
     }
 
-    fn set_layout(&mut self, layout: HostLayout) -> Command {
-        if self.layout == layout {
+    pub(crate) const fn layout(&self) -> HostLayout {
+        self.layout
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    pub(crate) fn observe_host_layout(&mut self, code: Option<u8>) {
+        if let Some(layout) = code.and_then(HostLayout::from_host_code) {
+            self.last_host_layout = Some(layout);
+        }
+    }
+
+    pub(crate) fn set_layout(&mut self, layout: HostLayout) -> Command {
+        if self.layout() == layout {
             Command::None
         } else {
             self.layout = layout;
