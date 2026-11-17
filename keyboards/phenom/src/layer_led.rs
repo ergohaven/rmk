@@ -8,9 +8,12 @@ use embassy_rp::interrupt::typelevel::{Binding, DMA_IRQ_0, PIO0_IRQ_0};
 use embassy_rp::peripherals::{DMA_CH0, PIN_25, PIO0};
 use embassy_rp::pio::{self, Pio};
 use embassy_rp::pio_programs::ws2812::{Grb, PioWs2812, PioWs2812Program};
-use embassy_rp::{dma, Peri};
+use embassy_rp::{Peri, dma};
 use embassy_time::{Duration, Instant};
-use rmk::event::{ConnectionStatusChangeEvent, LayerChangeEvent, PeripheralSettingsEvent};
+use rmk::event::{
+    ConnectionStatusChangeEvent, InputActivityEvent, KeyboardEvent, LayerChangeEvent, PeripheralSettingsEvent,
+    PointingEvent, publish_event,
+};
 use rmk::macros::processor;
 use rmk::processor::DeadlineProcessor;
 use rmk::types::connection::UsbState;
@@ -19,13 +22,13 @@ use smart_leds::RGB8;
 use crate::module_settings;
 
 #[processor(
-    subscribe = [LayerChangeEvent, PeripheralSettingsEvent, ConnectionStatusChangeEvent],
+    subscribe = [LayerChangeEvent, PeripheralSettingsEvent, ConnectionStatusChangeEvent, KeyboardEvent, PointingEvent, InputActivityEvent],
     deadline
 )]
 pub struct LayerLed {
     led: PioWs2812<'static, PIO0, 0, 1, Grb>,
     layer: u8,
-    /// When the base-layer color goes dark.
+    /// When the current layer color goes dark after input inactivity.
     dark_at: Option<Instant>,
     dark: bool,
     /// The host suspended USB, so the LED stays off.
@@ -73,13 +76,32 @@ impl LayerLed {
         self.render().await;
     }
 
-    /// A non-base layer stays lit while it is active. The base-layer color
-    /// goes dark after the Entropy LED timeout, unless that is 0.
+    async fn on_keyboard_event(&mut self, event: KeyboardEvent) {
+        use rmk::event::KeyboardEventSource;
+        if matches!(
+            event.source,
+            KeyboardEventSource::Key(_) | KeyboardEventSource::RotaryEncoder(_) | KeyboardEventSource::Touch(_)
+        ) {
+            publish_event(InputActivityEvent);
+        }
+    }
+
+    async fn on_pointing_event(&mut self, event: PointingEvent) {
+        if event.axes.iter().any(|axis| axis.value != 0) {
+            publish_event(InputActivityEvent);
+        }
+    }
+
+    async fn on_input_activity_event(&mut self, _: InputActivityEvent) {
+        self.arm_timeout();
+        self.render().await;
+    }
+
+    /// Every layer follows the Entropy inactivity timeout; 0 stays lit.
     fn arm_timeout(&mut self) {
         let timeout = module_settings::led_timeout_sec();
         self.dark = false;
-        self.dark_at =
-            (self.layer == 0 && timeout != 0).then(|| Instant::now() + Duration::from_secs(u64::from(timeout)));
+        self.dark_at = (timeout != 0).then(|| Instant::now() + Duration::from_secs(u64::from(timeout)));
     }
 
     async fn render(&mut self) {

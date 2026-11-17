@@ -53,12 +53,14 @@ rustc() {
 }
 wasm-pack() { record wasm-pack "$@"; }
 npx() { record npx "$@"; }
-export -f record cargo rustc wasm-pack npx
+# Python probes are tested separately; routing must stay compiler-free.
+python3() { test -f "$SOURCE_ROOT/$1"; }
+export -f record cargo rustc wasm-pack npx python3
 bash "$@"
 '''
         result = subprocess.run(
             ['bash', '-euc', fixture, 'fixture', str(root / '.github/ci' / script), *args],
-            env={**os.environ, 'COMMAND_LOG': str(log)}, cwd=root,
+            env={**os.environ, 'COMMAND_LOG': str(log), 'SOURCE_ROOT': str(ROOT)}, cwd=root,
             text=True, capture_output=True, timeout=10,
         )
         if result.returncode:
