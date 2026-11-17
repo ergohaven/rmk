@@ -29,6 +29,7 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "storage",
     "ergohaven_rynk",
     "universal_symbols",
+    "ergohaven_layer_cycling",
     "nrf52840_ble",
     "split",
     "async_matrix",

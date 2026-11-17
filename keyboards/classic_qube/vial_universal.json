@@ -1,0 +1,276 @@
+{
+    "name": "Ergohaven OP36",
+    "manufacturer": "Ergohaven",
+    "vendorId": "0xE126",
+    "productId": "0x0036",
+    "firmware": {
+        "name": "RMK",
+        "version": "0.3.0"
+    },
+    "firmwareVersion": "0.3.0",
+    "entropy": {
+        "firmwareUpdate": { "asset": "op36-qube" },
+        "liveFeatures": ["time", "media"],
+        "batteryHalves": true
+    },
+    "lighting": "none",
+    "matrix": {
+        "rows": 6,
+        "cols": 6
+    },
+    "customKeycodes": [
+        {
+            "name": "BT0",
+            "title": "Bluetooth Channel 0",
+            "shortName": "BT0"
+        },
+        {
+            "name": "BT1",
+            "title": "Bluetooth Channel 1",
+            "shortName": "BT1"
+        },
+        {
+            "name": "BT2",
+            "title": "Bluetooth Channel 2",
+            "shortName": "BT2"
+        },
+        {
+            "name": "BT3",
+            "title": "Bluetooth Channel 3",
+            "shortName": "BT3"
+        },
+        {
+            "name": "BT4",
+            "title": "Bluetooth Channel 4",
+            "shortName": "BT4"
+        },
+        {
+            "name": "NEXT_BT",
+            "title": "Switch to next BT channel",
+            "shortName": "Next\nBT"
+        },
+        {
+            "name": "PREV_BT",
+            "title": "Switch to prev BT channel",
+            "shortName": "Prev\nBT"
+        },
+        {
+            "name": "CLR_BT",
+            "title": "Clear BT bond info",
+            "shortName": "Clear\nBT"
+        },
+        {
+            "name": "SWITCH",
+            "title": "Switch USB/BLE output",
+            "shortName": "Switch\nOutput"
+        },
+        {
+            "name": "CLR_PEER",
+            "title": "Clear split peer",
+            "shortName": "Clear\nPeer"
+        },
+    {"name": "EH_RSRV10", "shortName": "", "title": ""},
+    {"name": "EH_RSRV11", "shortName": "", "title": ""},
+    {"name": "EH_RSRV12", "shortName": "", "title": ""},
+    {"name": "EH_RSRV13", "shortName": "", "title": ""},
+    {"name": "EH_RSRV14", "shortName": "", "title": ""},
+    {"name": "EH_RSRV15", "shortName": "", "title": ""},
+    {"name": "EH_RSRV16", "shortName": "", "title": ""},
+    {"name": "EH_RSRV17", "shortName": "", "title": ""},
+    {"name": "EH_RSRV18", "shortName": "", "title": ""},
+    {"name": "EH_RSRV19", "shortName": "", "title": ""},
+    {"name": "EH_RSRV20", "shortName": "", "title": ""},
+    {"name": "EH_RSRV21", "shortName": "", "title": ""},
+    {"name": "EH_RSRV22", "shortName": "", "title": ""},
+    {"name": "EH_RSRV23", "shortName": "", "title": ""},
+    {"name": "EH_RSRV24", "shortName": "", "title": ""},
+    {"name": "EH_RSRV25", "shortName": "", "title": ""},
+    {"name": "EH_RSRV26", "shortName": "", "title": ""},
+    {"name": "EH_RSRV27", "shortName": "", "title": ""},
+    {"name": "EH_RSRV28", "shortName": "", "title": ""},
+    {"name": "EH_RSRV29", "shortName": "", "title": ""},
+    {"name": "EH_RSRV30", "shortName": "", "title": ""},
+    {"name": "EH_RSRV31", "shortName": "", "title": ""},
+    {"name": "EH_RSRV32", "shortName": "", "title": ""},
+    {"name": "EH_RSRV33", "shortName": "", "title": ""},
+    {"name": "EH_RSRV34", "shortName": "", "title": ""},
+    {"name": "EH_RSRV35", "shortName": "", "title": ""},
+    {"name": "EH_RSRV36", "shortName": "", "title": ""},
+    {"name": "EH_RSRV37", "shortName": "", "title": ""},
+    {"name": "EH_RSRV38", "shortName": "", "title": ""},
+    {"name": "EH_RSRV39", "shortName": "", "title": ""},
+    {"name": "EH_RSRV40", "shortName": "", "title": ""},
+    {"name": "EH_RSRV41", "shortName": "", "title": ""},
+    {"name": "EH_RSRV42", "shortName": "", "title": ""},
+    {"name": "EH_RSRV43", "shortName": "", "title": ""},
+    {"name": "EH_RSRV44", "shortName": "", "title": ""},
+    {"name": "EH_RSRV45", "shortName": "", "title": ""},
+    {"name": "EH_RSRV46", "shortName": "", "title": ""},
+    {"name": "EH_RSRV47", "shortName": "", "title": ""},
+    {"name": "EH_RSRV48", "shortName": "", "title": ""},
+    {"name": "EH_RSRV49", "shortName": "", "title": ""},
+    {"name": "EH_RSRV50", "shortName": "", "title": ""},
+    {"name": "EH_RSRV51", "shortName": "", "title": ""},
+    {"name": "LNEXT", "shortName": "Layer next", "title": "Next layer from the highest active layer (default through 15), skipping No bindings"},
+    {"name": "LPREV", "shortName": "Layer prev", "title": "Previous layer from the highest active layer (default through 15), skipping No bindings"}
+    ],
+    "layouts": {
+        "labels": [["Universal Symbols geometry", "ANSI", "ISO"]],
+        "keymap": [
+            [
+                {
+                    "y": 0.375,
+                    "x": 1
+                },
+                "0,4",
+                {
+                    "y": -0.25
+                },
+                "0,3",
+                {
+                    "y": -0.125
+                },
+                "0,2",
+                {
+                    "y": 0.125
+                },
+                "0,1",
+                {
+                    "y": 0.125
+                },
+                "0,0",
+                {
+                    "x": 3
+                },
+                "3,0",
+                {
+                    "y": -0.125
+                },
+                "3,1",
+                {
+                    "y": -0.125
+                },
+                "3,2",
+                {
+                    "y": 0.125
+                },
+                "3,3",
+                {
+                    "y": 0.25
+                },
+                "3,4"
+            ],
+            [
+                {
+                    "x": 1
+                },
+                "1,4",
+                {
+                    "y": -0.25
+                },
+                "1,3",
+                {
+                    "y": -0.125
+                },
+                "1,2",
+                {
+                    "y": 0.125
+                },
+                "1,1",
+                {
+                    "y": 0.125
+                },
+                "1,0",
+                {
+                    "x": 3
+                },
+                "4,0",
+                {
+                    "y": -0.125
+                },
+                "4,1",
+                {
+                    "y": -0.125
+                },
+                "4,2",
+                {
+                    "y": 0.125
+                },
+                "4,3",
+                {
+                    "y": 0.25
+                },
+                "4,4"
+            ],
+            [
+                {
+                    "x": 1
+                },
+                "2,4",
+                {
+                    "y": -0.25
+                },
+                "2,3",
+                {
+                    "y": -0.125
+                },
+                "2,2",
+                {
+                    "y": 0.125
+                },
+                "2,1",
+                {
+                    "y": 0.125
+                },
+                "2,0",
+                {
+                    "x": 3
+                },
+                "5,0",
+                {
+                    "y": -0.125
+                },
+                "5,1",
+                {
+                    "y": -0.125
+                },
+                "5,2",
+                {
+                    "y": 0.125
+                },
+                "5,3",
+                {
+                    "y": 0.25
+                },
+                "5,4"
+            ],
+            [
+                {
+                    "y": -0.125,
+                    "x": 4
+                },
+                "0,5",
+                {
+                    "y": 0.25
+                },
+                "1,5",
+                {
+                    "y": 0.25
+                },
+                "2,5",
+                {
+                    "x": 1
+                },
+                "5,5",
+                {
+                    "y": -0.25
+                },
+                "4,5",
+                {
+                    "y": -0.25
+                },
+                "3,5"
+            ]
+        ]
+    }
+}

@@ -15,8 +15,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Complete pre-stabilization argv inventories, with only the stable selector
 # normalized. Review every feature/filter/flag change before refreshing these.
 ROUTING_DIGESTS = {
-    'check.sh': 'a4553a4340198f20bc93bc2bee4efc0b418a01069915babe4eb6bb9fe7ca78da',
-    'test.sh': '0b9f4e486c8c0b766758cb32552927b0e25f5600151ffaa72c27be0e74a201cf',
+    'check.sh': '4410a24d04946ede4688a5fa546e67bde21333d30c2358e9cdbfb4fd74ac2e32',
+    'test.sh': '1e8d12284d534442c88c8f23a854cf78406e3a9a87c2bb764316c589fac52e93',
     'host.sh': '69c395a139754b8c23891a2cea9a67193dbbce81deb247a0b80f57550d3c3478',
 }
 
@@ -53,12 +53,14 @@ rustc() {
 }
 wasm-pack() { record wasm-pack "$@"; }
 npx() { record npx "$@"; }
-export -f record cargo rustc wasm-pack npx
+# Python probes are tested separately; routing must stay compiler-free.
+python3() { test -f "$SOURCE_ROOT/$1"; }
+export -f record cargo rustc wasm-pack npx python3
 bash "$@"
 '''
         result = subprocess.run(
             ['bash', '-euc', fixture, 'fixture', str(root / '.github/ci' / script), *args],
-            env={**os.environ, 'COMMAND_LOG': str(log)}, cwd=root,
+            env={**os.environ, 'COMMAND_LOG': str(log), 'SOURCE_ROOT': str(ROOT)}, cwd=root,
             text=True, capture_output=True, timeout=10,
         )
         if result.returncode:

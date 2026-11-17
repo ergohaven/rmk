@@ -108,7 +108,7 @@ fn generate_vial_config(vial_path: &Path) -> u16 {
         assert_eq!(
             parsed["layouts"]["labels"][0][0].as_str(),
             Some("Universal Symbols geometry"),
-            "universal_mac_iso requires the matching *_universal.json definition; Mini/Qube are excluded"
+            "universal_mac_iso requires the matching *_universal.json definition"
         );
     }
     let product_id = parsed["productId"]

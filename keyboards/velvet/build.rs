@@ -24,10 +24,6 @@ fn main() {
         !vial || std::env::var_os("CARGO_FEATURE_VIAL_STANDALONE").is_some(),
         "Vial requires vial_standalone to preserve standalone build options"
     );
-    assert!(
-        std::env::var_os("CARGO_FEATURE_UNIVERSAL_MAC_ISO").is_none() || vial,
-        "universal_mac_iso is only supported by the Vial standalone profile"
-    );
     const FIRMWARE_VERSION: &str = "0.3.0";
     const FIRMWARE_VERSION_BCD: &str = "0x0300";
 

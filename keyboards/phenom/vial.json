@@ -215,7 +215,9 @@
     {"name": "EH_RSRV50", "shortName": "", "title": ""},
     {"name": "EH_RSRV51", "shortName": "", "title": ""},
     {"name": "LNEXT", "shortName": "Layer next", "title": "Next layer from the highest active layer (default through 15), skipping No bindings"},
-    {"name": "LPREV", "shortName": "Layer prev", "title": "Previous layer from the highest active layer (default through 15), skipping No bindings"}
+    {"name": "LPREV", "shortName": "Layer prev", "title": "Previous layer from the highest active layer (default through 15), skipping No bindings"},
+    {"name": "WNEXT", "shortName": "Window next", "title": "Next window (Alt/Command + Tab; modifier held for 650 ms)"},
+    {"name": "WPREV", "shortName": "Window prev", "title": "Previous window (Shift + Alt/Command + Tab; modifier held for 650 ms)"}
   ],
   "settings": [
     {
@@ -229,7 +231,8 @@
             "None",
             "Encoder",
             "Trackball",
-            "Touchpad"
+            "Touchpad",
+            "Auto"
           ]
         },
         {
@@ -416,7 +419,8 @@
             "None",
             "Encoder",
             "Trackball",
-            "Touchpad"
+            "Touchpad",
+            "Auto"
           ]
         },
         {

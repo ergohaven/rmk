@@ -67,7 +67,11 @@
         {"name": "EH_L_STK_OFF", "shortName": "L Sticky\nOff", "title": "Disable sticky mode for the left pointing device"},
         {"name": "EH_R_STK_TG", "shortName": "R Sticky\nToggle", "title": "Toggle sticky mode for the right pointing device"},
         {"name": "EH_R_STK_ON", "shortName": "R Sticky\nOn", "title": "Enable sticky mode for the right pointing device"},
-        {"name": "EH_R_STK_OFF", "shortName": "R Sticky\nOff", "title": "Disable sticky mode for the right pointing device"}
+        {"name": "EH_R_STK_OFF", "shortName": "R Sticky\nOff", "title": "Disable sticky mode for the right pointing device"},
+    {"name": "EH_RSRV50", "shortName": "", "title": ""},
+    {"name": "EH_RSRV51", "shortName": "", "title": ""},
+    {"name": "LNEXT", "shortName": "Layer next", "title": "Next layer from the highest active layer (default through 15), skipping No bindings"},
+    {"name": "LPREV", "shortName": "Layer prev", "title": "Previous layer from the highest active layer (default through 15), skipping No bindings"}
     ],
     "settings": [
         {

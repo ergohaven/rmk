@@ -51,6 +51,8 @@ pub mod caps {
     pub const STAGED_WRITES: u32 = 1 << 7;
     /// Universal Symbols include numero (`Action::User(0xB4)`).
     pub const UNIVERSAL_NUMERO: u32 = 1 << 8;
+    /// Universal Symbols include Ж, Э and Ё (`Action::User(0xB5..=0xB7)`).
+    pub const EXTENDED_RUSSIAN_LETTERS: u32 = 1 << 9;
 }
 
 /// What `GetErgohavenInfo` reports.

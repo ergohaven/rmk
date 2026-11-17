@@ -71,6 +71,8 @@ pub(crate) enum SplitMessage {
     /// Product id handshake used by the BLE split engine to reject peers from
     /// a different keyboard model.
     ProductId(u16),
+    /// Physical input activity, from central to peripheral lighting.
+    InputActivity,
     /// Runtime host-advertising mode, synced from central to peripheral LEDs.
     #[cfg(feature = "_ble")]
     BleAdvertisingMode(BleAdvertisingMode),
@@ -172,6 +174,17 @@ impl MaxSize for FirmwareChunkData {
 mod tests {
     use super::*;
     use crate::event::{Axis, AxisEvent, AxisValType};
+
+    #[test]
+    fn input_activity_id_is_independent_of_dfu_and_display() {
+        let mut buffer = [0_u8; SPLIT_MESSAGE_MAX_SIZE];
+        let encoded = postcard::to_slice(&SplitMessage::InputActivity, &mut buffer).unwrap();
+        assert_eq!(encoded, &[12 + u8::from(cfg!(feature = "_ble"))]);
+        assert!(matches!(
+            postcard::from_bytes::<SplitMessage>(encoded),
+            Ok(SplitMessage::InputActivity)
+        ));
+    }
 
     #[test]
     fn split_pointing_round_trip_preserves_full_i16_axes() {

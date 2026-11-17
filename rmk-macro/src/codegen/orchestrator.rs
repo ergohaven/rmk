@@ -31,6 +31,13 @@ use super::watchdog::expand_watchdog_init;
 
 /// Parse keyboard mod and generate a valid RMK main function with all needed code
 pub(crate) fn parse_keyboard_mod(item_mod: syn::ItemMod) -> TokenStream2 {
+    parse_keyboard_mod_for_side(item_mod, None)
+}
+
+pub(crate) fn parse_keyboard_mod_for_side(
+    item_mod: syn::ItemMod,
+    peripheral: Option<usize>,
+) -> TokenStream2 {
     // Reject invalid `#[Overwritten(...)]` attributes up front instead of
     // silently falling back to the generated defaults (#966)
     if let Some(errors) = crate::codegen::override_helper::validate_overwritten_attrs(&item_mod) {
@@ -46,9 +53,7 @@ pub(crate) fn parse_keyboard_mod(item_mod: syn::ItemMod) -> TokenStream2 {
         .identity()
         .expect("failed to resolve identity config");
     let host = keyboard_config.host();
-    let hardware = keyboard_config
-        .hardware()
-        .expect("failed to resolve hardware config");
+
     let behavior = keyboard_config
         .behavior()
         .expect("failed to resolve behavior config");
@@ -58,6 +63,15 @@ pub(crate) fn parse_keyboard_mod(item_mod: syn::ItemMod) -> TokenStream2 {
     let layout = keyboard_config
         .layout()
         .expect("failed to resolve layout config");
+
+    let resolved_hardware = match peripheral {
+        Some(id) => keyboard_config.hardware_for_split_peripheral(id),
+        None => keyboard_config.hardware().map(|hardware| (hardware, 0)),
+    };
+    let (hardware, encoder_offset) = match resolved_hardware {
+        Ok(resolved) => resolved,
+        Err(error) => return syn::Error::new_spanned(&item_mod, error).to_compile_error(),
+    };
 
     validate_feature_config_parity(
         &rmk_features,
@@ -128,6 +142,7 @@ pub(crate) fn parse_keyboard_mod(item_mod: syn::ItemMod) -> TokenStream2 {
         &layout,
         item_mod,
         &rmk_features,
+        encoder_offset,
     );
 
     quote! {
@@ -253,6 +268,7 @@ fn expand_main(
     layout: &Layout,
     item_mod: syn::ItemMod,
     rmk_features: &Option<Vec<String>>,
+    encoder_offset: usize,
 ) -> TokenStream2 {
     // Expand components of main function
     let imports = expand_custom_imports(&item_mod);
@@ -267,8 +283,28 @@ fn expand_main(
     let ergohaven = host.rynk_enabled && is_feature_enabled(rmk_features, "ergohaven_rynk");
     let keymap_and_storage = expand_keymap_and_storage(hardware, keymap, host, ergohaven);
     let split_central_config = expand_split_central_config(hardware);
-    let (input_device_config, devices, processors) = expand_input_device_config(hardware);
-    let matrix_and_keyboard = expand_matrix_and_keyboard_init(hardware);
+    let (input_device_config, devices, processors) =
+        expand_input_device_config(hardware, encoder_offset);
+    let matrix_and_keyboard = expand_matrix_init(hardware);
+    let keyboard_init = item_mod
+        .content
+        .as_ref()
+        .and_then(|(_, items)| {
+            items.iter().find_map(|item| {
+                if let syn::Item::Fn(function) = item
+                    && matches!(
+                        super::override_helper::find_overwritten(function),
+                        Some(Ok(super::override_helper::Overwritten::Keyboard))
+                    )
+                {
+                    let statements = &function.block.stmts;
+                    Some(quote! { #(#statements)* })
+                } else {
+                    None
+                }
+            })
+        })
+        .unwrap_or_else(|| quote! { let mut keyboard = ::rmk::keyboard::Keyboard::new(&keymap); });
     let (registered_processor_initializers, mut registered_processors) =
         expand_registered_processor_init(hardware, &item_mod);
 
@@ -437,7 +473,8 @@ fn expand_main(
             // Initialize the registered processors
             #registered_processor_initializers
 
-            // Initialize the matrix + keyboard, as `matrix` and `keyboard`
+            // Initialize the keyboard (unless deferred) and local matrix
+            #keyboard_init
             #matrix_and_keyboard
 
             // Initialize the host (Vial / Rynk) service, as `host_service`
@@ -583,7 +620,7 @@ pub(crate) fn expand_keymap_and_storage(
     }
 }
 
-pub(crate) fn expand_matrix_and_keyboard_init(hardware: &Hardware) -> TokenStream2 {
+pub(crate) fn expand_matrix_init(hardware: &Hardware) -> TokenStream2 {
     let matrix = match &hardware.board {
         BoardConfig::UniBody(UniBodyConfig {
             matrix: matrix_config,
@@ -640,7 +677,6 @@ pub(crate) fn expand_matrix_and_keyboard_init(hardware: &Hardware) -> TokenStrea
         }
     };
     quote! {
-        let mut keyboard = ::rmk::keyboard::Keyboard::new(&keymap);
         #matrix
     }
 }

@@ -42,6 +42,7 @@ pub(crate) fn expand_pointing_acceleration(
 /// Returns a tuple containing: (device_and_processors_initialization, devices, processors)
 pub(crate) fn expand_input_device_config(
     hardware: &Hardware,
+    encoder_offset: usize,
 ) -> (TokenStream, Vec<TokenStream>, Vec<TokenStream>) {
     let mut initialization = TokenStream::new();
     let mut devices = Vec::new();
@@ -74,8 +75,12 @@ pub(crate) fn expand_input_device_config(
     }
 
     // generate encoder configuration
-    let (device_initializer, processor_initializer) =
-        expand_encoder_device(0, input_device.encoder.unwrap_or_default(), chip);
+    let (device_initializer, processor_initializer) = expand_encoder_device(
+        encoder_offset,
+        0,
+        input_device.encoder.unwrap_or_default(),
+        chip,
+    );
     for initializer in device_initializer {
         initialization.extend(initializer.initializer);
         let device_name = initializer.var_name;

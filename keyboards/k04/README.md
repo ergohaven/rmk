@@ -15,12 +15,12 @@ Product ID, Vial keyboard ID, storage, and UF2 artifact.
 
 | Topology | Profile | Keyboard config | Vial config | Matrix | Product ID |
 |----------|---------|-----------------|-------------|--------|------------|
-| Standalone | K:04 | `keyboard.toml` | `vial.json` | 10×6 | `0x0074` |
-| Standalone | Mini | `keyboard_mini.toml` | `vial_mini.json` | 8×6 | `0x0075` |
-| Standalone | Micro | `keyboard_micro.toml` | `vial_micro.json` | 8×6 | `0x0076` |
-| Qube | K:04 | `keyboard_qube.toml` | `vial_qube.json` | 10×6 | `0x0071` |
-| Qube | Mini | `keyboard_qube_mini.toml` | `vial_qube_mini.json` | 8×6 | `0x0072` |
-| Qube | Micro | `keyboard_qube_micro.toml` | `vial_qube_micro.json` | 8×6 | `0x0073` |
+| Standalone | K:04 | `keyboard.toml` | `vial_universal.json` | 10×6 | `0x0074` |
+| Standalone | Mini | `keyboard_mini.toml` | `vial_mini_universal.json` | 8×6 | `0x0075` |
+| Standalone | Micro | `keyboard_micro.toml` | `vial_micro_universal.json` | 8×6 | `0x0076` |
+| Qube | K:04 | `keyboard_qube.toml` | `vial_qube_universal.json` | 10×6 | `0x0071` |
+| Qube | Mini | `keyboard_qube_mini.toml` | `vial_qube_mini_universal.json` | 8×6 | `0x0072` |
+| Qube | Micro | `keyboard_qube_micro.toml` | `vial_qube_micro_universal.json` | 8×6 | `0x0073` |
 
 ## Build
 
@@ -31,9 +31,9 @@ CARGO_TARGET_DIR=target/k04 \
 cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g,universal_mac_iso
 
 KEYBOARD_TOML_PATH="$PWD/keyboard_mini.toml" \
-VIAL_JSON_PATH="$PWD/vial_mini.json" \
+VIAL_JSON_PATH="$PWD/vial_mini_universal.json" \
 CARGO_TARGET_DIR=target/mini \
-cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g
+cargo build --release --bin central --bin peripheral --bin hardreset --features production_v30g,universal_mac_iso
 
 KEYBOARD_TOML_PATH="$PWD/keyboard_micro.toml" \
 VIAL_JSON_PATH="$PWD/vial_micro_universal.json" \
@@ -45,14 +45,14 @@ Qube K:04:
 
 ```sh
 KEYBOARD_TOML_PATH="$PWD/keyboard_qube.toml" \
-VIAL_JSON_PATH="$PWD/vial_qube.json" \
+VIAL_JSON_PATH="$PWD/vial_qube_universal.json" \
 CARGO_TARGET_DIR=target/qube/k04/dongle \
-cargo build --release --bin qube --no-default-features --features qube
+cargo build --release --bin qube --no-default-features --features qube,universal_mac_iso
 
 KEYBOARD_TOML_PATH="$PWD/keyboard_qube.toml" \
-VIAL_JSON_PATH="$PWD/vial_qube.json" \
+VIAL_JSON_PATH="$PWD/vial_qube_universal.json" \
 CARGO_TARGET_DIR=target/qube/k04/halves \
-cargo build --release --bin left --bin right --no-default-features --features qube-half
+cargo build --release --bin left --bin right --no-default-features --features qube-half,universal_mac_iso
 ```
 
 Use the matching `*_mini` or `*_micro` pair for the other Qube models.
@@ -71,10 +71,11 @@ Select Mac mode with the Universal Symbols macOS toggle; firmware remembers
 this choice after a restart. Configure macOS input-source switching as
 Control+Space and keep English and Russian as the two input sources.
 
-For K:04 and Micro standalone builds, select ANSI or ISO in Entropy's
+For every K:04 Series standalone and Qube profile, select ANSI or ISO in Entropy's
 Live Integrations → Universal Symbols to match the keyboard type in macOS.
 This changes universal backtick and tilde only, and preserves the encoder options.
-Mini and Qube do not advertise this geometry option.
+ANSI is the default. The selector uses bit 2; both existing encoder-hide bits
+retain their meanings.
 
 With Entropy closed, use the universal language toggle so firmware can track the
 language. If the language changes elsewhere, use the universal sync key to
