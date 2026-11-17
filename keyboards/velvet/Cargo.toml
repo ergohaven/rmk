@@ -22,6 +22,7 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "usb_log",
     "storage",
     "universal_symbols",
+    "ergohaven_language_helpers",
     "nrf52840_ble",
     "split",
     "async_matrix",

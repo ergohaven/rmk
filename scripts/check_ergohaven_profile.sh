@@ -461,13 +461,14 @@ check_projection(
     {
         (4, 0): ("_", "LeftBracket"), (9, 0): ("_", "RightBracket"),
         (4, 5): ("Delete", "LGui"), (4, 4): ("LGui", "LAlt"),
-        (9, 3): ("RAlt", "RCtrl"), (9, 4): ("LeftBracket", "RAlt"),
+        (9, 3): ("LAlt", "RCtrl"), (9, 4): ("LeftBracket", "LAlt"),
         (9, 5): ("RightBracket", "RGui"),
     },
 )
 PY
 
 python3 scripts/test_approved_factory_layouts.py || fail "approved factory layout regression tests failed"
+python3 -B scripts/test_factory_alt.py || fail "factory layouts must use Left Alt"
 
 for file in "${non_k04_profiles[@]}"; do
     expect_toml "$file" combo_max_length 4
@@ -533,7 +534,7 @@ from pathlib import Path
 workflow = Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 expected_features = {
     "k04_series_k04": "production_v30g,universal_mac_iso",
-    "k04_series_mini": "production_v30g",
+    "k04_series_mini": "production_v30g,universal_mac_iso",
     "k04_series_micro": "production_v30g,universal_mac_iso",
 }
 for output_name, features in expected_features.items():
@@ -545,10 +546,10 @@ for output_name, features in expected_features.items():
 
 assert "cargo build --release --bin central ${{ matrix.build_features }}" in workflow
 assert "cargo build --release --bin peripheral ${{ matrix.build_features }}" in workflow
-assert workflow.count('build_features: "--features production_v30g"') == 1
-assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 2
-# Only K:04 Micro retains a separate Vial production row.
-assert workflow.count('build_features: "--no-default-features --features vial_standalone,production_v30g,universal_mac_iso"') == 1
+assert workflow.count('build_features: "--features production_v30g"') == 0
+assert workflow.count('build_features: "--features production_v30g,universal_mac_iso"') == 3
+# Vial remains manually buildable, but has no official production row.
+assert 'vial_standalone' not in workflow
 PY
 
 python3 - <<'PY' || fail "K:04 local build instructions drifted from the production profile"
@@ -565,7 +566,7 @@ assert 'local features=production_v30g' in standalone_body
 assert 'features+=,universal_mac_iso' in standalone_body
 for call in (
     "build_k04_series_profile k04 keyboard.toml vial_universal.json",
-    "build_k04_series_profile mini keyboard_mini.toml vial_mini.json",
+    "build_k04_series_profile mini keyboard_mini.toml vial_mini_universal.json",
     "build_k04_series_profile micro keyboard_micro.toml vial_micro_universal.json",
 ):
     assert script.count(call) == 1, call
@@ -575,24 +576,24 @@ standalone_command = (
     "cargo build --release --bin central --bin peripheral --bin hardreset "
     "--features production_v30g"
 )
-assert standalone_readme.count(standalone_command + ",universal_mac_iso") == 2
-assert standalone_readme.count(standalone_command + "\n") == 1
+assert standalone_readme.count(standalone_command + ",universal_mac_iso") == 3
+assert standalone_readme.count(standalone_command + "\n") == 0
 
 k04_qube_body = script.split("build_k04_qube_profile() {", 1)[1].split(
     'echo "Using BINDGEN_EXTRA_CLANG_ARGS=', 1
 )[0]
 assert k04_qube_body.count(
-    "cargo build --release --bin qube --no-default-features --features qube"
+    "cargo build --release --bin qube --no-default-features --features qube,universal_mac_iso"
 ) == 1
 assert k04_qube_body.count(
-    "cargo build --release --bin left --bin right --no-default-features --features qube-half"
+    "cargo build --release --bin left --bin right --no-default-features --features qube-half,universal_mac_iso"
 ) == 1
 assert "production_v30g" not in k04_qube_body
 assert qube_readme.count(
-    "cargo build --release --bin qube --no-default-features --features qube"
+    "cargo build --release --bin qube --no-default-features --features qube,universal_mac_iso"
 ) == 1
 assert qube_readme.count(
-    "cargo build --release --bin left --bin right --no-default-features --features qube-half"
+    "cargo build --release --bin left --bin right --no-default-features --features qube-half,universal_mac_iso"
 ) == 1
 assert "production_v30g" not in qube_readme
 PY
@@ -769,23 +770,45 @@ for file in "${vial_definitions[@]}"; do
 done
 
 # Phenom serves the K:04 Standalone module and LED settings, so entropy must get
-# the same tabs. It has no Bluetooth or battery to configure.
-k04_module_tabs="$(jq -cS '[.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")]' keyboards/k04/vial.json)"
+# the same tabs, with an appended Auto module choice. It has no Bluetooth or battery to configure.
+k04_module_tabs="$(jq -cS '[.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")] | (.. | objects | select(.qsid == 149 or .qsid == 150) | .variants) += ["Auto"]' keyboards/k04/vial.json)"
+# Universal descriptors prepend a layout selector, so setting references advance by one.
+phenom_universal_module_tabs="$(jq -cS '(.. | objects | select(has("layoutOption")) | .layoutOption) += 1' <<<"$k04_module_tabs")"
 for file in keyboards/phenom/vial{,_mini,_micro}.json; do
     [[ "$(jq -cS '.settings' "$file")" == "$k04_module_tabs" ]] \
-        || fail "$file: settings must be the K:04 Standalone module and LED tabs"
+        || fail "$file: settings must be the K:04 Standalone module and LED tabs with Auto module selection"
+    universal_file="${file%.json}_universal.json"
+    [[ "$(jq -cS '.settings' "$universal_file")" == "$phenom_universal_module_tabs" ]] \
+        || fail "$universal_file: universal settings must retain Auto module selection and reindexed layout references"
 done
 
-python3 - <<'PY_RUEN' || fail "Phenom language helpers must retain user slots 56 to 59"
+python3 - <<'PY_WINDOW' || fail "Phenom window helpers must retain user slots 54 and 55"
 import json
 from pathlib import Path
 
-for name in ("vial.json", "vial_mini.json", "vial_micro.json"):
-    path = Path("keyboards/phenom") / name
-    names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
-    assert len(names) >= 60, (path, len(names))
-    assert names[56:60] == ["LG_WORD", "LG_MOD", "LG_STORE", "LG_REVERT"], (path, names[56:60])
-PY_RUEN
+for suffix in ("", "_mini", "_micro"):
+    for geometry in ("", "_universal"):
+        path = Path("keyboards/phenom") / f"vial{suffix}{geometry}.json"
+        names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
+        assert len(names) >= 56, (path, len(names))
+        assert names[50:54] == [f"EH_RSRV{index}" for index in range(50, 54)], (path, names[50:54])
+        assert names[54:56] == ["WNEXT", "WPREV"], (path, names[54:56])
+PY_WINDOW
+
+python3 - <<'PY_ACTION_SLOTS' || fail "ergohaven_language_helpers firmware and Entropy profile wiring drifted"
+import json
+from pathlib import Path
+import tomllib
+
+for board in ('phenom', 'k04', 'k03', 'imperial44', 'op36', 'velvet', 'classic_qube'):
+    directory = Path("keyboards") / board
+    cargo = tomllib.loads((directory / "Cargo.toml").read_text())
+    assert "ergohaven_language_helpers" in cargo["dependencies"]["rmk"]["features"], directory
+    for path in directory.glob("vial*.json"):
+        entries = json.loads(path.read_text())["customKeycodes"]
+        assert [entry["name"] for entry in entries[56:60]] == ['LG_WORD', 'LG_MOD', 'LG_STORE', 'LG_REVERT'], path
+        assert all(entry["shortName"] and entry["title"] for entry in entries[56:60]), path
+PY_ACTION_SLOTS
 
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
     jq -e '
