@@ -3237,7 +3237,11 @@ mod test {
 
             let press = KeyboardEvent::key(0, 0, true);
             for _ in 0..3 {
-                assert!(keyboard.process_universal_symbols_user_action(USER_SYMBOL_START + 15, press).await);
+                assert!(
+                    keyboard
+                        .process_universal_symbols_user_action(USER_SYMBOL_START + 7, press)
+                        .await
+                );
                 drain();
                 Timer::after_millis(100).await;
             }
@@ -3249,7 +3253,9 @@ mod test {
             let expected: &[&str] = if cfg!(feature = "ergohaven_delayed_english") {
                 &["switch", "grave", "grave", "grave", "switch", "letter"]
             } else {
-                &["switch", "grave", "switch", "switch", "grave", "switch", "switch", "grave", "switch", "letter"]
+                &[
+                    "switch", "grave", "switch", "switch", "grave", "switch", "switch", "grave", "switch", "letter",
+                ]
             };
             assert_eq!(observed, expected);
             assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
