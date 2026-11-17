@@ -122,7 +122,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                          {path: BASELINE['descriptors'][path] for path in paths})
         self.assertEqual(set(PROFILE_BASELINE['descriptor_hashes']), paths)
         self.assertEqual(PROFILE_BASELINE['additional_rmk_features'],
-                         {'phenom': ['ergohaven_window_switching']})
+                         {'phenom': ['ergohaven_window_switching', 'ergohaven_delayed_english']})
 
     def test_phenom_production_profiles_advertise_auto_after_manual_module_values(self):
         expected = ['None', 'Encoder', 'Trackball', 'Touchpad', 'Auto']

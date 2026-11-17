@@ -1,5 +1,5 @@
 {
-  "provenance": "Reviewed Phenom metadata: PR #83 appends Auto; PR #88 appends reserved slots 50..53 and WNEXT/WPREV at 54..55. The immutable pre-geometry descriptor hashes are retained below.",
+  "provenance": "Reviewed Phenom metadata: PR #83 appends Auto; PR #88 appends reserved slots 50..53 and WNEXT/WPREV at 54..55. The immutable pre-geometry descriptor hashes are retained below. PR #92 adds Phenom's opt-in delayed punctuation fallback.",
   "previous_descriptor_hashes": {
     "keyboards/phenom/vial.json": "c4b4d9c80a8803f6fbb0e24f2b7a60671f421c9339de6586dce8b6aae8ea1ca6",
     "keyboards/phenom/vial_mini.json": "5d0056d0368c655fad76bf9c9be50832d0296a9abbf91dad89a72859e59851b8",
@@ -12,7 +12,8 @@
   },
   "additional_rmk_features": {
     "phenom": [
-      "ergohaven_window_switching"
+      "ergohaven_window_switching",
+      "ergohaven_delayed_english"
     ]
   }
 }
