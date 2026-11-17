@@ -64,6 +64,7 @@ embassy-time = { version = "0.5", features = ["defmt"] }
 embedded-hal-async = "1.0"
 heapless = "0.9"
 
+cortex-m = "0.7"
 cortex-m-rt = "0.7.5"
 defmt = "1"
 defmt-rtt = "1"
