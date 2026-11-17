@@ -2,7 +2,8 @@
 
 All 17 official RMK profiles use Rynk and expose the existing ANSI/ISO selector
 in Entropy's Universal Symbols live features: ten standalone profiles and seven
-Qube profiles. Hardware mappings and production features are unchanged.
+Qube profiles. The geometry selector does not replace hardware mappings or
+unrelated production features.
 
 Separate Vial firmware artifacts are no longer built or published by the official
 firmware matrix, including the former K:03, K:04 Micro, Imperial44, OP36 and
@@ -63,6 +64,16 @@ not change. ANSI is value zero and remains the default for existing stored
 options. ISO changes only macOS Universal Symbols grave/tilde, including their
 Russian fallback; ordinary keys and PC strokes are unchanged.
 
+## Timed window switching on Phenom
+
+Phenom Full, Mini and Micro expose `WNEXT` (`User(54)`) and `WPREV` (`User(55)`).
+They send Tab or Shift+Tab while holding Alt in PC mode or Command in Mac mode.
+Repeated presses extend a 650 ms timer; expiry releases the owned modifier and
+commits the selection. Layer changes and universal symbol/language actions also
+commit it. On macOS, Command+Tab selects applications rather than windows within
+one application. Slots 50–53 remain reserved; these actions do not add the
+separate Previous/Next Word implementation.
+
 ## Dedicated Russian letters and host layouts
 
 Native actions `User(0xB5)`, `User(0xB6)` and `User(0xB7)` provide Ж, Э and Ё
@@ -80,10 +91,12 @@ changes universal grave/tilde punctuation only and is not a fix for this letter.
 
 ## Persistence boundary
 
-The existing Rynk schema hash excludes the three geometry feature flags; this
-geometry exclusion and the storage implementation are unchanged. No new setting,
-storage format or migration is introduced. Other feature changes can still
-trigger the existing reset policy; Vial does not share the Rynk exclusion.
+The Rynk storage feature signature excludes the three geometry flags and
+`ergohaven_window_switching`: these change reports, not stored framing. Enabling
+the transient window helper therefore does not by itself invalidate existing
+Rynk storage. No new stored setting or format is introduced. Other feature
+changes can still trigger the existing reset policy; Vial retains its established
+feature-hash policy. This is not a general migration guarantee.
 Export before flashing a different feature build; do not infer general upgrade
 persistence from the same-build restore tests. Within the same build,
 platform and packed options restore without rewriting absent default records;

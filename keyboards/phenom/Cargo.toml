@@ -39,6 +39,7 @@ universal_mac_iso = ["rmk/universal_symbols_iso"]
 rmk = { path = "../../rmk", default-features = false, features = [
     "defmt",
     "ergohaven_rynk",
+    "ergohaven_window_switching",
     "rp2040",
     "split",
     "storage",

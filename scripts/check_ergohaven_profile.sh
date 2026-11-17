@@ -782,6 +782,19 @@ for file in keyboards/phenom/vial{,_mini,_micro}.json; do
         || fail "$universal_file: universal settings must retain Auto module selection and reindexed layout references"
 done
 
+python3 - <<'PY_WINDOW' || fail "Phenom window helpers must retain user slots 54 and 55"
+import json
+from pathlib import Path
+
+for suffix in ("", "_mini", "_micro"):
+    for geometry in ("", "_universal"):
+        path = Path("keyboards/phenom") / f"vial{suffix}{geometry}.json"
+        names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
+        assert len(names) >= 56, (path, len(names))
+        assert names[50:54] == [f"EH_RSRV{index}" for index in range(50, 54)], (path, names[50:54])
+        assert names[54:56] == ["WNEXT", "WPREV"], (path, names[54:56])
+PY_WINDOW
+
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
     jq -e '
         .entropy.batteryHalves == true

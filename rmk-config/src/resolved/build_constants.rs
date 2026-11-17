@@ -411,6 +411,36 @@ mod tests {
     };
 
     #[test]
+    fn window_switching_reserves_one_layer_subscriber_with_explicit_phenom_counts() {
+        for config in [
+            toml::from_str("").unwrap(),
+            KeyboardTomlConfig::new_from_toml_path_with_event_defaults(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../keyboards/phenom/keyboard.toml"
+            )),
+            KeyboardTomlConfig::new_from_toml_path_with_event_defaults(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../keyboards/phenom/keyboard_mini.toml"
+            )),
+            KeyboardTomlConfig::new_from_toml_path_with_event_defaults(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../keyboards/phenom/keyboard_micro.toml"
+            )),
+        ] {
+            let before = config.build_constants(&["split", "rynk"]).unwrap();
+            let after = config
+                .build_constants(&["split", "rynk", "ergohaven_window_switching"])
+                .unwrap();
+            for (before, after) in before.events.iter().zip(&after.events) {
+                assert_eq!(before.name, after.name);
+                assert_eq!(before.channel_size, after.channel_size);
+                assert_eq!(before.pubs, after.pubs);
+                assert_eq!(after.subs, before.subs + usize::from(before.name == "layer_change"));
+            }
+        }
+    }
+
+    #[test]
     fn reserves_battery_subscribers_without_requiring_ble() {
         // The LED processor, split forwarding, and each Rynk session can coexist.
         let config: KeyboardTomlConfig = toml::from_str("").unwrap();

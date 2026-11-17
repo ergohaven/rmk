@@ -13,6 +13,7 @@ import yaml
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_geometry_baseline.json').read_text())
+PROFILE_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_profile_baseline.json').read_text())
 GEOMETRY = ['Universal Symbols geometry', 'ANSI', 'ISO']
 ISO_FEATURES = {'universal_symbols_iso', 'universal_symbols_iso_bit0', 'universal_symbols_iso_bit1'}
 # Keep the immutable 22-profile fixture for manual Vial and historical proofs.
@@ -111,8 +112,17 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                         self.assertFalse({'universal_symbols_iso_bit0', 'universal_symbols_iso_bit1'} <= resolved)
                         actual_mask = 1 if 'universal_symbols_iso_bit0' in resolved else 2 if 'universal_symbols_iso_bit1' in resolved else 4
                         self.assertEqual(actual_mask, expected_mask)
-                        self.assertEqual(resolved - ISO_FEATURES, old_resolved - ISO_FEATURES)
+                        added = set(PROFILE_BASELINE['additional_rmk_features'].get(row['keyboard'], []))
+                        self.assertEqual(resolved - ISO_FEATURES, (old_resolved - ISO_FEATURES) | added)
                         self.assertEqual(local - {'universal_mac_iso'}, old_local - {'universal_mac_iso'})
+
+    def test_reviewed_profile_updates_have_exact_scope_and_keep_historical_hashes(self):
+        paths = {f'keyboards/phenom/vial{suffix}.json' for suffix in ('', '_mini', '_micro')}
+        self.assertEqual(PROFILE_BASELINE['previous_descriptor_hashes'],
+                         {path: BASELINE['descriptors'][path] for path in paths})
+        self.assertEqual(set(PROFILE_BASELINE['descriptor_hashes']), paths)
+        self.assertEqual(PROFILE_BASELINE['additional_rmk_features'],
+                         {'phenom': ['ergohaven_window_switching']})
 
     def test_phenom_production_profiles_advertise_auto_after_manual_module_values(self):
         expected = ['None', 'Encoder', 'Trackball', 'Touchpad', 'Auto']
@@ -135,16 +145,10 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                 with self.subTest(profile=row['output_name']):
                     path = str(pathlib.Path('keyboards') / old['keyboard'] / old['vial_json'])
                     original_bytes = (ROOT / path).read_bytes()
-                    baseline_bytes = original_bytes
-                    if old['keyboard'] == 'phenom':
-                        # The immutable fixture predates Auto. Reverse only its
-                        # two appended choices for this historical byte guard;
-                        # compare geometry against the full current schema below.
-                        before_auto = b'            "Touchpad"'
-                        with_auto = before_auto + b',\n            "Auto"'
-                        self.assertEqual(baseline_bytes.count(with_auto), 2)
-                        baseline_bytes = baseline_bytes.replace(with_auto, before_auto)
-                    self.assertEqual(hashlib.sha256(baseline_bytes).hexdigest(), BASELINE['descriptors'][path])
+                    # Reviewed product metadata evolves; the immutable geometry
+                    # reference remains available and all current bytes stay pinned.
+                    digest = PROFILE_BASELINE['descriptor_hashes'].get(path, BASELINE['descriptors'][path])
+                    self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), digest)
                     original = json.loads(original_bytes)
                     current = descriptor(row)
                     self.assertEqual(current['layouts'].get('labels', [None])[0], GEOMETRY)
@@ -217,7 +221,6 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         runtime = json.loads((ROOT / '.github/scripts/fixtures/universal_runtime_baseline.json').read_text())
         self.assertEqual(runtime['previous_runtime_hashes'], BASELINE['runtime_hashes'])
         self.assertEqual(set(runtime['runtime_hashes']), set(BASELINE['runtime_hashes']))
-        self.assertEqual(runtime['runtime_hashes']['rmk/build.rs'], BASELINE['runtime_hashes']['rmk/build.rs'])
         for path, digest in runtime['runtime_hashes'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
 

@@ -77,6 +77,7 @@ RMK_FEATURESETS=(
     # Ergohaven's Rynk boards: BLE split and wired split
     "split,ergohaven_rynk,storage,async_matrix,_ble"
     "split,ergohaven_rynk,storage,async_matrix"
+    "split,ergohaven_rynk,storage,async_matrix,ergohaven_window_switching"
 )
 
 # Behavioral coverage only; RMK_FEATURESETS remains the compile/clippy matrix.
@@ -97,6 +98,7 @@ RMK_TEST_FEATURESETS=(
     # Ergohaven's Rynk boards: BLE split and wired split
     "split,ergohaven_rynk,storage,async_matrix,_ble"
     "split,ergohaven_rynk,storage,async_matrix"
+    "split,ergohaven_rynk,storage,async_matrix,ergohaven_window_switching"
 )
 
 # All rmk features of the K:04 standalone firmware, for the pointing tests that
