@@ -1,18 +1,65 @@
 {
-  "provenance": "Reviewed Phenom metadata: PR #83 appends Auto; PR #88 appends reserved slots 50..53 and WNEXT/WPREV at 54..55. The immutable pre-geometry descriptor hashes are retained below.",
+  "provenance": "Reviewed Phenom metadata: PR #83 appends Auto; PR #88 appends reserved slots 50..53 and WNEXT/WPREV at 54..55. The immutable pre-geometry descriptor hashes are retained below. PR #89 adds ergohaven_language_helpers to all supported families and pins action metadata for every production profile.",
   "previous_descriptor_hashes": {
+    "keyboards/classic_qube/vial.json": "2e1b28160143bbe19546446ba4e2664dab701c42280880686d433f225618beb0",
+    "keyboards/classic_qube/vial_imperial44.json": "34af16939694734c98ec758a9fcc2fb310b76549178df8cd7df658246555ff86",
+    "keyboards/classic_qube/vial_k03.json": "98f9f7b713c90b660ed6a264d15f8220335194f57b1170f6bb59e0610714078e",
+    "keyboards/classic_qube/vial_velvet.json": "0f213765b7be5d45706eb9c05da4aa4956e9c6ed3f902741643588ff403387d3",
+    "keyboards/imperial44/vial.json": "34af16939694734c98ec758a9fcc2fb310b76549178df8cd7df658246555ff86",
+    "keyboards/k03/vial.json": "98f9f7b713c90b660ed6a264d15f8220335194f57b1170f6bb59e0610714078e",
+    "keyboards/k04/vial_micro_universal.json": "74cc5aecbf7a078b593b3aba10f421106e780bcb5333624ae7a2de57040cbd73",
+    "keyboards/k04/vial_mini.json": "1c6b56ea92c7d80fa770d4d159bdf7528ac3ce50324388f61bcce31ee78a74a7",
+    "keyboards/k04/vial_qube.json": "48b066a6b7b9d6f81112a028c4ffad840e7a88a23f09715953dcb4b02a004ca9",
+    "keyboards/k04/vial_qube_micro.json": "65bf7a5566a5dbc440f5a95b9bff9a9f52cddb59f1795c2fc3fcc75f787a244e",
+    "keyboards/k04/vial_qube_mini.json": "0ad164e774a6ca3cd00b2f49d5c96a9a23873ce6c8620b51cb9698f3cbca1dc8",
+    "keyboards/k04/vial_universal.json": "f1f41f52f4b6a913cf5dd20f4e64565a9876ae7be099aa10eefedcf515b6c2e5",
+    "keyboards/op36/vial.json": "6eb54677fa8d1054973333987de30f1c2a501328e17c22bf30d3dae7514e66cd",
     "keyboards/phenom/vial.json": "c4b4d9c80a8803f6fbb0e24f2b7a60671f421c9339de6586dce8b6aae8ea1ca6",
+    "keyboards/phenom/vial_micro.json": "c0c1a854ff9ec3ddacb9f3d612a9e5183d55bfc2bb26fda0c9a2c3e45033f1f2",
     "keyboards/phenom/vial_mini.json": "5d0056d0368c655fad76bf9c9be50832d0296a9abbf91dad89a72859e59851b8",
-    "keyboards/phenom/vial_micro.json": "c0c1a854ff9ec3ddacb9f3d612a9e5183d55bfc2bb26fda0c9a2c3e45033f1f2"
+    "keyboards/velvet/vial.json": "0f213765b7be5d45706eb9c05da4aa4956e9c6ed3f902741643588ff403387d3"
   },
   "descriptor_hashes": {
-    "keyboards/phenom/vial.json": "c341c9c527c76c2f79c263706d61405520c9cd6e1bd88c115f310b7acb43e87b",
-    "keyboards/phenom/vial_mini.json": "0089e275f4769462a68cb1a8fcc5ef820ef9bf4dc203282976de682ea8bae14c",
-    "keyboards/phenom/vial_micro.json": "482e829abe7119cd75aac0c9eaeea0c262334c16eae8ece4dcd455cb2b5fd1db"
+    "keyboards/classic_qube/vial.json": "fa81459ecabdc65acfc942bbe0e72d6a315bf56b8fe880c88e398dd57d4e7889",
+    "keyboards/classic_qube/vial_imperial44.json": "3c004f33d789e54ad7adb04d21093c78c3620b6284f0abf73b3c92dd52c7a2f7",
+    "keyboards/classic_qube/vial_k03.json": "10a5c9e525e3b3d85a3ff299e2b201de63fcfa761cdb9f0a9e9418d84d9f4de4",
+    "keyboards/classic_qube/vial_velvet.json": "896224011d30df384a555d944d636153a3a63cc763c6034b4d2161c74165dce8",
+    "keyboards/imperial44/vial.json": "3c004f33d789e54ad7adb04d21093c78c3620b6284f0abf73b3c92dd52c7a2f7",
+    "keyboards/k03/vial.json": "10a5c9e525e3b3d85a3ff299e2b201de63fcfa761cdb9f0a9e9418d84d9f4de4",
+    "keyboards/k04/vial_micro_universal.json": "e661ab76e0bcb8014f308a92cb29b2abb3f75b90f7564a0a1d4e1b3c952b5524",
+    "keyboards/k04/vial_mini.json": "fbe90e3cc7c58088ff49ce64454cbdc57c3a86e682e82e52c0efa9ff17c78d9f",
+    "keyboards/k04/vial_qube.json": "00048d142f8fdeb7c277010e37c0852171eabf85480840fc0204d6c27994ffff",
+    "keyboards/k04/vial_qube_micro.json": "9e8aae903fa2458d81172a68e08c93be4f812f3080b3f11f45d23fdb258a777b",
+    "keyboards/k04/vial_qube_mini.json": "b90db8928584f6ef0ece78397738e758fa7e2a07ad4d0fa0abba4d898e1c869e",
+    "keyboards/k04/vial_universal.json": "9248ffe67a804a3afac064dadb28b49f7b3a3ea0f83a74d99438089dada3cb9a",
+    "keyboards/op36/vial.json": "348a6df96fe7b391e7d34bbd780d8ffad01a39825a1d51a49b1ae2cdce97a265",
+    "keyboards/phenom/vial.json": "0cfdce97cdcc6527def84da3441d551413bb84f1fed341f4478d62ed2cae3578",
+    "keyboards/phenom/vial_micro.json": "3854ca95cfc0ae89130f3513ea2bff9b94749eec16bbb84f82f2e03c9a0ff9b1",
+    "keyboards/phenom/vial_mini.json": "f5e52e4b3cf23b5bf2f5b13be2d1d78ec3d5d51990f7d15aa92739790418653a",
+    "keyboards/velvet/vial.json": "896224011d30df384a555d944d636153a3a63cc763c6034b4d2161c74165dce8"
   },
   "additional_rmk_features": {
     "phenom": [
-      "ergohaven_window_switching"
+      "ergohaven_window_switching",
+      "ergohaven_language_helpers"
+    ],
+    "classic_qube": [
+      "ergohaven_language_helpers"
+    ],
+    "imperial44": [
+      "ergohaven_language_helpers"
+    ],
+    "k03": [
+      "ergohaven_language_helpers"
+    ],
+    "k04": [
+      "ergohaven_language_helpers"
+    ],
+    "op36": [
+      "ergohaven_language_helpers"
+    ],
+    "velvet": [
+      "ergohaven_language_helpers"
     ]
   }
 }
