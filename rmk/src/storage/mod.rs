@@ -1217,6 +1217,17 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn ergohaven_language_helpers_keeps_existing_storage_feature_signature() {
+        assert!(
+            !env!("RMK_FEATURES")
+                .split(',')
+                .any(|feature| feature == "ergohaven_language_helpers"),
+            "actions that use the existing storage format must preserve saved settings"
+        );
+    }
+
     #[cfg(all(feature = "ergohaven_rynk", feature = "universal_symbols_iso"))]
     #[test]
     fn rynk_geometry_keeps_the_existing_storage_feature_signature() {
