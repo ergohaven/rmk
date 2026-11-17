@@ -2841,6 +2841,56 @@ mod test {
         block_on(main);
     }
 
+    #[cfg(all(
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        feature = "universal_symbols",
+        not(feature = "_no_usb")
+    ))]
+    #[test]
+    fn universal_extended_russian_letters_preserve_shift_and_caps_word_in_reports() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{USER_SET_RUSSIAN, USER_TOGGLE_MACOS};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            for mac in [false, true] {
+                for shifted in [false, true] {
+                    for caps in [false, true] {
+                        let mut keyboard = create_test_keyboard();
+                        keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+                        if mac {
+                            keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+                        }
+                        if shifted {
+                            keyboard.process_inner(KeyboardEvent::key(3, 0, true)).await;
+                        }
+                        if caps {
+                            keyboard.caps_word.toggle();
+                        }
+                        for (id, key) in [
+                            (0xB5, HidKeyCode::Semicolon),
+                            (0xB6, HidKeyCode::Quote),
+                            (0xB7, if mac { HidKeyCode::Backslash } else { HidKeyCode::Grave }),
+                        ] {
+                            USB_REPORT_CHANNEL.clear();
+                            keyboard
+                                .process_universal_symbols_user_action(id, KeyboardEvent::key(0, 0, true))
+                                .await;
+                            let Report::KeyboardReport(report) =
+                                USB_REPORT_CHANNEL.try_receive().unwrap().into_report()
+                            else {
+                                panic!()
+                            };
+                            assert_eq!(report.keycodes[0], key as u8);
+                            assert_eq!(report.modifier & 2 != 0, shifted || caps);
+                            assert_eq!(keyboard.caps_word.is_active(), caps);
+                        }
+                        USB_REPORT_CHANNEL.clear();
+                    }
+                }
+            }
+        });
+    }
+
     #[test]
     fn test_basic_key_press_release() {
         let main = async {

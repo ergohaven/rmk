@@ -211,8 +211,14 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                                 self.assertEqual(offsets(old_labels)[field['layoutOption']],
                                                  offsets(new_labels)[new_field['layoutOption']])
 
-    def test_existing_runtime_and_storage_schema_owner_bytes_are_unchanged(self):
-        for path, digest in BASELINE['runtime_hashes'].items():
+    def test_runtime_and_storage_schema_match_reviewed_baseline(self):
+        # Runtime features can evolve after the geometry change. Keep the
+        # historical fixture intact and require a reviewed, complete successor.
+        runtime = json.loads((ROOT / '.github/scripts/fixtures/universal_runtime_baseline.json').read_text())
+        self.assertEqual(runtime['previous_runtime_hashes'], BASELINE['runtime_hashes'])
+        self.assertEqual(set(runtime['runtime_hashes']), set(BASELINE['runtime_hashes']))
+        self.assertEqual(runtime['runtime_hashes']['rmk/build.rs'], BASELINE['runtime_hashes']['rmk/build.rs'])
+        for path, digest in runtime['runtime_hashes'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
 
     def test_protocol_guards_remain_but_do_not_reject_rynk_geometry(self):

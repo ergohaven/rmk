@@ -1,0 +1,11 @@
+{
+  "provenance": "PR #86 adds QMK-compatible Ж/Э/Ё actions without changing geometry, platform persistence or storage schema ownership. Keep universal_geometry_baseline.json as the immutable pre-geometry reference.",
+  "previous_runtime_hashes": {
+    "rmk/src/universal_symbols/mod.rs": "0ebfc620e48ee0bf90bb2c36e8cfbfe7d2b225d302082225a04f7f5fe9faae34",
+    "rmk/build.rs": "be6961ff2ad45bcc945bd937f11107605a5832eee290c8c88561298765281a9f"
+  },
+  "runtime_hashes": {
+    "rmk/src/universal_symbols/mod.rs": "529d0cb450d1500e1c2be27bbe51a3da46e018a9e61d88399ea2c06326756f0f",
+    "rmk/build.rs": "be6961ff2ad45bcc945bd937f11107605a5832eee290c8c88561298765281a9f"
+  }
+}

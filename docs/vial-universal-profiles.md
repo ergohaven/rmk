@@ -63,10 +63,25 @@ not change. ANSI is value zero and remains the default for existing stored
 options. ISO changes only macOS Universal Symbols grave/tilde, including their
 Russian fallback; ordinary keys and PC strokes are unchanged.
 
+## Dedicated Russian letters and host layouts
+
+Native actions `User(0xB5)`, `User(0xB6)` and `User(0xB7)` provide Ж, Э and Ё
+while Russian is active; existing action IDs are unchanged. They use the existing
+Shift and Caps Word handling. Configurators must require the extended-Russian
+capability: Rynk `EXTENDED_RUSSIAN_LETTERS` or Vial native-actions bit `0x0800`.
+
+PC mode retains the QMK-compatible Russian mapping, with Ё on Grave. Mac mode
+targets Apple's Russian layout, with Ё on Backslash. The two-state platform
+setting does not distinguish the Russian–PC input source on macOS: in PC mode,
+Shift+Ё can produce Latin Ë (`U+00CB`) instead of Cyrillic Ё (`U+0401`). This
+change accepts that host-layout limitation; it does not add a separate
+Russian–PC-on-macOS mode or change other PC mappings. The ANSI/ISO selector
+changes universal grave/tilde punctuation only and is not a fix for this letter.
+
 ## Persistence boundary
 
 The existing Rynk schema hash excludes the three geometry feature flags; this
-exclusion and the runtime/storage implementation are unchanged. No new setting,
+geometry exclusion and the storage implementation are unchanged. No new setting,
 storage format or migration is introduced. Other feature changes can still
 trigger the existing reset policy; Vial does not share the Rynk exclusion.
 Export before flashing a different feature build; do not infer general upgrade

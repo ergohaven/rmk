@@ -76,9 +76,13 @@ pub(crate) fn resolve(layout: HostLayout, platform: Platform, symbol: Symbol) ->
     resolved
 }
 
-pub(crate) const fn resolve_russian_letter(layout: HostLayout, letter: RussianLetter) -> Option<HidKeyCode> {
+pub(crate) const fn resolve_russian_letter(
+    layout: HostLayout,
+    platform: Platform,
+    letter: RussianLetter,
+) -> Option<HidKeyCode> {
     match layout {
         HostLayout::English => None,
-        HostLayout::Russian => Some(ru::letter_keycode(letter)),
+        HostLayout::Russian => Some(ru::letter_keycode(platform, letter)),
     }
 }
