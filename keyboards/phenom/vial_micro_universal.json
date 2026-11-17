@@ -225,7 +225,8 @@
             "None",
             "Encoder",
             "Trackball",
-            "Touchpad"
+            "Touchpad",
+            "Auto"
           ]
         },
         {
@@ -412,7 +413,8 @@
             "None",
             "Encoder",
             "Trackball",
-            "Touchpad"
+            "Touchpad",
+            "Auto"
           ]
         },
         {

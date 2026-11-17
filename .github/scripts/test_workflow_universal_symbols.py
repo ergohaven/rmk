@@ -114,13 +114,37 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                         self.assertEqual(resolved - ISO_FEATURES, old_resolved - ISO_FEATURES)
                         self.assertEqual(local - {'universal_mac_iso'}, old_local - {'universal_mac_iso'})
 
+    def test_phenom_production_profiles_advertise_auto_after_manual_module_values(self):
+        expected = ['None', 'Encoder', 'Trackball', 'Touchpad', 'Auto']
+        profiles = []
+        for entries in rows().values():
+            for row in entries:
+                if row['keyboard'] != 'phenom':
+                    continue
+                profiles.append(row['output_name'])
+                with self.subTest(profile=row['output_name']):
+                    choices = [(field['qsid'], field['variants'])
+                               for group in descriptor(row)['settings'] for field in group['fields']
+                               if field.get('qsid') in (149, 150)]
+                    self.assertEqual(choices, [(149, expected), (150, expected)])
+        self.assertCountEqual(profiles, ['phenom', 'phenom_mini', 'phenom_micro'])
+
     def test_descriptors_only_prepend_selector_and_reindex_conditions(self):
         for job, entries in rows().items():
             for old, row in zip(OFFICIAL_BASELINE_ROWS[job], entries):
                 with self.subTest(profile=row['output_name']):
                     path = str(pathlib.Path('keyboards') / old['keyboard'] / old['vial_json'])
                     original_bytes = (ROOT / path).read_bytes()
-                    self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), BASELINE['descriptors'][path])
+                    baseline_bytes = original_bytes
+                    if old['keyboard'] == 'phenom':
+                        # The immutable fixture predates Auto. Reverse only its
+                        # two appended choices for this historical byte guard;
+                        # compare geometry against the full current schema below.
+                        before_auto = b'            "Touchpad"'
+                        with_auto = before_auto + b',\n            "Auto"'
+                        self.assertEqual(baseline_bytes.count(with_auto), 2)
+                        baseline_bytes = baseline_bytes.replace(with_auto, before_auto)
+                    self.assertEqual(hashlib.sha256(baseline_bytes).hexdigest(), BASELINE['descriptors'][path])
                     original = json.loads(original_bytes)
                     current = descriptor(row)
                     self.assertEqual(current['layouts'].get('labels', [None])[0], GEOMETRY)
