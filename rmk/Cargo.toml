@@ -55,6 +55,8 @@ host = ["dep:byteorder"]
 
 ## Enable firmware-native EN/RU Universal Symbols actions.
 universal_symbols = []
+# Phenom window helpers occupy appended board user slots 54..55.
+ergohaven_window_switching = ["universal_symbols"]
 # QMK-style English fallback lifetime, used by Phenom.
 ergohaven_delayed_english = ["universal_symbols"]
 # Opt-in layout-options bit 2 contract (ISO, left-hide, right-hide).

@@ -167,3 +167,8 @@ events = [
     # dfu/mod.rs: DfuLock subscribes to DfuCmdEvent for UnlockRequest
     { name = "dfu_cmd" },
 ]
+
+# Timed Phenom window switching cancels its held modifier on a layer change.
+[[subscriber]]
+features = ["ergohaven_window_switching"]
+events = [{ name = "layer_change" }]

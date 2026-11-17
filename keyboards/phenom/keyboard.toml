@@ -41,7 +41,7 @@ Grave   Kc1   Kc2   Kc3   Kc4   Kc5     Kc6    Kc7    Kc8    Kc9   Kc0        Ba
 Escape  Q     W     E     R     T       Y      U      I      O     P          Backslash
 Tab     A     S     D     F     G       H      J      K      L     Semicolon  Quote
 LShift  Z     X     C     V     B       N      M      Comma  Dot   Slash      RShift
-        Delete LGui LCtrl MO(1) Space   Enter  MO(2)  RAlt   LeftBracket RightBracket
+        Delete LGui LCtrl MO(1) Space   Enter  MO(2)  LAlt   LeftBracket RightBracket
                                 AudioMute AudioMute
 """
 # encoders: [left, right], each [clockwise, counter-clockwise]
@@ -115,7 +115,9 @@ num_sectors = 32
 # actions, keys, layer changes and peripheral settings.
 action.channel_size = 16
 action.subs = 2
-keyboard.subs = 4
+keyboard.subs = 5
+pointing.subs = 3
+input_activity.subs = 1
 # One settings update publishes base, profile and encoder packets together.
 peripheral_settings.channel_size = 3
 # ModuleSettingsBroadcast answers the re-sync request raised on peripheral link-up.

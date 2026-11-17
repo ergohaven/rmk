@@ -42,9 +42,10 @@ class VialProfiles(unittest.TestCase):
 
     def test_descriptor_masks_and_build_selectors(self):
         import json
-        job = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']['build']
+        from test_workflow_universal_symbols import BASELINE
+        # Manual-only definitions must stay covered after official rows retire.
         masks = {'k04': 4, 'k03': 1, 'imperial44': 1, 'op36': 1, 'velvet': 2}
-        for row in job['strategy']['matrix']['include']:
+        for row in BASELINE['rows']['build']:
             if row['output_name'].endswith('_vial'):
                 self.assertTrue(row['keyboard_toml'].endswith('_vial.toml'))
                 self.assertTrue(row['vial_json'].endswith('_universal.json'))
@@ -54,29 +55,43 @@ class VialProfiles(unittest.TestCase):
                 widths = [1 if isinstance(label, str) else (len(label) - 2).bit_length() for label in labels[1:]]
                 self.assertEqual(1 << sum(widths), masks[row['keyboard']])
 
-    def test_ci_vial_rows_actually_select_vial(self):
-        job = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']['build']
-        entries = job['strategy']['matrix']['include']
-        approved = {'k03', 'k04_series_micro', 'imperial44', 'op36', 'velvet'}
-        self.assertEqual(
-            {row['output_name'] for row in entries if row['output_name'].endswith('_vial')},
-            {name + '_vial' for name in approved},
-        )
-        for name in approved:
-            vial = next(row for row in entries if row['output_name'] == name + '_vial')
-            args = shlex.split(vial['build_features'])
-            self.assertIn('--no-default-features', args)
-            flags = args[args.index('--features') + 1].split(',')
-            self.assertIn('vial_standalone', flags)
-            self.assertIn('universal_mac_iso', flags)
-        for row in entries:
-            if not row['output_name'].endswith('_vial'):
-                enabled = row['output_name'] in {'k04_series_k04', 'k04_series_micro'}
-                self.assertEqual('universal_mac_iso' in row.get('build_features', ''), enabled)
-                if enabled:
+    def test_official_matrix_is_rynk_only_and_keeps_every_existing_rynk_profile(self):
+        jobs = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']
+        expected = {
+            'build': {'k03', 'k04_series_k04', 'k04_series_mini', 'k04_series_micro',
+                      'imperial44', 'op36', 'velvet', 'phenom', 'phenom_mini', 'phenom_micro'},
+            'build-qube': {'op36_qube', 'k03_qube', 'velvet_qube', 'imperial44_qube',
+                           'k04_qube_k04', 'k04_qube_mini', 'k04_qube_micro'},
+        }
+        for job, names in expected.items():
+            entries = jobs[job]['strategy']['matrix']['include']
+            self.assertEqual(len(entries), len(names))
+            self.assertEqual({row['output_name'] for row in entries}, names)
+            for row in entries:
+                with self.subTest(profile=row['output_name']):
+                    host = tomllib.loads((ROOT / 'keyboards' / row['keyboard'] / row['keyboard_toml']).read_text())['host']
+                    self.assertTrue(host['rynk_enabled'])
+                    self.assertFalse(host['vial_enabled'])
+                    self.assertNotIn('vial_standalone', row.get('build_features', ''))
                     self.assertTrue(row['vial_json'].endswith('_universal.json'))
-                    self.assertNotIn('--no-default-features', row['build_features'])
-        self.assertFalse(any(row['output_name'] == 'k04_series_mini_vial' for row in entries))
+
+    def test_manual_vial_profiles_still_select_vial_and_geometry(self):
+        from test_workflow_universal_symbols import BASELINE, closure
+        root_features = tomllib.loads((ROOT / 'rmk/Cargo.toml').read_text())['features']
+        manual = [row for row in BASELINE['rows']['build'] if row['output_name'].endswith('_vial')]
+        self.assertEqual(len(manual), 5)
+        for row in manual:
+            with self.subTest(profile=row['output_name']):
+                manifest = tomllib.loads((ROOT / 'keyboards' / row['keyboard'] / 'Cargo.toml').read_text())
+                args = shlex.split(row['build_features'])
+                self.assertIn('--no-default-features', args)
+                local, resolved = closure(manifest, row['build_features'], root_features)
+                self.assertIn('vial_standalone', local)
+                self.assertTrue({'vial', 'host_lock', 'universal_symbols_iso'} <= resolved)
+                self.assertNotIn('rynk', resolved)
+                host = tomllib.loads((ROOT / 'keyboards' / row['keyboard'] / row['keyboard_toml']).read_text())['host']
+                self.assertTrue(host['vial_enabled'])
+                self.assertFalse(host['rynk_enabled'])
 
 
 if __name__ == '__main__':

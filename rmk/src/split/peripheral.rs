@@ -186,6 +186,9 @@ impl<S: SplitWriter + SplitReader> SplitPeripheral<S> {
                             // Publish Layer event
                             publish_event(LayerChangeEvent::new(layer));
                         }
+                        SplitMessage::InputActivity => {
+                            publish_event(crate::event::InputActivityEvent);
+                        }
                         SplitMessage::PeripheralSettings(settings) => {
                             publish_event(crate::event::PeripheralSettingsEvent(settings));
                         }

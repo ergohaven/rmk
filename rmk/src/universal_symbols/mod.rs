@@ -48,6 +48,9 @@ pub const USER_SYMBOL_END: u8 = 0xB0;
 pub const USER_RUSSIAN_LETTER_START: u8 = 0xB0;
 pub const USER_RUSSIAN_LETTER_END: u8 = 0xB4;
 pub const USER_NUMERO: u8 = 0xB4;
+pub const USER_RUSSIAN_ZHE: u8 = 0xB5;
+pub const USER_RUSSIAN_E: u8 = 0xB6;
+pub const USER_RUSSIAN_YO: u8 = 0xB7;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum HostLayout {
@@ -165,18 +168,21 @@ pub(crate) enum RussianLetter {
     Be,
     Yu,
     HardSign,
+    Zhe,
+    E,
+    Yo,
 }
 
 impl RussianLetter {
     pub(crate) const fn from_user_id(id: u8) -> Option<Self> {
-        if id < USER_RUSSIAN_LETTER_START || id >= USER_RUSSIAN_LETTER_END {
-            return None;
-        }
-        Some(match id - USER_RUSSIAN_LETTER_START {
-            0 => Self::Kha,
-            1 => Self::Be,
-            2 => Self::Yu,
-            3 => Self::HardSign,
+        Some(match id {
+            USER_RUSSIAN_LETTER_START => Self::Kha,
+            0xB1 => Self::Be,
+            0xB2 => Self::Yu,
+            0xB3 => Self::HardSign,
+            USER_RUSSIAN_ZHE => Self::Zhe,
+            USER_RUSSIAN_E => Self::E,
+            USER_RUSSIAN_YO => Self::Yo,
             _ => return None,
         })
     }
@@ -237,7 +243,7 @@ impl State {
             USER_NUMERO => Command::Type(layout::resolve_numero(self.layout)),
             id => {
                 if let Some(letter) = RussianLetter::from_user_id(id) {
-                    match layout::resolve_russian_letter(self.layout, letter) {
+                    match layout::resolve_russian_letter(self.layout, self.platform, letter) {
                         Some(keycode) => Command::TypeRussianLetter(keycode),
                         None => Command::None,
                     }
@@ -312,6 +318,51 @@ pub(crate) mod tests {
 
     use super::*;
 
+    #[test]
+    fn missing_qmk_russian_letters_use_sparse_ids_after_numero() {
+        assert_eq!(USER_NUMERO, 0xB4);
+        let expected = [(0xB5, HidKeyCode::Semicolon), (0xB6, HidKeyCode::Quote)];
+        for platform in [Platform::Pc, Platform::Mac] {
+            for host in [HostLayout::English, HostLayout::Russian] {
+                let mut state = State {
+                    layout: host,
+                    platform,
+                    last_host_layout: None,
+                };
+                let before = state;
+                for (id, keycode) in expected {
+                    assert_eq!(
+                        state.handle(id, None),
+                        Some(if host == HostLayout::Russian {
+                            Command::TypeRussianLetter(keycode)
+                        } else {
+                            Command::None
+                        })
+                    );
+                    assert_eq!(state, before);
+                }
+                for iso in [false, true] {
+                    ISO_GEOMETRY.store(iso, Ordering::Relaxed);
+                    assert_eq!(
+                        state.handle(USER_RUSSIAN_YO, None),
+                        Some(if host == HostLayout::Russian {
+                            Command::TypeRussianLetter(if platform == Platform::Mac {
+                                HidKeyCode::Backslash
+                            } else {
+                                HidKeyCode::Grave
+                            })
+                        } else {
+                            Command::None
+                        })
+                    );
+                }
+                ISO_GEOMETRY.store(false, Ordering::Relaxed);
+                assert!(RussianLetter::from_user_id(USER_NUMERO).is_none());
+                assert!(state.handle(0xB8, None).is_none());
+            }
+        }
+    }
+
     #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
     #[test]
     fn universal_numero_sparse_id_switches_symmetrically_without_state_change() {
@@ -334,7 +385,7 @@ pub(crate) mod tests {
                 for id in USER_RUSSIAN_LETTER_START..USER_RUSSIAN_LETTER_END {
                     assert!(RussianLetter::from_user_id(id).is_some());
                 }
-                assert!(state.handle(0xB5, None).is_none());
+                assert!(state.handle(0xB8, None).is_none());
             }
         }
     }

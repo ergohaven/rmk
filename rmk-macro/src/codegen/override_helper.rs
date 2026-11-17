@@ -9,6 +9,8 @@ pub enum Overwritten {
     ChipConfig,
     ChipInit,
     Entry,
+    /// Defer keyboard construction to a custom entry after runtime role detection.
+    Keyboard,
     /// `#[Override(bind_interrupt)]` — the form the stm32h7 example documents. Selected by
     /// `bind_interrupt.rs` through this shared matcher; the legacy bare `#[bind_interrupt]`
     /// marker is also still accepted there for backward compatibility.

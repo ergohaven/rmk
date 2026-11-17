@@ -131,7 +131,7 @@ impl Touchpad {
     async fn run_loop(&mut self) -> ! {
         loop {
             let selection = module_settings::module_selection(self.side);
-            if selection != module_settings::ModuleSelection::Touchpad {
+            if !selection.allows(module_settings::ModuleSelection::Touchpad) {
                 self.deactivate().await;
                 let _ = module_settings::wait_for_module_selection_change(self.side, selection).await;
                 continue;
@@ -141,10 +141,7 @@ impl Touchpad {
             if sleeping {
                 self.enter_sleep().await;
                 match select(
-                    module_settings::wait_for_module_selection_change(
-                        self.side,
-                        module_settings::ModuleSelection::Touchpad,
-                    ),
+                    module_settings::wait_for_module_selection_change(self.side, selection),
                     module_settings::wait_for_module_sleep_change(sleeping),
                 )
                 .await
@@ -162,10 +159,7 @@ impl Touchpad {
             let deadline = if self.ready { self.next_poll } else { self.next_probe };
             match select3(
                 Timer::at(deadline),
-                module_settings::wait_for_module_selection_change(
-                    self.side,
-                    module_settings::ModuleSelection::Touchpad,
-                ),
+                module_settings::wait_for_module_selection_change(self.side, selection),
                 module_settings::wait_for_module_sleep_change(sleeping),
             )
             .await

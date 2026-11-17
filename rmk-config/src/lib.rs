@@ -554,6 +554,7 @@ define_event_config!(
     modifier,
     keyboard,
     // Keyboard state events
+    input_activity,
     layer_change,
     wpm_update,
     led_indicator,

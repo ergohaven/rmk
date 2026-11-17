@@ -9,13 +9,18 @@ fn main() {
     // When it changes, the storage is erased.
     let mut features: Vec<String> = std::env::vars()
         .filter_map(|(key, _)| key.strip_prefix("CARGO_FEATURE_").map(str::to_lowercase))
-        // Geometry changes report generation, not stored framing. Keep existing
-        // Rynk layouts when enabling it; Vial retains its established hash.
+        // Delaying a report does not change the stored keymap format.
+        .filter(|feature| feature != "ergohaven_delayed_english")
+        // Geometry and timed window switching change reports, not stored framing.
+        // Keep existing Rynk layouts; Vial retains its established feature hash.
         .filter(|feature| {
             std::env::var_os("CARGO_FEATURE_ERGOHAVEN_RYNK").is_none()
                 || !matches!(
                     feature.as_str(),
-                    "universal_symbols_iso" | "universal_symbols_iso_bit0" | "universal_symbols_iso_bit1"
+                    "universal_symbols_iso"
+                        | "universal_symbols_iso_bit0"
+                        | "universal_symbols_iso_bit1"
+                        | "ergohaven_window_switching"
                 )
         })
         .collect();
