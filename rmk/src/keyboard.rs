@@ -3202,7 +3202,11 @@ mod test {
         });
     }
 
-    #[cfg(all(feature = "universal_symbols", any(feature = "vial", feature = "ergohaven_rynk")))]
+    #[cfg(all(
+        feature = "universal_symbols",
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        not(feature = "_no_usb")
+    ))]
     #[test]
     fn universal_punctuation_burst_switches_and_restores_before_russian_typing() {
         block_on(async {
@@ -3305,7 +3309,7 @@ mod test {
         });
     }
 
-    #[cfg(feature = "ergohaven_delayed_english")]
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "_no_usb")))]
     #[test]
     fn english_fallback_restores_russian_before_russian_letter_actions() {
         block_on(async {
@@ -3345,7 +3349,7 @@ mod test {
         });
     }
 
-    #[cfg(feature = "ergohaven_delayed_english")]
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "_no_usb")))]
     #[test]
     fn english_fallback_defers_the_return_switch_for_500_millis() {
         block_on(async {
@@ -3478,7 +3482,7 @@ mod test {
         });
     }
 
-    #[cfg(feature = "ergohaven_delayed_english")]
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "_no_usb")))]
     #[test]
     fn english_fallback_timeout_preserves_held_modifiers() {
         block_on(async {
