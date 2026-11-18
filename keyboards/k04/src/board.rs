@@ -68,3 +68,6 @@ pub const PACE_SPLIT_TRACKBALL: bool = true;
 /// An encoder runs only while its module is selected, so a parked one
 /// neither polls nor wakes the chip on battery.
 pub const PARK_UNSELECTED_ENCODERS: bool = true;
+
+/// Probe available pointing modules when the side is set to Auto.
+pub const AUTO_MODULES: bool = false;

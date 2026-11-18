@@ -109,7 +109,9 @@ num_sectors = 32
 # actions, keys, layer changes and peripheral settings.
 action.channel_size = 16
 action.subs = 2
-keyboard.subs = 4
+keyboard.subs = 5
+pointing.subs = 3
+input_activity.subs = 1
 # One settings update publishes base, profile and encoder packets together.
 peripheral_settings.channel_size = 3
 # ModuleSettingsBroadcast answers the re-sync request raised on peripheral link-up.
@@ -146,8 +148,6 @@ resolution = 4
 internal_pullup = true
 
 [[split.peripheral]]
-# Local factory home-row keys; hold while Entropy polls to unlock USB maintenance.
-usb_maintenance_unlock_keys = [[2, 1], [2, 2]]
 rows = 5
 cols = 8
 row_offset = 5

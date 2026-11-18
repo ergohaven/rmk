@@ -51,15 +51,17 @@ pub mod caps {
     pub const STAGED_WRITES: u32 = 1 << 7;
     /// Universal Symbols include numero (`Action::User(0xB4)`).
     pub const UNIVERSAL_NUMERO: u32 = 1 << 8;
+    /// Universal Symbols include Ж, Э and Ё (`Action::User(0xB5..=0xB7)`).
+    pub const EXTENDED_RUSSIAN_LETTERS: u32 = 1 << 9;
     /// `GetFirmwareTarget` identifies the directly addressed firmware component.
-    pub const FIRMWARE_TARGET: u32 = 1 << 9;
+    pub const FIRMWARE_TARGET: u32 = 1 << 10;
     /// A USB maintenance service, without keymap/settings editing or topics.
-    pub const USB_MAINTENANCE: u32 = 1 << 10;
+    pub const USB_MAINTENANCE: u32 = 1 << 11;
 }
 
-/// Fixed build role of the component answering over Rynk. USB does not change
-/// its split role. A peripheral index is its zero-based `split.peripheral`
-/// entry, not a physical-unit identifier or an assumption about left/right.
+/// Firmware image target of the component answering over Rynk.
+/// A peripheral index is its zero-based `split.peripheral` entry. On boards
+/// with USB role election, a peripheral image may serve as the primary keyboard.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
 pub enum FirmwareTarget {
     Standalone,

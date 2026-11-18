@@ -22,7 +22,7 @@ const CAPS: u32 = caps::FIRMWARE_TARGET
     | caps::HOST_MEDIA
     | caps::HOST_KEYBOARD_LAYOUT
     | if cfg!(feature = "universal_symbols") {
-        caps::UNIVERSAL_SYMBOLS | caps::RUSSIAN_LETTERS | caps::UNIVERSAL_NUMERO
+        caps::UNIVERSAL_SYMBOLS | caps::RUSSIAN_LETTERS | caps::UNIVERSAL_NUMERO | caps::EXTENDED_RUSSIAN_LETTERS
     } else {
         0
     }
@@ -88,11 +88,7 @@ pub(super) fn ergohaven_info(config: &crate::config::ErgohavenConfig<'_>, caps: 
 
 impl Handle<GetFirmwareTarget> for RynkService<'_> {
     async fn handle(&self, _: ()) -> Result<FirmwareTarget, RynkError> {
-        Ok(if cfg!(feature = "split") {
-            FirmwareTarget::Central
-        } else {
-            FirmwareTarget::Standalone
-        })
+        Ok(self.firmware_target)
     }
 }
 
@@ -331,6 +327,10 @@ mod tests {
         assert_eq!(info.keyboard_uid, UID);
         assert_ne!(info.caps & caps::LAYOUT_OPTIONS, 0);
         assert_eq!(info.caps & (1 << 8) != 0, cfg!(feature = "universal_symbols"));
+        assert_eq!(
+            info.caps & caps::EXTENDED_RUSSIAN_LETTERS != 0,
+            cfg!(feature = "universal_symbols")
+        );
         // FNV-1a("abc"), the published test vector.
         assert_eq!(info.definition_hash, 0x1a47_e90b);
     }

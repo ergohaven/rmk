@@ -49,15 +49,13 @@ def factory_df_positions(config):
 class FactoryUnlockTests(unittest.TestCase):
     def test_all_production_profiles_unlock_on_factory_d_and_f(self):
         profiles = release_profiles()
-        # Exact legacy + selectable-Vial contract: no silent omissions, duplicates,
+        # Exact official Rynk contract: no silent omissions, duplicates,
         # renames or accidental extra profiles may bypass factory D/F validation.
         expected_profiles = {
             "k03", "k04_series_k04", "k04_series_mini", "k04_series_micro",
             "imperial44", "op36", "velvet", "phenom", "phenom_mini", "phenom_micro",
             "op36_qube", "k03_qube", "velvet_qube", "imperial44_qube",
             "k04_qube_k04", "k04_qube_mini", "k04_qube_micro",
-            "k03_vial", "k04_series_micro_vial",
-            "imperial44_vial", "op36_vial", "velvet_vial",
         }
         self.assertEqual({profile["output_name"] for profile in profiles}, expected_profiles)
         self.assertEqual(len(profiles), len(expected_profiles))
@@ -77,8 +75,7 @@ class FactoryUnlockTests(unittest.TestCase):
                     self.assertLess(col, config["layout"]["cols"])
 
     def test_native_maintenance_challenges_are_factory_keys_on_the_local_half(self):
-        paths = [("phenom", n) for n in ("keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml")]
-        paths += [("k04", n) for n in ("keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml",
+        paths = [("k04", n) for n in ("keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml",
                                           "keyboard_qube.toml", "keyboard_qube_mini.toml", "keyboard_qube_micro.toml")]
         for folder, name in paths:
             config = tomllib.loads((ROOT / "keyboards" / folder / name).read_text())

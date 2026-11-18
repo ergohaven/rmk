@@ -1,11 +1,11 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
-use rmk_config::SplitConnection;
-use rmk_config::resolved::Hardware;
 use rmk_config::resolved::hardware::{
     BoardConfig, ChipModel, ChipSeries, DfuConfig, InputDeviceConfig, MatrixType, SplitBoardConfig,
     SplitConfig,
 };
+use rmk_config::resolved::Hardware;
+use rmk_config::SplitConnection;
 use syn::ItemMod;
 
 use super::central::expand_serial_init;
@@ -787,6 +787,7 @@ pub(crate) fn expand_peripheral_input_device_config(
     let (encoder_devices, _encoder_processors) = match board {
         BoardConfig::Split(split_config) => expand_encoder_device(
             encoder_id_offset,
+            encoder_id_offset,
             split_config.peripheral[id]
                 .input_device
                 .clone()
@@ -876,14 +877,18 @@ mod tests {
     fn maintenance_requires_the_rp2040_bootloader_feature() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../keyboards/phenom/keyboard.toml");
-        let hardware = rmk_config::KeyboardTomlConfig::new_from_toml_path(&path)
+        let mut hardware = rmk_config::KeyboardTomlConfig::new_from_toml_path(&path)
             .hardware()
             .unwrap();
+        let BoardConfig::Split(split) = &mut hardware.board else {
+            panic!("split profile");
+        };
+        split.peripheral[0].usb_maintenance_unlock_keys = Some(vec![[2, 1], [2, 2]]);
         peripheral_usb_maintenance_enabled(&hardware, 0, &Some(vec!["ergohaven_rynk".into()]));
     }
 
     #[test]
-    fn native_profiles_generate_maintenance_usb_but_vial_does_not() {
+    fn only_fixed_role_native_profiles_generate_maintenance_usb() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         for (folder, profiles, features, interrupt) in [
             (
@@ -916,6 +921,7 @@ mod tests {
                 };
                 for id in 0..split.peripheral.len() {
                     for native in [true, false] {
+                        let maintenance = native && folder == "k04";
                         let features = Some(if native {
                             features.iter().map(|s| s.to_string()).collect()
                         } else {
@@ -943,12 +949,12 @@ mod tests {
                         .to_string();
                         assert_eq!(
                             generated.contains("run_peripheral_usb_maintenance"),
-                            native,
+                            maintenance,
                             "{folder}/{profile}/{id}"
                         );
                         assert_eq!(
                             irqs.contains(interrupt),
-                            native || cfg!(feature = "_dfu"),
+                            maintenance || cfg!(feature = "_dfu"),
                             "missing maintenance USB interrupt: {folder}/{profile}/{id}"
                         );
                         assert!(generated.contains("run_rmk_split_peripheral"));

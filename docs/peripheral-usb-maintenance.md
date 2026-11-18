@@ -16,20 +16,23 @@ implementation is tracked separately in
 
 | Profile | Central target | Maintenance targets |
 | --- | --- | --- |
-| Phenom, Mini, Micro | Left USB half | Right: `Peripheral(0)` |
 | K:04, Mini, Micro standalone | Left USB/BLE half | Right: `Peripheral(0)` |
 | K:04, Mini, Micro Qube | Qube dongle | Left: `Peripheral(0)`, right: `Peripheral(1)` |
 
-These are the current firmware build roles, not a rule that left is always
-primary for every keyboard. `GetFirmwareTarget` (`0x7E60`) returns `Standalone`,
-`Central` or `Peripheral(index)`. The index names the zero-based
-`[[split.peripheral]]` entry. It is not a unique hardware identity. The model
-UID, USB serial and firmware target together still cannot prove that two
-physically different units belong to the same keyboard.
+`GetFirmwareTarget` (`0x7E60`) returns `Standalone`, `Central` or
+`Peripheral(index)`. The index names the zero-based `[[split.peripheral]]`
+entry. The model UID, USB serial and target do not identify a pair of
+physical halves.
 
-`GetErgohavenInfo` retains its existing payload. `FIRMWARE_TARGET` (bit 9)
-advertises the new query. `USB_MAINTENANCE` (bit 10) tells the host this interface
-serves maintenance only. Normal central services advertise `FIRMWARE_TARGET`
+Phenom, Mini and Micro can become primary over USB on either half. The
+normal Rynk service reports the directly connected image target
+(`Central` on the left, `Peripheral(0)` on the right) and uses the normal
+keyboard unlock challenge. The maintenance-only service applies to the
+fixed-role peripherals in the table.
+
+`GetErgohavenInfo` retains its existing payload. `FIRMWARE_TARGET` (bit 10)
+advertises the new query. `USB_MAINTENANCE` (bit 11) tells the host this interface
+serves maintenance only. Normal keyboard services advertise `FIRMWARE_TARGET`
 without `USB_MAINTENANCE`. Clients must negotiate revision 3 and inspect these
 capabilities before selecting the editor or updater UI. An app supporting only
 revision 2 must not treat a maintenance endpoint as a complete keyboard.
@@ -86,7 +89,7 @@ bootloaders, and requires USB hardware configuration.
 ## Entropy integration and verification
 
 1. Discover the directly connected Rynk USB component and read its wire revision,
-   model UID, version and firmware target. Show a maintenance flow when bit 10
+   model UID, version and firmware target. Show a maintenance flow when bit 11
    is set, instead of attempting keymap/settings initialization.
 2. Select the model/topology archive and the image matching the reported target.
    Unlock locally, then send `BootloaderJump`. A successful reset can disconnect

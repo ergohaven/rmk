@@ -41,7 +41,7 @@ Grave   Kc1   Kc2   Kc3   Kc4   Kc5   Kc6   Kc7   Kc8   Kc9   Kc0   Backspace
 Escape  Q     W     E     R     T     Y     U     I     O     P     Backslash
 Tab     A     S     D     F     G     H     J     K     L     Semicolon  Quote
 LShift  Z     X     C     V     B     _              _             N  M  Comma  Dot  Slash  RShift
-Delete  LGui  LCtrl MO(1) Space Enter MO(2) RAlt LeftBracket RightBracket
+Delete  LGui  LCtrl MO(1) Space Enter MO(2) LAlt LeftBracket RightBracket
 """
 # encoders: [central_A1/B1, peripheral_A1/B1]
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]

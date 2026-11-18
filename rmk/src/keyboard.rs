@@ -177,15 +177,28 @@ impl Runnable for Keyboard<'_> {
     /// The report is sent using `send_report`.
     async fn run(&mut self) -> ! {
         loop {
+            #[cfg(feature = "ergohaven_window_switching")]
+            self.expire_window_switch().await;
             // Wait for the next event, but wake up at the earliest pending deadline.
             // `with_deadline` polls the subscriber first, so a queued event is handled first.
-            let event = match self.next_deadline() {
-                Some(deadline) => with_deadline(deadline, self.keyboard_event_subscriber.next_message_pure())
-                    .await
-                    .ok(),
-                None => Some(self.keyboard_event_subscriber.next_message_pure().await),
+            let deadline = self.next_deadline();
+            #[cfg(feature = "ergohaven_window_switching")]
+            let next = embassy_futures::select::select(
+                self.window_layer_subscriber.next_message_pure(),
+                self.keyboard_event_subscriber.next_message_pure(),
+            );
+            #[cfg(not(feature = "ergohaven_window_switching"))]
+            let next = self.keyboard_event_subscriber.next_message_pure();
+            let event = match deadline {
+                Some(deadline) => with_deadline(deadline, next).await.ok(),
+                None => Some(next.await),
             };
             match event {
+                #[cfg(feature = "ergohaven_window_switching")]
+                Some(embassy_futures::select::Either::First(_)) => self.cancel_window_switch().await,
+                #[cfg(feature = "ergohaven_window_switching")]
+                Some(embassy_futures::select::Either::Second(event)) => self.process_inner(event).await,
+                #[cfg(not(feature = "ergohaven_window_switching"))]
                 Some(event) => self.process_inner(event).await,
                 None => self.fire_expired().await,
             }
@@ -255,6 +268,11 @@ pub struct Keyboard<'a> {
     /// Used for temporarily disabling combos
     combo_on: bool,
 
+    #[cfg(feature = "ergohaven_window_switching")]
+    window_switch: Option<(ModifierCombination, Instant)>,
+    #[cfg(feature = "ergohaven_window_switching")]
+    window_layer_subscriber: <crate::event::LayerChangeEvent as SubscribableEvent>::Subscriber,
+
     /// Firmware-native EN/RU punctuation state.
     #[cfg(feature = "universal_symbols")]
     universal_symbols: crate::universal_symbols::State,
@@ -289,6 +307,10 @@ impl<'a> Keyboard<'a> {
             system_control_report: SystemControlReport { usage_id: 0 },
             last_key_code: HidKeyCode::No,
             combo_on: true,
+            #[cfg(feature = "ergohaven_window_switching")]
+            window_switch: None,
+            #[cfg(feature = "ergohaven_window_switching")]
+            window_layer_subscriber: crate::event::LayerChangeEvent::subscriber(),
             #[cfg(feature = "universal_symbols")]
             universal_symbols: crate::universal_symbols::State::default(),
             #[cfg(feature = "steno")]
@@ -339,6 +361,8 @@ impl<'a> Keyboard<'a> {
         [
             one_shot,
             buffered,
+            #[cfg(feature = "ergohaven_window_switching")]
+            self.window_switch.map(|(_, deadline)| deadline),
             self.mouse.next_deadline(),
             self.keymap.macros(|m| m.is_playing()).then_some(self.macro_due),
         ]
@@ -350,6 +374,8 @@ impl<'a> Keyboard<'a> {
     /// Handle every deadline that is due. Each step checks its own deadline, so
     /// calling this too early does nothing.
     async fn fire_expired(&mut self) {
+        #[cfg(feature = "ergohaven_window_switching")]
+        self.expire_window_switch().await;
         match self.next_buffered_key() {
             // `next_deadline` hides the one-shot while a key is buffered, so at most
             // one of these two can be due.
@@ -358,6 +384,24 @@ impl<'a> Keyboard<'a> {
         }
         self.fire_mouse_repeat().await;
         self.fire_macro().await;
+    }
+
+    #[cfg(feature = "ergohaven_window_switching")]
+    async fn expire_window_switch(&mut self) {
+        if self
+            .window_switch
+            .is_some_and(|(_, deadline)| deadline <= Instant::now())
+        {
+            self.cancel_window_switch().await;
+        }
+    }
+
+    #[cfg(feature = "ergohaven_window_switching")]
+    async fn cancel_window_switch(&mut self) {
+        if self.window_switch.take().is_some() {
+            self.registered.retain(|entry| !entry.window_switch_key);
+            self.send_keyboard_report_with_resolved_modifiers(false).await;
+        }
     }
 
     /// Resolve `key` if its timeout has passed: dispatch the combo it waits on, or
@@ -1519,6 +1563,43 @@ impl<'a> Keyboard<'a> {
             Action::KeyboardControl(c) => self.process_action_keyboard_control(c, event).await,
             Action::Special(special_key) => self.process_action_special(special_key, event).await,
             Action::User(id) => {
+                #[cfg(feature = "ergohaven_window_switching")]
+                if (54..=55).contains(&id) {
+                    if event.pressed {
+                        // Tap-hold resolution can publish a layer change during this
+                        // same key event, before the new window session starts.
+                        while self.window_layer_subscriber.try_next_message_pure().is_some() {
+                            self.cancel_window_switch().await;
+                        }
+                        let starting = self.window_switch.is_none();
+                        let modifier = self.window_switch.map(|(modifier, _)| modifier).unwrap_or_else(|| {
+                            match self.universal_symbols.platform() {
+                                crate::universal_symbols::Platform::Pc => ModifierCombination::LALT,
+                                crate::universal_symbols::Platform::Mac => ModifierCombination::LGUI,
+                            }
+                        });
+                        self.window_switch = Some((modifier, Instant::now() + Duration::from_millis(650)));
+                        if starting {
+                            self.send_keyboard_report_with_resolved_modifiers(true).await;
+                        }
+                    }
+                    let mods = if id == 55 {
+                        ModifierCombination::LSHIFT
+                    } else {
+                        ModifierCombination::new()
+                    };
+                    self.process_action_key(HidKeyCode::Tab, mods, event).await;
+                    if event.pressed {
+                        for entry in self
+                            .registered
+                            .iter_mut()
+                            .filter(|entry| entry.source == event.source && entry.keycode == HidKeyCode::Tab)
+                        {
+                            entry.window_switch_key = true;
+                        }
+                    }
+                    return;
+                }
                 #[cfg(feature = "universal_symbols")]
                 let had_action_report = self.process_universal_symbols_user_action(id, event).await;
                 #[cfg(not(feature = "universal_symbols"))]
@@ -1618,6 +1699,11 @@ impl<'a> Keyboard<'a> {
         // the suppression effect of forks should not apply on these
         for k in self.registered.iter().filter(|k| k.keycode != HidKeyCode::No) {
             result |= k.mods;
+        }
+
+        #[cfg(feature = "ergohaven_window_switching")]
+        if let Some((modifier, _)) = self.window_switch {
+            result |= modifier;
         }
 
         // Apply Caps Word shift
@@ -2016,6 +2102,8 @@ impl<'a> Keyboard<'a> {
                 true
             }
             crate::universal_symbols::Command::TypeRussianLetter(keycode) => {
+                #[cfg(feature = "ergohaven_window_switching")]
+                self.cancel_window_switch().await;
                 let mut letter_event = event;
                 self.process_action_key_with_caps_word_key(
                     keycode,
@@ -2040,6 +2128,8 @@ impl<'a> Keyboard<'a> {
 
     #[cfg(feature = "universal_symbols")]
     async fn send_universal_symbols_layout_switch(&mut self, platform: crate::universal_symbols::Platform) -> bool {
+        #[cfg(feature = "ergohaven_window_switching")]
+        self.cancel_window_switch().await;
         let Some((pressed_keys, released_keys)) = self.universal_symbols_key_reports(HidKeyCode::Space) else {
             warn!("Universal Symbols: no free 6KRO slot for layout switch");
             return false;
@@ -2073,21 +2163,16 @@ impl<'a> Keyboard<'a> {
             self.send_universal_symbols_report(ModifierCombination::new(), released_keys)
                 .await;
         }
-        // TEST4 diagnostic: reduce only Mac settle wait, 500 -> 50 ms.
-        // This is a fixed wait, not confirmation that the host switched sources.
-        // Keep the legacy PC delay and all report/key/storage semantics intact.
-        Timer::after_millis(if platform == crate::universal_symbols::Platform::Mac {
-            50
-        } else {
-            50
-        })
-        .await;
+        // This fixed settle wait does not confirm that the host switched sources.
+        Timer::after_millis(50).await;
         self.send_keyboard_report_with_resolved_modifiers(false).await;
         true
     }
 
     #[cfg(feature = "universal_symbols")]
     async fn send_universal_symbols_tap(&mut self, keycode: HidKeyCode, modifiers: ModifierCombination) {
+        #[cfg(feature = "ergohaven_window_switching")]
+        self.cancel_window_switch().await;
         let Some((pressed_keys, released_keys)) = self.universal_symbols_key_reports(keycode) else {
             warn!("Universal Symbols: no free 6KRO slot for {:?}", keycode);
             return;
@@ -2158,6 +2243,10 @@ impl<'a> Keyboard<'a> {
         } else {
             // `KeyWithModifier` modifiers apply only until the next press.
             for k in self.registered.iter_mut().filter(|k| k.keycode != HidKeyCode::No) {
+                #[cfg(feature = "ergohaven_window_switching")]
+                if k.window_switch_key {
+                    continue;
+                }
                 k.mods = ModifierCombination::new();
             }
             let _ = self.registered.push(key);
@@ -2210,6 +2299,9 @@ struct RegisteredKey {
     keycode: HidKeyCode,
     /// A modifier action's modifiers, or a `KeyWithModifier` key's.
     mods: ModifierCombination,
+    /// Window-owned Tab (and reverse Shift), released together on cancellation.
+    #[cfg(feature = "ergohaven_window_switching")]
+    window_switch_key: bool,
 }
 
 impl RegisteredKey {
@@ -2219,6 +2311,8 @@ impl RegisteredKey {
             source,
             keycode: if key.is_modifier() { HidKeyCode::No } else { key },
             mods: mods | key.to_hid_modifiers(),
+            #[cfg(feature = "ergohaven_window_switching")]
+            window_switch_key: false,
         }
     }
 
@@ -2354,6 +2448,442 @@ mod test {
             fork: cfg,
             ..BehaviorConfig::default()
         })
+    }
+
+    #[cfg(all(
+        feature = "ergohaven_window_switching",
+        any(feature = "vial", feature = "ergohaven_rynk")
+    ))]
+    async fn assert_window_loop_releases_modifier(layer_change: bool) {
+        use crate::channel::USB_REPORT_CHANNEL;
+        let mut keyboard = create_test_keyboard();
+        set_key_action(&mut keyboard, 0, 0, KeyAction::Single(Action::User(54)));
+        let keymap = keyboard.keymap;
+        crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+        USB_REPORT_CHANNEL.clear();
+        let producer = async {
+            crate::event::publish_event(KeyboardEvent::key(0, 0, true));
+            for expected_tab in [false, true] {
+                let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                    panic!("keyboard report");
+                };
+                assert_eq!(report.modifier, ModifierCombination::LALT.into_bits());
+                assert_eq!(report.keycodes.contains(&(HidKeyCode::Tab as u8)), expected_tab);
+            }
+            crate::event::publish_event(KeyboardEvent::key(0, 0, false));
+            let Report::KeyboardReport(released) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                panic!("keyboard report");
+            };
+            assert_eq!(released.modifier, ModifierCombination::LALT.into_bits());
+            assert_eq!(released.keycodes, [0; 6]);
+            let start = Instant::now();
+            let report = if layer_change {
+                keymap.activate_layer(1);
+                embassy_time::with_timeout(Duration::from_millis(100), USB_REPORT_CHANNEL.receive())
+                    .await
+                    .expect("layer changes release the modifier before the 650 ms timeout")
+            } else {
+                USB_REPORT_CHANNEL.receive().await
+            };
+            let Report::KeyboardReport(report) = report.into_report() else {
+                panic!("keyboard report");
+            };
+            assert_eq!(report.modifier, 0);
+            assert_eq!(report.keycodes, [0; 6]);
+            if !layer_change {
+                assert!(start.elapsed() >= Duration::from_millis(600));
+            }
+        };
+        embassy_futures::select::select(keyboard.run(), producer).await;
+        assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+        assert!(keyboard.next_deadline().is_none());
+    }
+
+    #[cfg(all(
+        feature = "ergohaven_window_switching",
+        any(feature = "vial", feature = "ergohaven_rynk")
+    ))]
+    #[test]
+    fn phenom_window_run_loop_wakes_at_deadline_without_input() {
+        block_on(assert_window_loop_releases_modifier(false));
+    }
+
+    #[cfg(all(
+        feature = "ergohaven_window_switching",
+        any(feature = "vial", feature = "ergohaven_rynk")
+    ))]
+    #[test]
+    fn phenom_window_run_loop_cancels_on_external_layer_change() {
+        block_on(assert_window_loop_releases_modifier(true));
+    }
+
+    #[cfg(all(
+        feature = "ergohaven_window_switching",
+        any(feature = "vial", feature = "ergohaven_rynk")
+    ))]
+    #[test]
+    fn phenom_window_expired_modifier_cannot_leak_into_queued_keys() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            let mut keyboard = create_test_keyboard();
+            set_key_action(
+                &mut keyboard,
+                0,
+                1,
+                KeyAction::Single(Action::Key(KeyCode::Hid(HidKeyCode::A))),
+            );
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, true))
+                .await;
+            keyboard
+                .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, false))
+                .await;
+            USB_REPORT_CHANNEL.clear();
+            Timer::at(keyboard.next_deadline().unwrap()).await;
+            crate::event::publish_event(KeyboardEvent::key(0, 1, true));
+            crate::event::publish_event(KeyboardEvent::key(0, 1, false));
+            let producer = async {
+                for expected_key in [0, HidKeyCode::A as u8, 0] {
+                    let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                        panic!("keyboard report");
+                    };
+                    assert_eq!(
+                        report.modifier, 0,
+                        "an expired window modifier must clear before queued ordinary input"
+                    );
+                    assert_eq!(report.keycodes[0], expected_key);
+                }
+            };
+            embassy_futures::select::select(keyboard.run(), producer).await;
+            assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_window_switching")]
+    #[test]
+    fn phenom_window_switch_holds_platform_modifier_and_extends_650ms_deadline() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{Platform, USER_TOGGLE_MACOS};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            for platform in [Platform::Pc, Platform::Mac] {
+                if keyboard.universal_symbols.platform() != platform {
+                    keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+                }
+                let modifier = if platform == Platform::Pc {
+                    ModifierCombination::LALT
+                } else {
+                    ModifierCombination::LGUI
+                };
+                USB_REPORT_CHANNEL.clear();
+                keyboard
+                    .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, true))
+                    .await;
+                assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::Tab);
+                assert_eq!(keyboard.resolve_modifiers(true), modifier);
+                keyboard
+                    .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, false))
+                    .await;
+                assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+                assert_eq!(keyboard.resolve_modifiers(false), modifier);
+                let original_deadline = keyboard.next_deadline().expect("window switch arms a deadline");
+                Timer::after_millis(400).await;
+                USB_REPORT_CHANNEL.clear();
+                keyboard
+                    .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, true))
+                    .await;
+                keyboard
+                    .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, false))
+                    .await;
+                let extended = keyboard.next_deadline().unwrap();
+                assert!(extended > original_deadline);
+                Timer::at(original_deadline + Duration::from_millis(1)).await;
+                keyboard.fire_expired().await;
+                assert_eq!(keyboard.resolve_modifiers(false), modifier);
+                USB_REPORT_CHANNEL.clear();
+                Timer::at(extended).await;
+                keyboard.fire_expired().await;
+                assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+                assert!(keyboard.next_deadline().is_none());
+                let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                    panic!("keyboard report");
+                };
+                assert_eq!(report.modifier, 0);
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_window_switching")]
+    #[test]
+    fn phenom_window_reverse_keeps_shift_until_release_and_preserves_physical_alt() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LAlt,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(55), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::Tab);
+            assert_eq!(
+                keyboard.resolve_modifiers(true),
+                ModifierCombination::LALT | ModifierCombination::LSHIFT
+            );
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::A,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 1, true),
+                )
+                .await;
+            assert_eq!(
+                keyboard.resolve_modifiers(true),
+                ModifierCombination::LALT | ModifierCombination::LSHIFT
+            );
+            keyboard
+                .process_action_key(
+                    HidKeyCode::A,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 1, false),
+                )
+                .await;
+            keyboard
+                .process_key_action_normal(Action::User(55), KeyboardEvent::key(0, 0, false))
+                .await;
+            assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::LALT);
+            USB_REPORT_CHANNEL.clear();
+            Timer::at(keyboard.next_deadline().unwrap()).await;
+            keyboard.fire_expired().await;
+            assert_eq!(
+                keyboard.resolve_modifiers(false),
+                ModifierCombination::LALT,
+                "timeout releases only its own modifier"
+            );
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LAlt,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 2, false),
+                )
+                .await;
+            assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+        });
+    }
+
+    #[cfg(all(
+        feature = "ergohaven_window_switching",
+        any(feature = "vial", feature = "ergohaven_rynk")
+    ))]
+    #[test]
+    fn phenom_window_survives_layer_change_from_the_same_tap_hold_resolution() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            let mut config = BehaviorConfig::default();
+            config
+                .morse
+                .profiles
+                .push(MorseProfile::new(
+                    Some(false),
+                    Some(MorseMode::HoldOnOtherPress),
+                    Some(2000),
+                    Some(2000),
+                ))
+                .unwrap();
+            let mut keyboard = create_test_keyboard_with_config(config);
+            set_key_action(&mut keyboard, 0, 0, crate::ltp!(1, Space, 0));
+            for layer in 0..2 {
+                keyboard.keymap.set_action_at(
+                    KeyboardEventSource::key_pos(1, 0),
+                    layer,
+                    KeyAction::Single(Action::User(54)),
+                );
+            }
+            let keymap = keyboard.keymap;
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+            let producer = async {
+                publish_event(KeyboardEvent::key(0, 0, true));
+                Timer::after_millis(1).await;
+                publish_event(KeyboardEvent::key(0, 1, true));
+                for expected_tab in [false, true] {
+                    let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                        panic!("keyboard report");
+                    };
+                    assert_eq!(report.modifier, ModifierCombination::LALT.into_bits());
+                    assert_eq!(report.keycodes.contains(&(HidKeyCode::Tab as u8)), expected_tab);
+                }
+                assert_eq!(keymap.get_activated_layer(), 1);
+                publish_event(KeyboardEvent::key(0, 1, false));
+                let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                    panic!("keyboard report");
+                };
+                assert_eq!(report.modifier, ModifierCombination::LALT.into_bits());
+                assert_eq!(report.keycodes, [0; 6]);
+                assert!(
+                    embassy_time::with_timeout(Duration::from_millis(30), USB_REPORT_CHANNEL.receive())
+                        .await
+                        .is_err(),
+                    "the layer change preceding WNEXT must not cancel the new session"
+                );
+            };
+            embassy_futures::select::select(keyboard.run(), producer).await;
+            assert!(keyboard.window_switch.is_some());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_window_switching")]
+    #[test]
+    fn phenom_window_cancellation_releases_only_window_owned_tab_and_shift() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            for id in [54, 55] {
+                for physical_tab in [false, true] {
+                    USB_REPORT_CHANNEL.clear();
+                    if physical_tab {
+                        keyboard
+                            .process_action_key(
+                                HidKeyCode::Tab,
+                                ModifierCombination::new(),
+                                KeyboardEvent::key(0, 1, true),
+                            )
+                            .await;
+                        keyboard
+                            .process_action_key(
+                                HidKeyCode::LShift,
+                                ModifierCombination::new(),
+                                KeyboardEvent::key(0, 2, true),
+                            )
+                            .await;
+                    }
+                    keyboard
+                        .process_key_action_normal(Action::User(id), KeyboardEvent::key(0, 0, true))
+                        .await;
+                    USB_REPORT_CHANNEL.clear();
+                    if physical_tab {
+                        keyboard.cancel_window_switch().await;
+                    } else {
+                        Timer::at(keyboard.next_deadline().unwrap()).await;
+                        keyboard.fire_expired().await;
+                    }
+                    let held = keyboard.held_keycodes();
+                    assert_eq!(
+                        held.iter().filter(|&&key| key == HidKeyCode::Tab).count(),
+                        usize::from(physical_tab)
+                    );
+                    assert_eq!(
+                        keyboard.resolve_modifiers(false),
+                        if physical_tab {
+                            ModifierCombination::LSHIFT
+                        } else {
+                            ModifierCombination::new()
+                        }
+                    );
+                    let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                        panic!("keyboard report");
+                    };
+                    assert_eq!(report.keycodes.contains(&(HidKeyCode::Tab as u8)), physical_tab);
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_key_action_normal(Action::User(id), KeyboardEvent::key(0, 0, false))
+                        .await;
+                    if physical_tab {
+                        keyboard
+                            .process_action_key(
+                                HidKeyCode::Tab,
+                                ModifierCombination::new(),
+                                KeyboardEvent::key(0, 1, false),
+                            )
+                            .await;
+                        keyboard
+                            .process_action_key(
+                                HidKeyCode::LShift,
+                                ModifierCombination::new(),
+                                KeyboardEvent::key(0, 2, false),
+                            )
+                            .await;
+                    }
+                }
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_window_switching")]
+    #[test]
+    fn phenom_window_commits_before_universal_symbols_without_reasserting_modifiers() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{
+                Platform, USER_RUSSIAN_LETTER_START, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_SYMBOL_START,
+                USER_TOGGLE_MACOS,
+            };
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            for platform in [Platform::Pc, Platform::Mac] {
+                keyboard.universal_symbols.handle(USER_SET_ENGLISH, None);
+                if keyboard.universal_symbols.platform() != platform {
+                    keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+                }
+                let modifier = if platform == Platform::Pc {
+                    ModifierCombination::LALT
+                } else {
+                    ModifierCombination::LGUI
+                };
+                for id in [USER_SYMBOL_START, USER_SET_RUSSIAN, USER_RUSSIAN_LETTER_START] {
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, true))
+                        .await;
+                    keyboard
+                        .process_key_action_normal(Action::User(54), KeyboardEvent::key(0, 0, false))
+                        .await;
+                    USB_REPORT_CHANNEL.clear();
+                    let mut reports = std::vec::Vec::new();
+                    let capture = async {
+                        loop {
+                            let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report()
+                            else {
+                                panic!("keyboard report");
+                            };
+                            reports.push(report);
+                        }
+                    };
+                    embassy_futures::select::select(
+                        keyboard.process_universal_symbols_user_action(id, KeyboardEvent::key(0, 1, true)),
+                        capture,
+                    )
+                    .await;
+                    while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                        let Report::KeyboardReport(report) = report.into_report() else {
+                            panic!("keyboard report");
+                        };
+                        reports.push(report);
+                    }
+                    assert!(
+                        keyboard.window_switch.is_none(),
+                        "symbol or language action commits the window switch"
+                    );
+                    assert!(!reports.is_empty());
+                    assert!(
+                        reports.iter().all(|report| report.modifier & modifier.into_bits() == 0),
+                        "window modifier cannot reappear in symbol reports"
+                    );
+                }
+            }
+        });
     }
 
     #[cfg(all(
@@ -2846,6 +3376,56 @@ mod test {
             assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::A);
         };
         block_on(main);
+    }
+
+    #[cfg(all(
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        feature = "universal_symbols",
+        not(feature = "_no_usb")
+    ))]
+    #[test]
+    fn universal_extended_russian_letters_preserve_shift_and_caps_word_in_reports() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{USER_SET_RUSSIAN, USER_TOGGLE_MACOS};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            for mac in [false, true] {
+                for shifted in [false, true] {
+                    for caps in [false, true] {
+                        let mut keyboard = create_test_keyboard();
+                        keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+                        if mac {
+                            keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+                        }
+                        if shifted {
+                            keyboard.process_inner(KeyboardEvent::key(3, 0, true)).await;
+                        }
+                        if caps {
+                            keyboard.caps_word.toggle();
+                        }
+                        for (id, key) in [
+                            (0xB5, HidKeyCode::Semicolon),
+                            (0xB6, HidKeyCode::Quote),
+                            (0xB7, if mac { HidKeyCode::Backslash } else { HidKeyCode::Grave }),
+                        ] {
+                            USB_REPORT_CHANNEL.clear();
+                            keyboard
+                                .process_universal_symbols_user_action(id, KeyboardEvent::key(0, 0, true))
+                                .await;
+                            let Report::KeyboardReport(report) =
+                                USB_REPORT_CHANNEL.try_receive().unwrap().into_report()
+                            else {
+                                panic!()
+                            };
+                            assert_eq!(report.keycodes[0], key as u8);
+                            assert_eq!(report.modifier & 2 != 0, shifted || caps);
+                            assert_eq!(keyboard.caps_word.is_active(), caps);
+                        }
+                        USB_REPORT_CHANNEL.clear();
+                    }
+                }
+            }
+        });
     }
 
     #[test]

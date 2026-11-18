@@ -39,7 +39,7 @@ no_action_layer_start = 5
 name = "Base"
 keys = """
 Q           W           E             R            T       Y      U            I             O            P
-MT(A,LGui)  MT(S,LAlt)  MT(D,LShift)  MT(F,LCtrl)  G       H      MT(J,RCtrl)  MT(K,RShift)  MT(L,RAlt)   MT(Semicolon,RGui)
+MT(A,LGui)  MT(S,LAlt)  MT(D,LShift)  MT(F,LCtrl)  G       H      MT(J,RCtrl)  MT(K,RShift)  MT(L,LAlt)   MT(Semicolon,RGui)
 Z           X           C             V            B       N      M            Comma         Dot          Quote
 Grave       Escape      Backspace     MO(1)        Space   Enter  MO(2)        Tab           LeftBracket  RightBracket
                                       AudioMute    AudioMute
@@ -51,7 +51,7 @@ encoders = [["AudioVolUp", "AudioVolDown"], ["AudioVolUp", "AudioVolDown"]]
 name = "Lower"
 keys = """
 Kc1            Kc2              Kc3               Kc4             Kc5           Kc6  Kc7             Kc8              Kc9            Kc0
-MT(Home,LGui)  MT(Insert,LAlt)  MT(Delete,LShift) MT(End,LCtrl)   Enter         _    MT(Left,RCtrl)  MT(Down,RShift)  MT(Up,RAlt)    MT(Right,RGui)
+MT(Home,LGui)  MT(Insert,LAlt)  MT(Delete,LShift) MT(End,LCtrl)   Enter         _    MT(Left,RCtrl)  MT(Down,RShift)  MT(Up,LAlt)    MT(Right,RGui)
 _              _                _                 _               PrintScreen   _    _               _                _              _
 PageUp         PageDown         _                 _               _             _    MO(3)           _                CapsLock       CapsWordToggle
                                                   _   _
@@ -64,7 +64,7 @@ name = "Raise"
 # All shifted chars use SHIFTED() — RMK applies LShift automatically
 keys = """
 SHIFTED(Kc2)        SHIFTED(Comma)               Equal              SHIFTED(Dot)                 Grave           SHIFTED(Kc6)  SHIFTED(Quote)                     SHIFTED(Minus)        Quote                               _
-MT(Backslash,LGui)  MT(SHIFTED(Kc9),LAlt)        MT(Minus,LShift)   MT(SHIFTED(Kc0),LCtrl)       SHIFTED(Equal)  SHIFTED(Kc5)  MT(SHIFTED(LeftBracket),RCtrl)     MT(Semicolon,RShift)  MT(SHIFTED(RightBracket),RAlt)      MT(SHIFTED(Kc1),RGui)
+MT(Backslash,LGui)  MT(SHIFTED(Kc9),LAlt)        MT(Minus,LShift)   MT(SHIFTED(Kc0),LCtrl)       SHIFTED(Equal)  SHIFTED(Kc5)  MT(SHIFTED(LeftBracket),RCtrl)     MT(Semicolon,RShift)  MT(SHIFTED(RightBracket),LAlt)      MT(SHIFTED(Kc1),RGui)
 SHIFTED(Kc3)        SHIFTED(Kc8)                 SHIFTED(Semicolon) Slash                        _               _             SHIFTED(Backslash)                 SHIFTED(Grave)        SHIFTED(Kc7)                        SHIFTED(Kc4)
 _  _  _  MO(3)  _    _  _  _  _  _
 _  _
@@ -75,7 +75,7 @@ encoders = [["Right", "Left"], ["Right", "Left"]]
 name = "Adjust"
 keys = """
 F1    F2                       F3                        F4                       F5    F6  F7                      F8                    F9                    F10
-LGui  MT(MediaPrevTrack,LAlt)  MT(MediaPlayPause,LShift) MT(MediaNextTrack,LCtrl) _     _   MT(AudioVolDown,RCtrl)  MT(AudioMute,RShift)  MT(AudioVolUp,RAlt)   MT(F11,RGui)
+LGui  MT(MediaPrevTrack,LAlt)  MT(MediaPlayPause,LShift) MT(MediaNextTrack,LCtrl) _     _   MT(AudioVolDown,RCtrl)  MT(AudioMute,RShift)  MT(AudioVolUp,LAlt)   MT(F11,RGui)
 _     _                        _                         _                        _     _   _                       _                     _                     F12
 _  _  _  _  _    _  _  _  _  _
 _  _
@@ -112,7 +112,9 @@ num_sectors = 32
 # actions, keys, layer changes and peripheral settings.
 action.channel_size = 16
 action.subs = 2
-keyboard.subs = 4
+keyboard.subs = 5
+pointing.subs = 3
+input_activity.subs = 1
 # One settings update publishes base, profile and encoder packets together.
 peripheral_settings.channel_size = 3
 # ModuleSettingsBroadcast answers the re-sync request raised on peripheral link-up.
@@ -149,8 +151,6 @@ resolution = 4
 internal_pullup = true
 
 [[split.peripheral]]
-# Local factory home-row keys; hold while Entropy polls to unlock USB maintenance.
-usb_maintenance_unlock_keys = [[2, 1], [2, 2]]
 rows = 5
 cols = 8
 row_offset = 5
