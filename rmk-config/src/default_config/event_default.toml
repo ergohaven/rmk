@@ -36,6 +36,11 @@ pubs = 2
 subs = 1
 
 # Keyboard state events
+[event.input_activity]
+channel_size = 1
+pubs = 1
+subs = 0
+
 [event.layer_change]
 channel_size = 1
 pubs = 2

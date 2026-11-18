@@ -12,8 +12,10 @@ for suffix in ["", "_mini", "_micro"]:
     lower = config.split('name = "Lower"', 1)[1].split('[[keymap.layer]]', 1)[0]
     assert 'encoders = [["RgbVai", "RgbVad"], ["RgbVai", "RgbVad"]]' in lower
     assert "action.subs = 3" in config
-central = (ROOT / "keyboards/phenom/src/central.rs").read_text()
-assert "#[register_processor]\n    fn brightness()" in central
+firmware = (ROOT / "keyboards/phenom/src/firmware.rs").read_text()
+primary = firmware.split("if primary {", 1)[1].split("unreachable!();", 1)[0]
+assert "let mut brightness = crate::brightness::Brightness::new();" in primary
+assert re.search(r"run_all!\([^)]*\bbrightness\b", primary)
 source = (ROOT / "keyboards/phenom/src/brightness.rs").read_text()
 source = source.replace('use rmk::macros::processor;\n', '').replace('#[processor(subscribe = [ActionEvent])]\n', '')
 harness = r'''#![allow(dead_code)]

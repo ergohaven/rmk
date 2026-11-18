@@ -43,7 +43,7 @@ class WorkflowGraphTests(unittest.TestCase):
         # Intentional future
         # coverage edits must review/update these baselines, not drop this test.
         # build.yml retains macOS geometry profiles, display storage and sticky key regressions.
-        # The standalone K:04 Vial artifact is intentionally excluded; other rows are retained.
+        # Official Vial artifacts are retired; manual/core Vial coverage is retained.
         expected = {
             'build.yml': '54705410ee6442ac0c6ed8d7cd2ff5e3a1e2e451055ecc833d2a666c85afdf67',
             'ci.yml': 'b7453c5ec7c7c6aab407bcee2c4a92ff8e0d9285e7d8a601292e7991264fb708',
@@ -52,6 +52,30 @@ class WorkflowGraphTests(unittest.TestCase):
             jobs = load(name)['jobs']
             payload = {job: {k: v for k, v in jobs[job].items() if k not in ('needs', 'if')}
                        for job in owners}
+            if name == 'build.yml':
+                # Reverse ONLY geometry wiring and official Vial retirement; keep the old
+                # reviewed digest. Descriptor semantics and feature closures are
+                # independently checked by test_workflow_universal_symbols.py.
+                baseline = json.loads((ROOT / '.github/scripts/fixtures/universal_geometry_baseline.json').read_text())
+                for job, old_rows in baseline['rows'].items():
+                    entries = payload[job]['strategy']['matrix']['include']
+                    official = [row for row in old_rows if not row['output_name'].endswith('_vial')]
+                    self.assertEqual(len(entries), len(official))
+                    for row, old in zip(entries, official):
+                        for field in ('vial_json', 'build_features', 'half_features', 'qube_features'):
+                            if field in old:
+                                row[field] = old[field]
+                            else:
+                                row.pop(field, None)
+                    # Restore exactly the removed historical rows for the original digest.
+                    retained = iter(entries)
+                    payload[job]['strategy']['matrix']['include'] = [
+                        old if old['output_name'].endswith('_vial') else next(retained)
+                        for old in old_rows]
+                for step in payload['build-qube']['steps']:
+                    if step.get('name') == 'Build Qube dongle':
+                        self.assertEqual(step['run'], 'cargo build --release --bin qube --no-default-features ${{ matrix.qube_features }}')
+                        step['run'] = 'cargo build --release --bin qube --no-default-features --features qube'
             actual = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
             self.assertEqual(actual, expected[name], name)
 

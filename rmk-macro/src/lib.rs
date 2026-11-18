@@ -39,10 +39,27 @@ pub fn rmk_keyboard(_attr: TokenStream, item: TokenStream) -> TokenStream {
     parse_keyboard_mod(item_mod).into()
 }
 
+/// Generate a central using the configured central's physical hardware, or
+/// `#[rmk_central(peripheral = 0)]` to use a serial split peripheral's hardware.
+/// Keymap positions and encoder IDs retain their original physical identity.
 #[proc_macro_attribute]
-pub fn rmk_central(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn rmk_central(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item_mod = parse_macro_input!(item as syn::ItemMod);
-    parse_keyboard_mod(item_mod).into()
+    let args = match NestedMeta::parse_meta_list(attr.into()) {
+        Ok(args) => args,
+        Err(e) => return darling::Error::from(e).write_errors().into(),
+    };
+    #[derive(FromMeta)]
+    struct CentralAttr {
+        #[darling(default)]
+        peripheral: Option<usize>,
+    }
+    match CentralAttr::from_list(&args) {
+        Ok(args) => {
+            codegen::orchestrator::parse_keyboard_mod_for_side(item_mod, args.peripheral).into()
+        }
+        Err(e) => e.write_errors().into(),
+    }
 }
 
 /// Attribute for `rmk_peripheral` macro
