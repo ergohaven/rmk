@@ -6,9 +6,9 @@
     "keyboards/phenom/vial_micro.json": "c0c1a854ff9ec3ddacb9f3d612a9e5183d55bfc2bb26fda0c9a2c3e45033f1f2"
   },
   "descriptor_hashes": {
-    "keyboards/phenom/vial.json": "c341c9c527c76c2f79c263706d61405520c9cd6e1bd88c115f310b7acb43e87b",
-    "keyboards/phenom/vial_mini.json": "0089e275f4769462a68cb1a8fcc5ef820ef9bf4dc203282976de682ea8bae14c",
-    "keyboards/phenom/vial_micro.json": "482e829abe7119cd75aac0c9eaeea0c262334c16eae8ece4dcd455cb2b5fd1db"
+    "keyboards/phenom/vial.json": "5826a9840832fc0853f029414e0603a64e5927d771e785262811885d580b6298",
+    "keyboards/phenom/vial_mini.json": "c351e534d67f9d304de54d9eee05459156beaf85a7e7ae10f96da92ea55d2885",
+    "keyboards/phenom/vial_micro.json": "cef41d0f0a47497374402c24a4c1234732ec294a9123372dd7510bf072ebac0c"
   },
   "additional_rmk_features": {
     "phenom": [
