@@ -791,9 +791,27 @@ for suffix in ("", "_mini", "_micro"):
         path = Path("keyboards/phenom") / f"vial{suffix}{geometry}.json"
         names = [entry["name"] for entry in json.loads(path.read_text())["customKeycodes"]]
         assert len(names) >= 56, (path, len(names))
-        assert names[50:54] == [f"EH_RSRV{index}" for index in range(50, 54)], (path, names[50:54])
+        assert names[50:52] == ["EH_RSRV50", "EH_RSRV51"], (path, names[50:52])
         assert names[54:56] == ["WNEXT", "WPREV"], (path, names[54:56])
 PY_WINDOW
+
+python3 - <<'PY_ACTION_SLOTS' || fail "shared Ergohaven action firmware and Entropy profile wiring drifted"
+import json
+from pathlib import Path
+import tomllib
+
+for board in ('phenom', 'k04', 'k03', 'imperial44', 'op36', 'velvet', 'classic_qube'):
+    directory = Path("keyboards") / board
+    cargo = tomllib.loads((directory / "Cargo.toml").read_text())
+    assert "ergohaven_language_helpers" in cargo["dependencies"]["rmk"]["features"], directory
+    assert "ergohaven_layer_cycling" in cargo["dependencies"]["rmk"]["features"], directory
+    for path in directory.glob("vial*.json"):
+        entries = json.loads(path.read_text())["customKeycodes"]
+        assert [entry["name"] for entry in entries[52:54]] == ['LNEXT', 'LPREV'], path
+        assert all(entry["shortName"] and entry["title"] for entry in entries[52:54]), path
+        assert [entry["name"] for entry in entries[56:60]] == ['LG_WORD', 'LG_MOD', 'LG_STORE', 'LG_REVERT'], path
+        assert all(entry["shortName"] and entry["title"] for entry in entries[56:60]), path
+PY_ACTION_SLOTS
 
 for file in keyboards/classic_qube/vial.json keyboards/k04/vial_qube{,_mini,_micro}.json; do
     jq -e '

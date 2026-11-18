@@ -15,8 +15,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Complete pre-stabilization argv inventories, with only the stable selector
 # normalized. Review every feature/filter/flag change before refreshing these.
 ROUTING_DIGESTS = {
-    'check.sh': '9e85792b74970549c72a09e000515d04daf18ef4b90ce43d80516d80fbbfd383',
-    'test.sh': '2a72affa94fb734723c52a7bf7d5afe7d8af99e849ae94a2e55bc8699b5f6ce2',
+    'check.sh': '7f735c480f28bee0db0d6608764761008deb7713cb95b83ccfd8ce58070c79b8',
+    'test.sh': '646e1c64e772657e7fb4535ca08a0e9d7f737bac10ded440e621dcff06c018cf',
     'host.sh': '69c395a139754b8c23891a2cea9a67193dbbce81deb247a0b80f57550d3c3478',
 }
 
