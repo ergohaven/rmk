@@ -117,6 +117,7 @@ pub mod keyboard;
 pub mod keymap;
 pub mod layout_macro;
 pub mod light;
+pub mod magic;
 pub mod matrix;
 pub(crate) mod mouse_chunk;
 pub mod processor;
@@ -133,6 +134,8 @@ pub mod universal_symbols;
 pub mod usb;
 #[cfg(feature = "watchdog")]
 pub mod watchdog;
+
+pub use magic::{MagicAction, MagicConfig};
 
 // Test-only helpers for `#[cfg(test)]` modules under `src/` and for the
 // simulator harness in `tests/integration/simulator`; never part of a firmware

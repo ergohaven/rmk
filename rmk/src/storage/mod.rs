@@ -37,6 +37,7 @@ use crate::ble::profile::ProfileInfo;
 use crate::boot::reboot_keyboard;
 use crate::config;
 use crate::config::StorageConfig;
+use crate::magic::MagicConfig;
 #[cfg(all(feature = "_ble", feature = "split"))]
 use crate::split::ble::PeerAddress;
 
@@ -413,6 +414,7 @@ pub(crate) enum StorageItem {
     DeviceSettings(config::VialDeviceSettingsData),
     #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
     UniversalSymbolsPlatform(bool),
+    MagicConfig(MagicConfig),
 }
 
 impl StorageItem {
@@ -423,6 +425,14 @@ impl StorageItem {
                 StorageKey::UniversalSymbolsPlatform,
                 StorageValue::UniversalSymbolsPlatform(v),
             ),
+            Self::MagicConfig(config) => {
+                let data = heapless::Vec::from_slice(&config.to_storage_payload())
+                    .expect("Magic storage payload fits USER_DATA_MAX_SIZE");
+                (
+                    StorageKey::UserData(crate::magic::MAGIC_STORAGE_SLOT),
+                    StorageValue::UserData(data),
+                )
+            }
             Self::StorageConfig(v) => (StorageKey::StorageConfig, StorageValue::StorageConfig(v)),
             Self::DefaultLayer(v) => (StorageKey::DefaultLayer, StorageValue::DefaultLayer(v)),
             Self::LayoutOption(v) => (StorageKey::LayoutOption, StorageValue::LayoutOption(v)),
@@ -629,6 +639,7 @@ impl<F: AsyncNorFlash> Storage<F> {
 
     // Like `store`: split first so the future holds the pair, not the pair and `item`.
     fn put(&mut self, item: StorageItem) -> impl Future<Output = Result<(), SSError<TimeoutFlashError<F::Error>>>> {
+        let writing_magic = matches!(item, StorageItem::MagicConfig(_));
         let (key, value) = item.split();
         #[cfg(feature = "host")]
         let key = match key {
@@ -641,6 +652,17 @@ impl<F: AsyncNorFlash> Storage<F> {
             key => key,
         };
         async move {
+            if writing_magic {
+                match self.flash.fetch_item::<StorageValue>(&mut self.buffer, &key).await? {
+                    None => {}
+                    Some(StorageValue::UserData(existing))
+                        if MagicConfig::from_storage_payload(existing.as_slice()).is_some() => {}
+                    Some(_) => {
+                        warn!("Reserved Magic storage slot contains non-Magic user data; preserving it");
+                        return Ok(());
+                    }
+                }
+            }
             self.flash
                 .store_item(&mut self.buffer, &key, &value)
                 .await
@@ -975,6 +997,8 @@ mod tests {
 
     use super::*;
     use crate::config::{BehaviorConfig as RuntimeBehaviorConfig, StorageConfig as RuntimeStorageConfig};
+    #[cfg(feature = "vial")]
+    use crate::magic::MAGIC_STORAGE_SLOT;
     use crate::test_support::test_block_on as block_on;
 
     /// 16 KB of byte-writable flash in 4 KB sectors, the geometry `STORAGE_RANGE` is cut from.
@@ -1577,6 +1601,8 @@ mod tests {
             },
             #[cfg(feature = "host")]
             StorageKey::EncoderTailV3 { layer: 15, idx: 16 },
+            #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
+            StorageKey::UniversalSymbolsPlatform,
         ];
         let mut buffer = [0u8; 64];
         for (tag, key) in keys.iter().enumerate() {
@@ -1612,6 +1638,8 @@ mod tests {
             StorageValue::UserData(heapless::Vec::new()),
             #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
             StorageValue::DeviceSettings(config::VialDeviceSettingsData::empty()),
+            #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "universal_symbols"))]
+            StorageValue::UniversalSymbolsPlatform(false),
         ];
         let mut buffer = [0u8; BUFFER_SIZE];
         for (tag, item) in data.iter().enumerate() {
@@ -1645,6 +1673,95 @@ mod tests {
             let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
 
             assert_eq!(keymap.layout_option(), 42);
+        });
+    }
+
+    #[cfg(feature = "vial")]
+    #[test]
+    fn magic_config_restored_from_storage() {
+        let expected = MagicConfig {
+            swap_control_capslock: true,
+            capslock_to_control: true,
+            swap_lalt_lgui: true,
+            swap_ralt_rgui: true,
+            no_gui: true,
+            swap_grave_esc: true,
+            swap_backslash_backspace: true,
+            swap_lctl_lgui: true,
+            swap_rctl_rgui: true,
+            swap_escape_capslock: true,
+        };
+        block_on(async {
+            let payload = heapless::Vec::from_slice(&expected.to_storage_payload()).unwrap();
+            let flash = seeded(&[
+                (StorageKey::StorageConfig, StorageValue::StorageConfig(SCHEMA_HASH)),
+                (
+                    StorageKey::UserData(MAGIC_STORAGE_SLOT),
+                    StorageValue::UserData(payload),
+                ),
+            ])
+            .await;
+            let mut storage = new_storage(flash).await;
+            let mut data = crate::keymap::KeymapData::new([[[KeyAction::No]]]);
+            let mut behavior = RuntimeBehaviorConfig::default();
+            storage.read_layout(&mut data, &mut behavior).await.unwrap();
+            assert_eq!(behavior.magic, expected);
+        });
+    }
+
+    #[cfg(feature = "vial")]
+    #[test]
+    fn magic_storage_item_uses_the_legacy_user_data_slot() {
+        let expected = MagicConfig {
+            no_gui: true,
+            swap_escape_capslock: true,
+            ..MagicConfig::default()
+        };
+        block_on(async {
+            let mut storage = new_storage(async_flash_wrapper(Part::new())).await;
+            storage.put(StorageItem::MagicConfig(expected)).await.unwrap();
+            let Some(StorageValue::UserData(payload)) =
+                storage.fetch(StorageKey::UserData(MAGIC_STORAGE_SLOT)).await.unwrap()
+            else {
+                panic!("Magic config was not stored as legacy user data");
+            };
+            assert_eq!(MagicConfig::from_storage_payload(payload.as_slice()), Some(expected));
+        });
+    }
+
+    #[cfg(feature = "vial")]
+    #[test]
+    fn magic_storage_conflict_preserves_existing_user_data_and_layout() {
+        let existing = heapless::Vec::from_slice(&[0xA5, 0x5A, 0x01]).unwrap();
+        let expected = MagicConfig {
+            no_gui: true,
+            ..MagicConfig::default()
+        };
+        block_on(async {
+            let flash = seeded(&[
+                (StorageKey::StorageConfig, StorageValue::StorageConfig(SCHEMA_HASH)),
+                (StorageKey::DefaultLayer, StorageValue::DefaultLayer(1)),
+                (StorageKey::LayoutOption, StorageValue::LayoutOption(42)),
+                (
+                    StorageKey::UserData(MAGIC_STORAGE_SLOT),
+                    StorageValue::UserData(existing.clone()),
+                ),
+            ])
+            .await;
+            let mut storage = new_storage(flash).await;
+
+            storage.put(StorageItem::MagicConfig(expected)).await.unwrap();
+
+            assert!(matches!(
+                storage.fetch(StorageKey::UserData(MAGIC_STORAGE_SLOT)).await,
+                Ok(Some(StorageValue::UserData(data))) if data.as_slice() == existing.as_slice()
+            ));
+            let mut data = crate::keymap::KeymapData::new([[[KeyAction::No]]]);
+            let mut behavior = RuntimeBehaviorConfig::default();
+            storage.read_layout(&mut data, &mut behavior).await.unwrap();
+            assert_eq!(behavior.default_layer, 1);
+            assert_eq!(data.layout_option, 42);
+            assert_eq!(behavior.magic, MagicConfig::default());
         });
     }
 

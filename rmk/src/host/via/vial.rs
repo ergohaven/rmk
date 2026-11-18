@@ -12,7 +12,7 @@ use crate::config::VialConfig;
 use crate::hid::ViaReport;
 use crate::host::context::KeyboardContext;
 use crate::host::settings;
-use crate::host::via::keycode_convert::{from_via_keycode, to_via_keycode};
+use crate::host::via::keycode_convert::{from_via_keycode, is_supported_via_keycode, to_via_keycode};
 
 /// Note: vial uses little endian, while via uses big endian
 pub(crate) async fn process_vial<'a>(
@@ -185,6 +185,19 @@ pub(crate) async fn process_vial<'a>(
 
                     let morse_idx = report.output_data[3];
 
+                    for i in 0..4 {
+                        let start = 4 + i * 2;
+                        let keycode = LittleEndian::read_u16(&report.output_data[start..start + 2]);
+                        if !is_supported_via_keycode(keycode) {
+                            warn!(
+                                "Rejecting morse write with unsupported QMK magic keycode: {:#X}",
+                                keycode
+                            );
+                            report.input_data[0] = 0xFF;
+                            return;
+                        }
+                    }
+
                     if (morse_idx as usize) < ctx.morses_len() {
                         // Extract morse (also known as "tap dance" in vial)
                         let tap = from_via_keycode(LittleEndian::read_u16(&report.output_data[4..6]));
@@ -238,6 +251,19 @@ pub(crate) async fn process_vial<'a>(
 
                     let combo_idx = report.output_data[3];
 
+                    for i in 0..=COMBO_MAX_LENGTH {
+                        let start = 4 + i * 2;
+                        let keycode = LittleEndian::read_u16(&report.output_data[start..start + 2]);
+                        if !is_supported_via_keycode(keycode) {
+                            warn!(
+                                "Rejecting combo write with unsupported QMK magic keycode: {:#X}",
+                                keycode
+                            );
+                            report.input_data[0] = 0xFF;
+                            return;
+                        }
+                    }
+
                     let mut actions = heapless::Vec::<KeyAction, COMBO_MAX_LENGTH>::new();
                     let mut overflow = false;
                     for i in 0..COMBO_MAX_LENGTH {
@@ -280,6 +306,13 @@ pub(crate) async fn process_vial<'a>(
                     report.input_data[0] = 0; // Index 0 is the return code, 0 means success
 
                     let fork_idx = report.output_data[3];
+                    let trigger = LittleEndian::read_u16(&report.output_data[4..6]);
+                    let positive = LittleEndian::read_u16(&report.output_data[6..8]);
+                    if !is_supported_via_keycode(trigger) || !is_supported_via_keycode(positive) {
+                        warn!("Rejecting key override write with unsupported QMK magic keycode");
+                        report.input_data[0] = 0xFF;
+                        return;
+                    }
                     let fork = vial_key_override_to_fork(&report.output_data[4..14]);
                     let _ = ctx.set_fork(fork_idx, fork).await;
                 }
@@ -315,6 +348,14 @@ pub(crate) async fn process_vial<'a>(
                 index, clockwise, layer
             );
             let keycode = BigEndian::read_u16(&report.output_data[5..7]);
+            if !is_supported_via_keycode(keycode) {
+                warn!(
+                    "Rejecting encoder write with unsupported QMK magic keycode: {:#X}",
+                    keycode
+                );
+                report.input_data[0] = 0xFF;
+                return;
+            }
             let action = from_via_keycode(keycode);
             info!("Setting encoder action (clockwise: {}): {:?}", clockwise, action);
             let _ = ctx.set_encoder_direction(layer, index, clockwise == 1, action).await;

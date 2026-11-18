@@ -44,6 +44,7 @@ pub(crate) mod oneshot;
 pub(crate) mod steno;
 
 use crate::keymap::HOLD_BUFFER_SIZE;
+use crate::magic::MagicAction;
 
 // Timestamp of the last key action, the value is the number of seconds since the boot
 #[cfg(feature = "_ble")]
@@ -464,10 +465,9 @@ impl<'a> Keyboard<'a> {
         let event_time = Instant::now();
 
         // Process key
-        let key_action = &self.keymap.get_action_with_layer_cache(event);
-
-        if !self.combo_on || self.process_combo(key_action, event, event_time).await {
-            self.process_key_action(key_action, event, event_time).await
+        let key_action = self.keymap.get_action_with_layer_cache(event);
+        if !self.combo_on || self.process_combo(&key_action, event, event_time).await {
+            self.process_key_action(&key_action, event, event_time).await
         }
     }
 
@@ -1456,7 +1456,61 @@ impl<'a> Keyboard<'a> {
         });
     }
 
+    async fn process_magic_action(&mut self, action: MagicAction) {
+        let mut config = self.keymap.magic_config();
+        config.apply(action);
+        self.keymap.set_magic_config(config);
+
+        #[cfg(feature = "storage")]
+        crate::storage::store_unchecked(crate::storage::StorageItem::MagicConfig(config)).await;
+
+        // QMK's clear_keyboard() clears registered HID outputs while leaving
+        // combo, fork, layer, and tap-hold authoring state intact. Pending
+        // actions therefore continue to resolve against the new mapping.
+        self.registered.clear();
+
+        if let Some(layer) = self.osl_state.value().copied() {
+            self.keymap.deactivate_layer(layer);
+        }
+        self.osl_state = OneShotState::None;
+        self.osl_deadline = None;
+        self.osm_state = OneShotState::None;
+        self.osm_deadline = None;
+        self.caps_word.deactivate();
+        self.last_key_code = HidKeyCode::No;
+
+        #[cfg(feature = "ergohaven_window_switching")]
+        {
+            self.window_switch = None;
+        }
+
+        let mouse_was_active = {
+            let report = self.mouse.report;
+            report.buttons != 0 || report.x != 0 || report.y != 0 || report.wheel != 0 || report.pan != 0
+        };
+        self.mouse = MouseState::new();
+        self.keymap.set_mouse_buttons(0);
+
+        self.send_keyboard_report(ModifierCombination::default()).await;
+        self.media_report.usage_id = 0;
+        self.send_media_report().await;
+        self.system_control_report.usage_id = 0;
+        self.send_system_control_report().await;
+        if mouse_was_active {
+            self.send_mouse_report().await;
+        }
+    }
+
     async fn process_key_action_normal(&mut self, action: Action, event: KeyboardEvent) {
+        if let Action::User(id) = action
+            && let Some(magic) = MagicAction::from_user_id(id)
+        {
+            if event.pressed {
+                self.process_magic_action(magic).await;
+            }
+            return;
+        }
+
         publish_event_async(ActionEvent {
             action,
             keyboard_event: event,
@@ -1523,6 +1577,7 @@ impl<'a> Keyboard<'a> {
                 }
             }
             Action::Modifier(modifiers) => {
+                let modifiers = self.keymap.magic_config().resolve_modifiers(modifiers);
                 if event.pressed {
                     self.register_key(HidKeyCode::No, modifiers, event);
                 } else {
@@ -1540,6 +1595,7 @@ impl<'a> Keyboard<'a> {
             }
             Action::KeyWithModifier(key_code, modifiers) => self.process_action_key(key_code, modifiers, event).await,
             Action::LayerOnWithModifier(layer_num, modifiers) => {
+                let modifiers = self.keymap.magic_config().resolve_modifiers(modifiers);
                 if event.pressed {
                     self.register_key(HidKeyCode::No, modifiers, event);
                 } else {
@@ -1554,7 +1610,8 @@ impl<'a> Keyboard<'a> {
                 self.update_osm(event);
             }
             Action::OneShotModifier(m) => {
-                self.process_action_osm(m, event).await;
+                self.process_action_osm(self.keymap.magic_config().resolve_modifiers(m), event)
+                    .await;
                 // Process OSL to avoid the OSM state stuck when an OSM is followed by an OSL
                 self.update_osl(event);
             }
@@ -1716,6 +1773,12 @@ impl<'a> Keyboard<'a> {
 
     // Process a basic keypress/release and also take care of applying one shot modifiers
     async fn process_hid_keycode(&mut self, key: HidKeyCode, mods: ModifierCombination, event: KeyboardEvent) {
+        let magic = self.keymap.magic_config();
+        self.process_hid_keycode_resolved(magic.resolve_keycode(key), magic.resolve_modifiers(mods), event)
+            .await;
+    }
+
+    async fn process_hid_keycode_resolved(&mut self, key: HidKeyCode, mods: ModifierCombination, event: KeyboardEvent) {
         #[cfg(feature = "passkey_entry")]
         if self.passkey_entry_state.is_active() {
             use crate::ble::passkey::{PASSKEY_RESPONSE, PasskeyAction};
@@ -1849,6 +1912,11 @@ impl<'a> Keyboard<'a> {
         mods: ModifierCombination,
         event: KeyboardEvent,
     ) {
+        let magic = self.keymap.magic_config();
+        key = magic.resolve_keycode(key);
+        caps_word_key = magic.resolve_keycode(caps_word_key);
+        let mods = magic.resolve_modifiers(mods);
+
         // Process `Again` key first.
         // Not all platform support `Again` key, so we manually repeat it for users.
         if key == HidKeyCode::Again {
@@ -1894,7 +1962,7 @@ impl<'a> Keyboard<'a> {
         } else if key.is_mouse_key() {
             self.process_action_mouse(key, event).await;
         } else {
-            self.process_hid_keycode(key, mods, event).await;
+            self.process_hid_keycode_resolved(key, mods, event).await;
         }
         if hold_mods && !event.pressed {
             self.unregister_key(HidKeyCode::No, mods, event);
@@ -3765,6 +3833,348 @@ mod test {
             assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::No);
         };
         block_on(main);
+    }
+
+    #[test]
+    fn magic_actions_are_press_triggered_and_resolve_key_modifiers() {
+        let main = async {
+            let mut keyboard = create_test_keyboard();
+            let magic = Action::User(MagicAction::SwapLAltLGui.user_id());
+            let magic_event = KeyboardEvent::key(0, 0, true);
+
+            keyboard.process_key_action_normal(magic, magic_event).await;
+            assert!(keyboard.keymap.magic_config().swap_lalt_lgui);
+
+            // QMK magic actions ignore key-up. A held key must not toggle or
+            // undo the setting when the source key is released.
+            keyboard
+                .process_key_action_normal(magic, KeyboardEvent::key(0, 0, false))
+                .await;
+            assert!(keyboard.keymap.magic_config().swap_lalt_lgui);
+
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(0, 0),
+                0,
+                KeyAction::Single(Action::KeyWithModifier(HidKeyCode::A, ModifierCombination::LALT)),
+            );
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::A);
+            assert_eq!(keyboard.resolve_modifiers(true), ModifierCombination::LGUI);
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+            assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+        };
+        block_on(main);
+    }
+
+    #[test]
+    fn magic_action_clears_registered_outputs_but_preserves_pending_state() {
+        let main = async {
+            let combo = Combo::new(rmk_types::combo::Combo::new([k!(A), k!(B)], k!(C), None));
+            let mut behavior = BehaviorConfig::default();
+            behavior.combo.combos[0] = Some(combo);
+            let mut keyboard = create_test_keyboard_with_config(behavior);
+            let magic_action = KeyAction::Single(Action::User(MagicAction::GuiOff.user_id()));
+
+            // Both layers expose the magic key so this remains reachable while
+            // the momentary layer is held.
+            for layer in 0..2 {
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(0, 0), layer, magic_action);
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(1, 0), layer, k!(A));
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(2, 0), layer, k!(B));
+            }
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(1, 2), 1, thp!(A, LShift, 0));
+
+            // Hold a momentary layer, a tap-hold key, and a combo.
+            keyboard.process_inner(KeyboardEvent::key(4, 9, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard.process_inner(KeyboardEvent::key(2, 1, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 2, true)).await;
+            assert!(!keyboard.held_buffer.is_empty());
+
+            // QMK's clear_keyboard clears registered HID outputs, but leaves
+            // combo/tap-hold authoring state and the held momentary layer.
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            assert!(!keyboard.held_buffer.is_empty());
+            assert!(keyboard.registered.is_empty());
+            assert!(keyboard.keymap.with_combos(|combos| {
+                combos
+                    .iter()
+                    .flatten()
+                    .any(|combo| combo.keys_pressed() != 0 || combo.is_triggered())
+            }));
+
+            // Releases belonging to the old layer/action still resolve cleanly
+            // after the reset and cannot leave stale output behind.
+            for event in [
+                KeyboardEvent::key(0, 0, false),
+                KeyboardEvent::key(4, 9, false),
+                KeyboardEvent::key(2, 1, false),
+                KeyboardEvent::key(0, 1, false),
+                KeyboardEvent::key(0, 2, false),
+            ] {
+                keyboard.process_inner(event).await;
+            }
+            assert!(!keyboard.keymap.is_layer_active(1));
+            assert!(keyboard.held_buffer.is_empty());
+            assert!(keyboard.registered.is_empty());
+        };
+        block_on(main);
+    }
+
+    #[test]
+    fn magic_action_preserves_a_toggled_layer() {
+        block_on(async {
+            let mut keyboard = create_test_keyboard();
+            let toggle = KeyAction::Single(Action::LayerToggle(1));
+            let magic = KeyAction::Single(Action::User(MagicAction::GuiOff.user_id()));
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, toggle);
+            for layer in 0..2 {
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(1, 0), layer, magic);
+            }
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard.process_inner(KeyboardEvent::key(0, 1, false)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+        });
+    }
+
+    #[test]
+    fn magic_action_from_tap_hold_does_not_reinsert_stale_release_state() {
+        block_on(async {
+            let mut keyboard = create_test_keyboard();
+            let magic = Action::User(MagicAction::GuiOff.user_id());
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(0, 0),
+                0,
+                KeyAction::TapHold(Action::Key(KeyCode::Hid(HidKeyCode::A)), magic, 0),
+            );
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert!(keyboard.keymap.magic_config().no_gui);
+            assert!(!keyboard.held_buffer.is_empty());
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert!(keyboard.held_buffer.is_empty());
+            assert!(keyboard.registered.is_empty());
+        });
+    }
+
+    #[test]
+    fn magic_action_remains_available_as_a_combo_input() {
+        block_on(async {
+            let mut behavior = BehaviorConfig::default();
+            behavior.combo.combos[0] = Some(Combo::new(rmk_types::combo::Combo::new(
+                [KeyAction::Single(Action::User(MagicAction::GuiOff.user_id())), k!(A)],
+                k!(B),
+                None,
+            )));
+            let mut keyboard = create_test_keyboard_with_config(behavior);
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(0, 0),
+                0,
+                KeyAction::Single(Action::User(MagicAction::GuiOff.user_id())),
+            );
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(1, 0), 0, k!(A));
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert!(!keyboard.keymap.magic_config().no_gui);
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert!(!keyboard.keymap.magic_config().no_gui);
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::B);
+
+            keyboard.process_inner(KeyboardEvent::key(0, 1, false)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+        });
+    }
+
+    #[test]
+    fn magic_clear_preserves_release_of_a_held_tap_hold_layer() {
+        block_on(async {
+            let mut keyboard = create_test_keyboard();
+            let layer_hold = KeyAction::TapHold(k!(A).to_action(), Action::LayerOn(1), 0);
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, layer_hold);
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 1, layer_hold);
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(1, 0),
+                1,
+                KeyAction::Single(Action::User(MagicAction::GuiOff.user_id())),
+            );
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert!(keyboard.keymap.magic_config().no_gui);
+            assert!(keyboard.keymap.is_layer_active(1));
+            assert!(!keyboard.held_buffer.is_empty());
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert!(!keyboard.keymap.is_layer_active(1));
+            assert!(keyboard.held_buffer.is_empty());
+        });
+    }
+
+    #[test]
+    fn magic_clear_preserves_release_of_a_combo_layer_output() {
+        block_on(async {
+            let mut behavior = BehaviorConfig::default();
+            behavior.combo.combos[0] = Some(Combo::new(rmk_types::combo::Combo::new(
+                [k!(A), k!(B)],
+                KeyAction::Single(Action::LayerOn(1)),
+                None,
+            )));
+            let mut keyboard = create_test_keyboard_with_config(behavior);
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, k!(A));
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 1), 0, k!(B));
+
+            keyboard
+                .process_key_action_normal(Action::LayerOn(1), KeyboardEvent::combo(0, true))
+                .await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard
+                .process_key_action_normal(
+                    Action::User(MagicAction::GuiOff.user_id()),
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            assert!(keyboard.keymap.is_layer_active(1));
+
+            keyboard
+                .process_key_action_normal(Action::LayerOn(1), KeyboardEvent::combo(0, false))
+                .await;
+            assert!(!keyboard.keymap.is_layer_active(1));
+        });
+    }
+
+    #[test]
+    fn magic_action_preserves_a_held_fork_without_stale_release() {
+        block_on(async {
+            let fork = Fork {
+                trigger: k!(Dot),
+                negative_output: k!(Dot),
+                positive_output: k!(Semicolon),
+                match_any: StateBits {
+                    modifiers: ModifierCombination::LSHIFT,
+                    leds: LedIndicator::default(),
+                    mouse: MouseButtons::default(),
+                },
+                suppressed_modifiers: ModifierCombination::LSHIFT,
+                options: ForkOptions::default(),
+                ..Fork::empty()
+            };
+            let mut keyboard = create_test_keyboard_with_forks(fork, Fork::empty());
+            let magic = Action::User(MagicAction::GuiOff.user_id());
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, KeyAction::Single(magic));
+
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, true),
+                )
+                .await;
+            keyboard.process_inner(KeyboardEvent::key(3, 9, true)).await;
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::Semicolon);
+            assert!(keyboard.fork_states.iter().any(Option::is_some));
+
+            // Drive the real magic action entry point directly so the fork's
+            // "other key down" policy cannot mask the clear itself.
+            keyboard
+                .process_key_action_normal(magic, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert!(keyboard.fork_states.iter().any(Option::is_some));
+            assert!(keyboard.registered.is_empty());
+
+            keyboard.process_inner(KeyboardEvent::key(3, 9, false)).await;
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, false),
+                )
+                .await;
+            assert!(keyboard.registered.is_empty());
+        });
+    }
+
+    #[test]
+    fn magic_clear_preserves_release_of_a_fork_layer_output() {
+        block_on(async {
+            let fork = Fork {
+                trigger: k!(Dot),
+                negative_output: k!(Dot),
+                positive_output: KeyAction::Single(Action::LayerOn(1)),
+                match_any: StateBits {
+                    modifiers: ModifierCombination::LSHIFT,
+                    leds: LedIndicator::default(),
+                    mouse: MouseButtons::default(),
+                },
+                suppressed_modifiers: ModifierCombination::LSHIFT,
+                options: ForkOptions::default(),
+                ..Fork::empty()
+            };
+            let mut keyboard = create_test_keyboard_with_forks(fork, Fork::empty());
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, true),
+                )
+                .await;
+            keyboard.process_inner(KeyboardEvent::key(3, 9, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+
+            keyboard
+                .process_key_action_normal(
+                    Action::User(MagicAction::GuiOff.user_id()),
+                    KeyboardEvent::key(0, 0, true),
+                )
+                .await;
+            keyboard.process_inner(KeyboardEvent::key(3, 9, false)).await;
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, false),
+                )
+                .await;
+            assert!(!keyboard.keymap.is_layer_active(1));
+        });
     }
 
     #[test]

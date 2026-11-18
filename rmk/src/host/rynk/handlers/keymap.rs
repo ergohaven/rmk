@@ -12,7 +12,7 @@ use rmk_types::protocol::rynk::{
 
 use super::super::RynkService;
 use super::bulk::{bulk_page, take_bulk, take_element};
-use super::{Handle, HandleBulk};
+use super::{Handle, HandleBulk, validate_magic_binding};
 
 impl Handle<GetKeyAction> for RynkService<'_> {
     async fn handle(&self, pos: KeyPosition) -> Result<KeyAction, RynkError> {
@@ -24,6 +24,7 @@ impl Handle<GetKeyAction> for RynkService<'_> {
 impl Handle<SetKeyAction> for RynkService<'_> {
     async fn handle(&self, set: SetKeyRequest) -> Result<(), RynkError> {
         self.check_key_position(&set.position)?;
+        validate_magic_binding(set.action)?;
         self.ctx
             .set_action(set.position.layer, set.position.row, set.position.col, set.action)
             .await
@@ -57,6 +58,8 @@ impl Handle<GetEncoderAction> for RynkService<'_> {
 impl Handle<SetEncoderAction> for RynkService<'_> {
     async fn handle(&self, r: SetEncoderRequest) -> Result<(), RynkError> {
         self.check_encoder_bounds(r.layer, r.encoder_id)?;
+        validate_magic_binding(r.action.clockwise)?;
+        validate_magic_binding(r.action.counter_clockwise)?;
         self.ctx
             .set_encoder(r.layer, r.encoder_id, r.action)
             .await
@@ -122,7 +125,10 @@ impl HandleBulk<SetKeymapBulk> for RynkService<'_> {
         let start = self.keymap_flat_start(layer, start_row, start_col)?;
         let (rows, cols, num_layers) = self.ctx.keymap_dimensions();
         // Bulk order advances columns, then rows, then layers.
-        for (offset, action) in take_bulk::<KeyAction>(&mut cursor, start, num_layers * rows * cols)? {
+        let actions = take_bulk::<KeyAction>(&mut cursor, start, num_layers * rows * cols, |action| {
+            validate_magic_binding(*action)
+        })?;
+        for (offset, action) in actions {
             let layer = (offset / (rows * cols)) as u8;
             let row = (offset / cols % rows) as u8;
             let col = (offset % cols) as u8;

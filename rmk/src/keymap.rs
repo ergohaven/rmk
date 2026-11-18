@@ -10,7 +10,7 @@ use {
     embedded_storage_async::nor_flash::NorFlash,
 };
 
-use crate::config::{BehaviorConfig, Hand, MouseKeyConfig, OneShotModifiersConfig, PositionalConfig};
+use crate::config::{BehaviorConfig, Hand, MagicConfig, MouseKeyConfig, OneShotModifiersConfig, PositionalConfig};
 use crate::event::{KeyboardEvent, KeyboardEventSource, LayerChangeEvent, publish_event};
 use crate::input_device::rotary_encoder::Direction;
 use crate::keyboard::combo::Combo;
@@ -648,6 +648,14 @@ impl<'a> KeyMap<'a> {
 
     pub(crate) fn set_layout_option(&self, layout_option: u32) {
         self.inner.borrow_mut().layout_option = layout_option;
+    }
+
+    pub(crate) fn magic_config(&self) -> MagicConfig {
+        self.inner.borrow().behavior.magic
+    }
+
+    pub(crate) fn set_magic_config(&self, magic: MagicConfig) {
+        self.inner.borrow_mut().behavior.magic = magic;
     }
 
     /// The behavior config as one storage item; taken after a RAM change so the

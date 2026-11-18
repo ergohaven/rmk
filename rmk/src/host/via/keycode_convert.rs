@@ -2,6 +2,21 @@ use rmk_types::action::{Action, KeyAction, KeyboardAction};
 use rmk_types::keycode::{HidKeyCode, KeyCode, SpecialKey};
 use rmk_types::modifier::ModifierCombination;
 
+use crate::magic::{KEYCODE_END, KEYCODE_START, MagicAction};
+
+/// Whether a VIA/QMK keycode may be written to a keymap.
+///
+/// KC_NO (0x0000) is intentionally accepted.  The only rejected range is a
+/// QMK magic action that RMK knows about but does not implement yet (NKRO and
+/// EE Hands), so a bulk upload can validate every entry before changing RAM.
+pub(crate) const fn is_supported_via_keycode(via_keycode: u16) -> bool {
+    if via_keycode >= KEYCODE_START && via_keycode <= KEYCODE_END {
+        MagicAction::from_keycode(via_keycode).is_some()
+    } else {
+        true
+    }
+}
+
 pub(crate) fn to_via_keycode(key_action: KeyAction) -> u16 {
     match key_action {
         KeyAction::No => 0x0000,
@@ -84,6 +99,9 @@ pub(crate) fn to_via_keycode(key_action: KeyAction) -> u16 {
                     0
                 }
             },
+            Action::User(id) if MagicAction::from_user_id(id).is_some() => {
+                MagicAction::from_user_id(id).unwrap().keycode()
+            }
             Action::User(id) if id < 64 => id as u16 | 0x7E00,
             Action::User(_) => 0,
             _ => {
@@ -211,11 +229,13 @@ pub(crate) fn from_via_keycode(via_keycode: u16) -> KeyAction {
             let index = (via_keycode & 0xFF) as u8;
             KeyAction::Morse(index)
         }
-        0x7000..=0x701F => {
-            // TODO: QMK functions, such as swap ctrl/caps, gui on, haptic, music, clicky, combo, RGB, etc
-            warn!("QMK functions {:#X} not supported", via_keycode);
-            KeyAction::No
-        }
+        0x7000..=0x7022 => match MagicAction::from_keycode(via_keycode) {
+            Some(action) => KeyAction::Single(Action::User(action.user_id())),
+            None => {
+                warn!("QMK magic keycode {:#X} not supported", via_keycode);
+                KeyAction::No
+            }
+        },
         0x7700..=0x77FF => KeyAction::Single(Action::TriggerMacro(via_keycode as u8)),
         0x7800..=0x783F => {
             // TODO: backlight and rgb configuration
@@ -294,6 +314,7 @@ mod test {
     use rmk_types::keycode::HidKeyCode;
 
     use super::*;
+    use crate::magic::key_action_is_supported;
 
     #[test]
     fn test_convert_via_keycode_to_key_action() {
@@ -601,6 +622,24 @@ mod test {
         // Morse(255)
         let via_keycode = 0x57FF;
         assert_eq!(KeyAction::Morse(255), from_via_keycode(via_keycode));
+    }
+
+    #[test]
+    fn magic_keycodes_round_trip_and_reject_unsupported_offsets() {
+        for offset in 0..=0x22u16 {
+            let keycode = 0x7000 + offset;
+            if let Some(action) = MagicAction::from_keycode(keycode) {
+                let key_action = KeyAction::Single(Action::User(action.user_id()));
+                assert!(is_supported_via_keycode(keycode));
+                assert_eq!(from_via_keycode(keycode), key_action);
+                assert_eq!(to_via_keycode(key_action), keycode);
+            } else {
+                assert!(!is_supported_via_keycode(keycode));
+                assert_eq!(from_via_keycode(keycode), KeyAction::No);
+            }
+        }
+        assert!(is_supported_via_keycode(0));
+        assert!(!key_action_is_supported(KeyAction::Single(Action::User(0xDE))));
     }
 
     #[test]

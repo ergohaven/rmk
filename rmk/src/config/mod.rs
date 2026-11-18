@@ -12,6 +12,7 @@ mod positional;
 mod storage;
 mod vial;
 
+pub use crate::magic::MagicConfig;
 pub use behavior::{
     AutoMouseLayerConfig, BehaviorConfig, CombosConfig, ForksConfig, MorsesConfig, MouseKeyConfig, OneShotConfig,
     OneShotModifiersConfig, TapConfig,
