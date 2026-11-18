@@ -49,6 +49,15 @@ use vial as host_usb;
 
 pub(crate) static USB_REMOTE_WAKEUP: Signal<RawMutex, ()> = Signal::new();
 static USB_STATE_CHANGED: Signal<RawMutex, ()> = Signal::new();
+#[cfg(feature = "split")]
+static USB_CONFIGURED: Signal<RawMutex, ()> = Signal::new();
+
+/// Wait for USB enumeration during split startup. Only one role detector may wait.
+/// Run the USB transport concurrently and retain that same future when elected primary.
+#[cfg(feature = "split")]
+pub async fn wait_for_usb_configuration() {
+    USB_CONFIGURED.wait().await;
+}
 
 fn set_usb_state_and_notify(state: UsbState) {
     let previous = current_usb_state();
@@ -504,6 +513,11 @@ impl<'a, D: Driver<'static>, S> UsbTransport<'a, D, S> {
         self.serving(router)
     }
 
+    /// Disable USB after cancelling its run future, before entering peripheral mode.
+    pub async fn disable(&mut self) {
+        self.device.disable().await;
+    }
+
     /// Rebuild around the session that answers the host interface.
     fn serving<T>(self, session: &'a T) -> UsbTransport<'a, D, T> {
         UsbTransport {
@@ -747,6 +761,8 @@ pub(crate) struct UsbDeviceHandler {
 
 impl UsbDeviceHandler {
     fn new() -> Self {
+        #[cfg(feature = "split")]
+        USB_CONFIGURED.reset();
         UsbDeviceHandler {
             pre_suspend: UsbState::Disabled,
         }
@@ -759,12 +775,16 @@ impl Handler for UsbDeviceHandler {
             info!("Device enabled");
             set_usb_state_and_notify(UsbState::Enabled);
         } else {
+            #[cfg(feature = "split")]
+            USB_CONFIGURED.reset();
             info!("Device disabled");
             set_usb_state_and_notify(UsbState::Disabled);
         }
     }
 
     fn reset(&mut self) {
+        #[cfg(feature = "split")]
+        USB_CONFIGURED.reset();
         BOOT_MODE.store(false, Ordering::Relaxed);
         self.pre_suspend = UsbState::Enabled;
         set_usb_state(UsbState::Enabled);
@@ -777,9 +797,13 @@ impl Handler for UsbDeviceHandler {
 
     fn configured(&mut self, configured: bool) {
         if configured {
+            #[cfg(feature = "split")]
+            USB_CONFIGURED.signal(());
             set_usb_state_and_notify(UsbState::Configured);
             info!("Device configured, it may now draw up to the configured current from Vbus.")
         } else {
+            #[cfg(feature = "split")]
+            USB_CONFIGURED.reset();
             set_usb_state_and_notify(UsbState::Enabled);
             info!("Device is no longer configured, the Vbus current limit is 100mA.");
         }
@@ -842,6 +866,25 @@ mod tests {
     };
     use crate::state::{current_usb_state, set_usb_state};
     use crate::test_support::test_block_on as block_on;
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn split_role_detection_requires_enumeration_and_keeps_suspend_history() {
+        use embassy_futures::poll_once;
+        let mut handler = UsbDeviceHandler::new();
+        handler.enabled(true);
+        handler.suspended(true);
+        assert!(poll_once(super::wait_for_usb_configuration()).is_pending());
+        handler.configured(true);
+        handler.suspended(true);
+        assert!(poll_once(super::wait_for_usb_configuration()).is_ready());
+        handler.configured(true);
+        handler.reset();
+        assert!(poll_once(super::wait_for_usb_configuration()).is_pending());
+        handler.configured(true);
+        handler.enabled(false);
+        assert!(poll_once(super::wait_for_usb_configuration()).is_pending());
+    }
 
     fn reset_usb_signals() {
         USB_REMOTE_WAKEUP.reset();

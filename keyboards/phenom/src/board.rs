@@ -62,3 +62,6 @@ pub const PACE_SPLIT_TRACKBALL: bool = false;
 /// The encoder pins are free whatever module sits in the slot, and there is no
 /// battery to save, so both encoders always run, as in the QMK firmware.
 pub const PARK_UNSELECTED_ENCODERS: bool = false;
+
+/// Probe available pointing modules when the side is set to Auto.
+pub const AUTO_MODULES: bool = true;

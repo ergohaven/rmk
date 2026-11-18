@@ -219,6 +219,7 @@ impl<T: SplitReader + SplitWriter> PeripheralManager<T> {
 
         let mut indicator_sub = crate::event::LedIndicatorEvent::subscriber();
         let mut layer_sub = crate::event::LayerChangeEvent::subscriber();
+        let mut activity_sub = crate::event::InputActivityEvent::subscriber();
         let mut settings_sub = crate::event::PeripheralSettingsEvent::subscriber();
         // Subscribe before the initial send so any change racing past the
         // snapshot is still delivered to us.
@@ -269,6 +270,7 @@ impl<T: SplitReader + SplitWriter> PeripheralManager<T> {
                     e = sleep_sub.next_event().fuse() => SplitMessage::SleepState(e.0),
                     with_feature("display"): e = wpm_sub.next_event().fuse() => SplitMessage::Wpm(e.0),
                     with_feature("display"): e = modifier_sub.next_event().fuse() => SplitMessage::Modifier(e.modifier.into_bits()),
+                    _ = activity_sub.next_event().fuse() => SplitMessage::InputActivity,
                 }
             };
 
@@ -471,6 +473,39 @@ mod resync_tests {
             let _ = self.sent.borrow_mut().push(*message);
             Ok(0)
         }
+    }
+
+    #[test]
+    fn input_activity_reaches_the_peripheral() {
+        let sent = RefCell::new(heapless::Vec::new());
+        let manager = PeripheralManager::new(
+            RebootedPeripheral {
+                announced: true,
+                sent: &sent,
+            },
+            0,
+            PeripheralMatrixConfig {
+                rows: 1,
+                cols: 1,
+                row_offset: 0,
+                col_offset: 0,
+            },
+        );
+        block_on(async {
+            let activity = async {
+                Timer::after_millis(1).await;
+                publish_event(crate::event::InputActivityEvent);
+                Timer::after_millis(5).await;
+            };
+            select(manager.run(), activity).await;
+        });
+        assert_eq!(
+            sent.borrow()
+                .iter()
+                .filter(|message| matches!(message, SplitMessage::InputActivity))
+                .count(),
+            1
+        );
     }
 
     /// Everything the central sends in a session where it first sends

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "keyboards/k04/src/layer_names.rs").read_text()
 # The factory axis defaults the codec reads through `crate::board`.
 board_constants = "\n".join(
-    line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines() if line.startswith(("pub const DEFAULT_", "pub const LED_TIMEOUT_MAX_SEC"))
+    line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines() if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES", "pub const LED_TIMEOUT_MAX_SEC"))
 )
 assert board_constants, "keyboards/k04/src/board.rs lost its factory defaults"
 
@@ -90,9 +90,9 @@ harness = "\n".join([
 ])
 with tempfile.TemporaryDirectory(prefix="k04-settings-migration-") as directory:
     source_file = Path(directory) / "migration.rs"
-    source_file.write_text(harness)
     rustc = shutil.which("rustc") or str(Path.home() / ".cargo/bin/rustc")
-    for profile, features in (("standalone", ["--cfg", 'feature="standalone"']), ("qube", [])):
+    for profile, features in (("standalone", ["--cfg", 'feature="standalone"']), ("phenom", ["--cfg", 'feature="standalone"']), ("qube", [])):
+        source_file.write_text(harness.replace("pub const AUTO_MODULES: bool = false;", "pub const AUTO_MODULES: bool = true;") if profile == "phenom" else harness)
         test_binary = Path(directory) / f"migration-test-{profile}"
         subprocess.run([rustc, "--edition=2021", *features, "--test", str(source_file), "-o", str(test_binary)], check=True)
         subprocess.run([str(test_binary)], check=True)

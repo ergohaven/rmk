@@ -43,7 +43,7 @@ no_action_layer_start = 5
 name = "Base"
 keys = """
 Q           W           E            R           T     Y     U           I            O           P
-MT(A,LGui)  MT(S,LAlt)  MT(D,LShift) MT(F,LCtrl) G     H     MT(J,RCtrl) MT(K,RShift) MT(L,RAlt) MT(Semicolon,RGui)
+MT(A,LGui)  MT(S,LAlt)  MT(D,LShift) MT(F,LCtrl) G     H     MT(J,RCtrl) MT(K,RShift) MT(L,LAlt) MT(Semicolon,RGui)
 Z           X           C            V           B     N     M           Comma        Dot         Quote
                         Backspace    MO(1)         Space Enter MO(2)       Tab
 """
@@ -52,7 +52,7 @@ Z           X           C            V           B     N     M           Comma  
 name = "Nav"
 keys = """
 Kc1            Kc2             Kc3               Kc4           Kc5          Kc6      Kc7          Kc8             Kc9         Kc0
-MT(Home,LGui)  MT(Insert,LAlt)  MT(Delete,LShift) MT(End,LCtrl) Enter        Escape   MT(Left,RCtrl) MT(Down,RShift) MT(Up,RAlt) MT(Right,RGui)
+MT(Home,LGui)  MT(Insert,LAlt)  MT(Delete,LShift) MT(End,LCtrl) Enter        Escape   MT(Left,RCtrl) MT(Down,RShift) MT(Up,LAlt) MT(Right,RGui)
 PageDown       PageUp          _                 _             PrintScreen  _        _            _               CapsLock    CapsWordToggle
                               _                 _             _            _        MO(3)        _
 """
@@ -61,7 +61,7 @@ PageDown       PageUp          _                 _             PrintScreen  _   
 name = "Symbols"
 keys = """
 SHIFTED(Kc2)       SHIFTED(Comma)          Equal                   SHIFTED(Dot)            Grave          SHIFTED(Kc6)  SHIFTED(Quote)                    SHIFTED(Minus)            Quote                  _
-MT(Backslash,LGui) MT(WM(Kc9,LShift),LAlt) MT(Minus,LShift)        MT(WM(Kc0,LShift),LCtrl) SHIFTED(Equal) SHIFTED(Kc5)  MT(WM(LeftBracket,LShift),RCtrl) MT(Semicolon,RShift)      MT(WM(RightBracket,LShift),RAlt) MT(WM(Kc1,LShift),RGui)
+MT(Backslash,LGui) MT(WM(Kc9,LShift),LAlt) MT(Minus,LShift)        MT(WM(Kc0,LShift),LCtrl) SHIFTED(Equal) SHIFTED(Kc5)  MT(WM(LeftBracket,LShift),RCtrl) MT(Semicolon,RShift)      MT(WM(RightBracket,LShift),LAlt) MT(WM(Kc1,LShift),RGui)
 SHIFTED(Kc3)       SHIFTED(Kc8)            SHIFTED(Semicolon)      Slash                   _              _            SHIFTED(Backslash)               SHIFTED(Grave)            SHIFTED(Kc7)            SHIFTED(Kc4)
                                            _                       MO(3)                   _              _            _                                _
 """

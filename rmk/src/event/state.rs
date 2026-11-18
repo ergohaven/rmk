@@ -5,6 +5,13 @@ use rmk_macro::event;
 use rmk_types::led_indicator::LedIndicator;
 use serde::{Deserialize, Serialize};
 
+/// Physical input activity, mirrored from the central to split peripherals.
+/// Boards may publish this when input should wake their lighting.
+#[event(channel_size = crate::INPUT_ACTIVITY_EVENT_CHANNEL_SIZE, pubs = crate::INPUT_ACTIVITY_EVENT_PUB_SIZE, subs = crate::INPUT_ACTIVITY_EVENT_SUB_SIZE)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct InputActivityEvent;
+
 /// Active layer changed event
 #[event(channel_size = crate::LAYER_CHANGE_EVENT_CHANNEL_SIZE, pubs = crate::LAYER_CHANGE_EVENT_PUB_SIZE, subs = crate::LAYER_CHANGE_EVENT_SUB_SIZE)]
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, MaxSize)]

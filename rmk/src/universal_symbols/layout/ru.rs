@@ -3,12 +3,19 @@ use rmk_types::keycode::HidKeyCode;
 use super::{ResolvedStroke, Stroke, en};
 use crate::universal_symbols::{Platform, RussianLetter, Symbol};
 
-pub(super) const fn letter_keycode(letter: RussianLetter) -> HidKeyCode {
+pub(super) const fn letter_keycode(platform: Platform, letter: RussianLetter) -> HidKeyCode {
     match letter {
         RussianLetter::Kha => HidKeyCode::LeftBracket,
         RussianLetter::Be => HidKeyCode::Comma,
         RussianLetter::Yu => HidKeyCode::Dot,
         RussianLetter::HardSign => HidKeyCode::RightBracket,
+        RussianLetter::Zhe => HidKeyCode::Semicolon,
+        RussianLetter::E => HidKeyCode::Quote,
+        // Apple Russian places Ё on Backslash for both ANSI and ISO.
+        RussianLetter::Yo => match platform {
+            Platform::Pc => HidKeyCode::Grave,
+            Platform::Mac => HidKeyCode::Backslash,
+        },
     }
 }
 

@@ -76,7 +76,10 @@ build_split() {
     if grep -q 'name = "hardreset"' "$repo_root/keyboards/$keyboard/Cargo.toml"; then
         bins+=(--bin hardreset)
     fi
-    run "keyboards/$keyboard" cargo build --release "${bins[@]}"
+    run "keyboards/$keyboard" env \
+        "KEYBOARD_TOML_PATH=$repo_root/keyboards/$keyboard/keyboard.toml" \
+        "VIAL_JSON_PATH=$repo_root/keyboards/$keyboard/vial_universal.json" \
+        cargo build --release "${bins[@]}" --features universal_mac_iso
 }
 
 build_k04_series_profile() {
@@ -85,9 +88,7 @@ build_k04_series_profile() {
     local vial_json="$3"
     local bins=(--bin central --bin peripheral --bin hardreset)
     local features=production_v30g
-    if [[ "$profile" == k04 || "$profile" == micro ]]; then
-        features+=,universal_mac_iso
-    fi
+    features+=,universal_mac_iso
 
     run "keyboards/k04" env \
         "CARGO_TARGET_DIR=target/$profile/standalone" \
@@ -100,17 +101,21 @@ build_classic_qube_profile() {
     local profile="$1"
     local keyboard_toml="$2"
     local vial_json="$3"
+    local geometry=rmk/universal_symbols_iso_bit0
+    if [[ "$profile" == velvet ]]; then
+        geometry=rmk/universal_symbols_iso_bit1
+    fi
 
     run "keyboards/classic_qube" env \
         "CARGO_TARGET_DIR=target/$profile/qube" \
         "KEYBOARD_TOML_PATH=$repo_root/keyboards/classic_qube/$keyboard_toml" \
         "VIAL_JSON_PATH=$repo_root/$vial_json" \
-        cargo build --release --bin qube --features qube
+        cargo build --release --bin qube --no-default-features --features "qube,$geometry"
     run "keyboards/classic_qube" env \
         "CARGO_TARGET_DIR=target/$profile/halves" \
         "KEYBOARD_TOML_PATH=$repo_root/keyboards/classic_qube/$keyboard_toml" \
         "VIAL_JSON_PATH=$repo_root/$vial_json" \
-        cargo build --release --bin left --bin right
+        cargo build --release --bin left --bin right --features "$geometry"
 }
 
 build_phenom_profile() {
@@ -122,7 +127,7 @@ build_phenom_profile() {
         "CARGO_TARGET_DIR=target/$profile" \
         "KEYBOARD_TOML_PATH=$repo_root/keyboards/phenom/$keyboard_toml" \
         "VIAL_JSON_PATH=$repo_root/keyboards/phenom/$vial_json" \
-        cargo build --release --bin central --bin peripheral
+        cargo build --release --bin central --bin peripheral --features universal_mac_iso
 }
 
 build_k04_qube_profile() {
@@ -134,33 +139,33 @@ build_k04_qube_profile() {
         "CARGO_TARGET_DIR=target/$profile/qube" \
         "KEYBOARD_TOML_PATH=$repo_root/keyboards/k04/$keyboard_toml" \
         "VIAL_JSON_PATH=$repo_root/keyboards/k04/$vial_json" \
-        cargo build --release --bin qube --no-default-features --features qube
+        cargo build --release --bin qube --no-default-features --features qube,universal_mac_iso
     run "keyboards/k04" env \
         "CARGO_TARGET_DIR=target/$profile/halves" \
         "KEYBOARD_TOML_PATH=$repo_root/keyboards/k04/$keyboard_toml" \
         "VIAL_JSON_PATH=$repo_root/keyboards/k04/$vial_json" \
-        cargo build --release --bin left --bin right --no-default-features --features qube-half
+        cargo build --release --bin left --bin right --no-default-features --features qube-half,universal_mac_iso
 }
 
 echo "Using BINDGEN_EXTRA_CLANG_ARGS=$BINDGEN_EXTRA_CLANG_ARGS"
 
 build_k04_series_profile k04 keyboard.toml vial_universal.json
-build_k04_series_profile mini keyboard_mini.toml vial_mini.json
+build_k04_series_profile mini keyboard_mini.toml vial_mini_universal.json
 build_k04_series_profile micro keyboard_micro.toml vial_micro_universal.json
-build_k04_qube_profile k04 keyboard_qube.toml vial_qube.json
-build_k04_qube_profile mini keyboard_qube_mini.toml vial_qube_mini.json
-build_k04_qube_profile micro keyboard_qube_micro.toml vial_qube_micro.json
+build_k04_qube_profile k04 keyboard_qube.toml vial_qube_universal.json
+build_k04_qube_profile mini keyboard_qube_mini.toml vial_qube_mini_universal.json
+build_k04_qube_profile micro keyboard_qube_micro.toml vial_qube_micro_universal.json
 build_split op36
 build_split k03
 build_split imperial44
 build_split velvet
-build_phenom_profile phenom keyboard.toml vial.json
-build_phenom_profile mini keyboard_mini.toml vial_mini.json
-build_phenom_profile micro keyboard_micro.toml vial_micro.json
-build_classic_qube_profile op36 keyboard.toml keyboards/classic_qube/vial.json
-build_classic_qube_profile k03 keyboard_k03.toml keyboards/k03/vial.json
-build_classic_qube_profile velvet keyboard_velvet.toml keyboards/velvet/vial.json
-build_classic_qube_profile imperial44 keyboard_imperial44.toml keyboards/imperial44/vial.json
+build_phenom_profile phenom keyboard.toml vial_universal.json
+build_phenom_profile mini keyboard_mini.toml vial_mini_universal.json
+build_phenom_profile micro keyboard_micro.toml vial_micro_universal.json
+build_classic_qube_profile op36 keyboard.toml keyboards/classic_qube/vial_universal.json
+build_classic_qube_profile k03 keyboard_k03.toml keyboards/classic_qube/vial_k03_universal.json
+build_classic_qube_profile velvet keyboard_velvet.toml keyboards/classic_qube/vial_velvet_universal.json
+build_classic_qube_profile imperial44 keyboard_imperial44.toml keyboards/classic_qube/vial_imperial44_universal.json
 
 echo
 echo "Root RMK build matrix OK"

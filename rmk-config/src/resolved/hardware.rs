@@ -115,6 +115,28 @@ impl BatteryConfig {
 }
 
 impl crate::KeyboardTomlConfig {
+    /// Resolve central hardware for a physical peripheral without reordering
+    /// the keymap. Returns its original encoder ID offset alongside the hardware.
+    /// Currently supports two-board serial splits; the caller selects runtime roles.
+    pub fn hardware_for_split_peripheral(&self, id: usize) -> Result<(Hardware, usize), String> {
+        let mut physical = self.clone();
+        let split = physical
+            .split
+            .as_mut()
+            .ok_or("rmk_central(peripheral) requires a split keyboard")?;
+        if !matches!(split.connection, crate::SplitConnection::Serial) || split.peripheral.len() != 1 || id != 0 {
+            return Err("rmk_central(peripheral) requires a serial split with one peripheral (id 0)".into());
+        }
+        let encoder_offset = split
+            .central
+            .input_device
+            .as_ref()
+            .and_then(|devices| devices.encoder.as_ref())
+            .map_or(0, Vec::len);
+        std::mem::swap(&mut split.central, &mut split.peripheral[id]);
+        physical.hardware().map(|hardware| (hardware, encoder_offset))
+    }
+
     /// Resolve hardware configuration from TOML config.
     pub fn hardware(&self) -> Result<Hardware, String> {
         let chip = self.get_chip_model()?;
@@ -269,6 +291,38 @@ mod tests {
         let config = KeyboardTomlConfig::new_from_toml_path_with_event_defaults(&path);
         let _ = fs::remove_file(&path);
         config
+    }
+
+    #[test]
+    fn phenom_right_primary_preserves_physical_pins_and_original_encoder_ids() {
+        for source in [
+            include_str!("../../../keyboards/phenom/keyboard.toml"),
+            include_str!("../../../keyboards/phenom/keyboard_mini.toml"),
+            include_str!("../../../keyboards/phenom/keyboard_micro.toml"),
+        ] {
+            let original = config_from_toml(&source.replacen("[keyboard]", "[keyboard]\nusb_enable = true", 1));
+            let before = original.hardware().unwrap();
+            let super::BoardConfig::Split(before) = before.board else {
+                panic!()
+            };
+            let (right, encoder_offset) = original.hardware_for_split_peripheral(0).unwrap();
+            let super::BoardConfig::Split(right) = right.board else {
+                panic!()
+            };
+            assert_eq!(encoder_offset, 1);
+            assert_eq!(right.central.row_offset, before.peripheral[0].row_offset);
+            assert_eq!(right.central.matrix.row_pins, before.peripheral[0].matrix.row_pins);
+            assert_eq!(right.central.matrix.bootmagic, before.peripheral[0].matrix.bootmagic);
+            assert_eq!(right.peripheral[0].row_offset, before.central.row_offset);
+            let super::BoardConfig::Split(unchanged) = original.hardware().unwrap().board else {
+                panic!()
+            };
+            assert_eq!(
+                unchanged.central.row_offset, 0,
+                "selecting right must not mutate the source profile"
+            );
+            assert!(original.hardware_for_split_peripheral(1).is_err());
+        }
     }
 
     fn external_flash_toml(dfu_partition_size: Option<u32>) -> String {

@@ -164,7 +164,7 @@ const MODULE_DEFAULTS: [u8; MODULE_SETTINGS_LEN] = {
     data[IDX_LEFT_TOUCH_AXIS] = crate::board::DEFAULT_TOUCH_AXIS[0];
     data[IDX_RIGHT_TOUCH_AXIS] = crate::board::DEFAULT_TOUCH_AXIS[1];
     data[IDX_FLAGS] = DEFAULT_ACCELERATION_FLAGS;
-    data[IDX_MODULE_SELECT] = (3 << 0) | (2 << 2);
+    data[IDX_MODULE_SELECT] = 3 | (2 << 2) | if crate::board::AUTO_MODULES { 0x30 } else { 0 };
     data[IDX_LEFT_SCROLL_SENS] = 8;
     data[IDX_RIGHT_SCROLL_SENS] = 8;
     data[IDX_LEFT_SNIPER_SENS] = 4;
@@ -700,7 +700,7 @@ fn module_settings_sync_packet() -> [u8; MODULE_SETTINGS_SYNC_LEN] {
         pack_color(&mut data, 15, layer, module_layer_color_index(layer));
         layer += 1;
     }
-    data[25] = module_byte(IDX_MODULE_SELECT) & 0x0f;
+    data[25] = module_byte(IDX_MODULE_SELECT) & 0x3f;
     if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
         // New Phenom receivers take the timeout from the encoder packet.
         // Old receivers ignore this bit and retain the legacy low-byte value.
@@ -800,6 +800,9 @@ fn serialize_module_settings() -> [u8; MODULE_SETTINGS_STORAGE_LEN] {
         pack_color(&mut data, 15, i, module_bt_profile_color_index(i - 16));
         i += 1;
     }
+    // Twenty-one 5-bit colors use only bit 0 of byte 28. Reserve bits 6/7
+    // for Auto, leaving existing settings and layer-name offsets unchanged.
+    data[28] |= (module_byte(IDX_MODULE_SELECT) & 0x30) << 2;
     if crate::board::LED_TIMEOUT_MAX_SEC > 255 {
         // Byte 28 bit 0 belongs to the last packed profile color. Bits 6/7
         // are reserved for Auto module selections; timeout uses only 2..5.
@@ -875,7 +878,15 @@ fn deserialize_module_settings(data: &[u8]) {
     };
     MODULE_SETTINGS[IDX_AUTO_LAYER_TIMEOUT].store(auto_layer_timeout_index, Ordering::Relaxed);
     MODULE_SETTINGS[IDX_RIGHT_ENCODER_INTERVAL].store((data[30] >> 4).min(9), Ordering::Relaxed);
-    MODULE_SETTINGS[IDX_MODULE_SELECT].store(data[31] & 0x0f, Ordering::Relaxed);
+    MODULE_SETTINGS[IDX_MODULE_SELECT].store(
+        (data[31] & 0x0f)
+            | if crate::board::AUTO_MODULES {
+                (data[28] >> 2) & 0x30
+            } else {
+                0
+            },
+        Ordering::Relaxed,
+    );
     MODULE_SETTINGS[IDX_AXIS_FLAGS].store((data[31] >> 4) & 0x0f, Ordering::Relaxed);
     if let Some(encoder_steps) = data.get(32).copied() {
         MODULE_SETTINGS[IDX_LEFT_ENCODER_STEPS].store((encoder_steps & 0x0f).min(7), Ordering::Relaxed);
@@ -974,15 +985,26 @@ fn module_set_touch_gestures(side: u8, enabled: bool) {
 }
 
 fn module_selection_value(side: u8) -> u8 {
-    let shift = if side == 0 { 0 } else { 2 };
-    (module_byte(IDX_MODULE_SELECT) >> shift) & 0x03
+    let side = usize::from(side != 0);
+    let select = module_byte(IDX_MODULE_SELECT);
+    if crate::board::AUTO_MODULES && select & (0x10 << side) != 0 {
+        4
+    } else {
+        (select >> (side * 2)) & 0x03
+    }
 }
 
 fn module_set_module_selection(side: u8, value: u8) {
-    let shift = if side == 0 { 0 } else { 2 };
-    let mut select = module_byte(IDX_MODULE_SELECT) & !(0x03 << shift);
-    select |= (value.min(MODULE_SELECT_TOUCH) & 0x03) << shift;
-    module_set_byte(IDX_MODULE_SELECT, select & 0x0f);
+    let side = usize::from(side != 0);
+    let auto = 0x10 << side;
+    let shift = side * 2;
+    let mut select = module_byte(IDX_MODULE_SELECT) & !auto;
+    if crate::board::AUTO_MODULES && value == 4 {
+        select |= auto;
+    } else {
+        select = (select & !(0x03 << shift)) | ((value.min(MODULE_SELECT_TOUCH) & 0x03) << shift);
+    }
+    module_set_byte(IDX_MODULE_SELECT, select & 0x3f);
 }
 
 fn module_layer_color_index(layer: u8) -> u8 {

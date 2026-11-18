@@ -55,20 +55,26 @@ pub enum ModuleSelection {
     Encoder,
     Trackball,
     Touchpad,
+    Auto,
 }
 
 impl ModuleSelection {
     fn from_raw(value: u8) -> Self {
-        match value & 0x03 {
+        match value {
             1 => Self::Encoder,
             2 => Self::Trackball,
             3 => Self::Touchpad,
+            4 if crate::board::AUTO_MODULES => Self::Auto,
             _ => Self::None,
         }
     }
 
     fn is_pointing(self) -> bool {
-        matches!(self, Self::Trackball | Self::Touchpad)
+        matches!(self, Self::Trackball | Self::Touchpad | Self::Auto)
+    }
+
+    pub fn allows(self, sensor: Self) -> bool {
+        self == sensor || (self == Self::Auto && matches!(sensor, Self::Trackball | Self::Touchpad))
     }
 }
 
@@ -246,7 +252,10 @@ pub(crate) fn apply_settings_packet(data: &[u8; 27]) {
         set_layer_color_index(layer, unpack_color(data, 15, layer).min(24));
         layer += 1;
     }
-    SETTINGS[IDX_MODULE_SELECT].store(data[25] & 0x0f, Ordering::Relaxed);
+    SETTINGS[IDX_MODULE_SELECT].store(
+        data[25] & if crate::board::AUTO_MODULES { 0x3f } else { 0x0f },
+        Ordering::Relaxed,
+    );
     SETTINGS[IDX_AXIS_FLAGS].store(data[26] & 0x0f, Ordering::Relaxed);
     apply_module_selection_runtime();
 }
@@ -256,6 +265,9 @@ fn ensure_initialized() {
         return;
     }
     SETTINGS[0].store(VERSION, Ordering::Relaxed);
+    if crate::board::AUTO_MODULES {
+        SETTINGS[IDX_MODULE_SELECT].store(0x30, Ordering::Relaxed);
+    }
     let default_ball_dpi = if cfg!(feature = "production_v22") { 2 } else { 4 };
     SETTINGS[IDX_LEFT_BALL_DPI].store(default_ball_dpi, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_BALL_DPI].store(default_ball_dpi, Ordering::Relaxed);
@@ -300,10 +312,13 @@ fn ensure_initialized() {
 
 fn module_selections() -> [ModuleSelection; 2] {
     let packed = SETTINGS[IDX_MODULE_SELECT].load(Ordering::Relaxed);
-    [
-        ModuleSelection::from_raw(packed),
-        ModuleSelection::from_raw(packed >> 2),
-    ]
+    core::array::from_fn(|side| {
+        ModuleSelection::from_raw(if packed & (0x10 << side) != 0 {
+            4
+        } else {
+            (packed >> (side * 2)) & 3
+        })
+    })
 }
 
 fn apply_module_selection_runtime() {

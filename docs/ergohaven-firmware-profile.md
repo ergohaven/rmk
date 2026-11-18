@@ -18,12 +18,14 @@ profiles share this software contract:
 Phenom Series is wired and has no batteries, so the Bluetooth and battery
 parts of the contract do not apply to it.
 
-Default profiles speak Rynk with Ergohaven's commands (rmk feature
-`ergohaven_rynk`, `[host] rynk_enabled = true`). The official workflow also
-builds separate Vial standalone variants for K:03, K:04 Micro, Imperial44,
-OP36 and Velvet. Full-size K:04 Vial is excluded from production; Mini and
-Qube have no separate official Vial variant. Select matching protocol images
-and use a compatible configurator. Over Rynk the same QSIDs, layer names,
+All 17 official profiles speak Rynk with Ergohaven's commands (rmk feature
+`ergohaven_rynk`, `[host] rynk_enabled = true`): ten standalone profiles and
+seven Qube profiles. Separate RMK/Vial firmware variants are no longer built
+or published by the official matrix. Vial implementation, aliases, configs and
+core protocol tests remain available for manual builds; QMK/Vial is unaffected.
+Use Entropy/Rynk with official RMK images. For manual Vial builds, see
+[Universal Symbols profiles](vial-universal-profiles.md).
+Over Rynk the same QSIDs, layer names,
 board definition and host data are served, writes need no unlock, as over
 Vial, and keymap and macro writes reach flash after a quiet period or a host
 commit.
