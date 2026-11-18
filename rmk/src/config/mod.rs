@@ -12,7 +12,6 @@ mod positional;
 mod storage;
 mod vial;
 
-pub use crate::magic::MagicConfig;
 pub use behavior::{
     AutoMouseLayerConfig, BehaviorConfig, CombosConfig, ForksConfig, MorsesConfig, MouseKeyConfig, OneShotConfig,
     OneShotModifiersConfig, TapConfig,
@@ -31,6 +30,8 @@ pub use lock::LockConfig;
 pub use positional::{Hand, PositionalConfig};
 pub use storage::StorageConfig;
 pub use vial::{VialConfig, VialDeviceSettings, VialDeviceSettingsData};
+
+pub use crate::magic::MagicConfig;
 
 /// Internal configurations for RMK keyboard.
 #[cfg_attr(not(feature = "rynk"), derive(Default))]
