@@ -121,8 +121,11 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         self.assertEqual(PROFILE_BASELINE['previous_descriptor_hashes'],
                          {path: BASELINE['descriptors'][path] for path in paths})
         self.assertEqual(set(PROFILE_BASELINE['descriptor_hashes']), paths)
-        self.assertEqual(PROFILE_BASELINE['additional_rmk_features'],
-                         {'phenom': ['ergohaven_window_switching', 'ergohaven_delayed_english']})
+        families = {'classic_qube', 'imperial44', 'k03', 'k04', 'op36', 'phenom', 'velvet'}
+        self.assertEqual({row['keyboard'] for entries in rows().values() for row in entries}, families)
+        features = {family: ['ergohaven_delayed_english'] for family in families}
+        features['phenom'].insert(0, 'ergohaven_window_switching')
+        self.assertEqual(PROFILE_BASELINE['additional_rmk_features'], features)
 
     def test_phenom_production_profiles_advertise_auto_after_manual_module_values(self):
         expected = ['None', 'Encoder', 'Trackball', 'Touchpad', 'Auto']
