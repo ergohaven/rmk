@@ -19,10 +19,16 @@ pub(super) struct LanguageHelpers {
 
 impl Keyboard<'_> {
     pub(super) fn sync_ruen_host_layout(&mut self) {
+        let (layout, revision) = crate::host_data::layout_snapshot();
+        #[cfg(feature = "ergohaven_delayed_english")]
+        if self.english_fallback.is_some() {
+            // Ignore the host's notification for the temporary layout switch.
+            self.ruen.host_layout_revision = Some(revision);
+            return;
+        }
         if self.ruen.storing || self.ruen.sync_after.is_some_and(|deadline| Instant::now() < deadline) {
             return;
         }
-        let (layout, revision) = crate::host_data::layout_snapshot();
         if self.ruen.host_layout_revision != Some(revision) {
             if let Some(layout) = layout.and_then(HostLayout::from_host_code) {
                 self.universal_symbols.set_layout(layout);
@@ -51,6 +57,13 @@ impl Keyboard<'_> {
         }
         if !event.pressed && id != 57 {
             return Some(false);
+        }
+        #[cfg(feature = "ergohaven_delayed_english")]
+        {
+            self.restore_english_fallback().await;
+            if self.english_fallback.is_some() {
+                return Some(false);
+            }
         }
         self.sync_ruen_host_layout();
         let sent = match id {

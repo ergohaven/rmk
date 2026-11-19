@@ -1,12 +1,20 @@
 //! Morse handlers.
 
+use rmk_types::action::KeyAction;
 use rmk_types::morse::Morse;
 use rmk_types::protocol::rynk::command::{GetMorse, GetMorseBulk, SetMorse, SetMorseBulk};
 use rmk_types::protocol::rynk::{GetMorseBulkRequest, RynkError, RynkMessage, SetMorseRequest, bulk_item_capacity};
 
 use super::super::RynkService;
 use super::bulk::{bulk_page, take_bulk, take_element};
-use super::{Handle, HandleBulk};
+use super::{Handle, HandleBulk, validate_magic_binding};
+
+fn validate_morse(config: &Morse) -> Result<(), RynkError> {
+    config
+        .actions
+        .iter()
+        .try_for_each(|(_, &action)| validate_magic_binding(KeyAction::Single(action)))
+}
 
 impl Handle<GetMorse> for RynkService<'_> {
     async fn handle(&self, idx: u8) -> Result<Morse, RynkError> {
@@ -19,6 +27,7 @@ impl Handle<SetMorse> for RynkService<'_> {
         if (r.index as usize) >= self.ctx.morses_len() {
             return Err(RynkError::Invalid);
         }
+        validate_morse(&r.config)?;
         self.ctx
             .update_morse(r.index, |m| *m = r.config)
             .await
@@ -39,7 +48,7 @@ impl HandleBulk<SetMorseBulk> for RynkService<'_> {
     async fn handle_bulk(&self, msg: &mut RynkMessage<'_>) -> Result<(), RynkError> {
         let mut cursor = msg.payload();
         let start_index = take_element::<u8>(&mut cursor)? as usize;
-        for (idx, config) in take_bulk::<Morse>(&mut cursor, start_index, self.ctx.morses_len())? {
+        for (idx, config) in take_bulk::<Morse>(&mut cursor, start_index, self.ctx.morses_len(), validate_morse)? {
             self.ctx
                 .update_morse(idx as u8, |m| *m = config)
                 .await

@@ -34,6 +34,8 @@ use crate::{COMBO_MAX_NUM, FORK_MAX_NUM, boot};
 
 pub(crate) mod auto_mouse_layer;
 pub mod combo;
+#[cfg(feature = "ergohaven_delayed_english")]
+mod english_fallback;
 pub(crate) mod fork;
 pub(crate) mod held_buffer;
 pub(crate) mod macros;
@@ -46,6 +48,7 @@ mod ruen;
 pub(crate) mod steno;
 
 use crate::keymap::HOLD_BUFFER_SIZE;
+use crate::magic::MagicAction;
 
 // Timestamp of the last key action, the value is the number of seconds since the boot
 #[cfg(feature = "_ble")]
@@ -280,6 +283,8 @@ pub struct Keyboard<'a> {
     /// Firmware-native EN/RU punctuation state.
     #[cfg(feature = "universal_symbols")]
     universal_symbols: crate::universal_symbols::State,
+    #[cfg(feature = "ergohaven_delayed_english")]
+    english_fallback: Option<Instant>,
 
     /// Plover HID stenography chord accumulator
     #[cfg(feature = "steno")]
@@ -317,6 +322,8 @@ impl<'a> Keyboard<'a> {
             window_layer_subscriber: crate::event::LayerChangeEvent::subscriber(),
             #[cfg(feature = "universal_symbols")]
             universal_symbols: crate::universal_symbols::State::default(),
+            #[cfg(feature = "ergohaven_delayed_english")]
+            english_fallback: None,
             #[cfg(feature = "ergohaven_language_helpers")]
             ruen: ruen::LanguageHelpers::default(),
             #[cfg(feature = "steno")]
@@ -370,6 +377,8 @@ impl<'a> Keyboard<'a> {
             #[cfg(feature = "ergohaven_window_switching")]
             self.window_switch.map(|(_, deadline)| deadline),
             self.mouse.next_deadline(),
+            #[cfg(feature = "ergohaven_delayed_english")]
+            self.english_fallback,
             self.keymap.macros(|m| m.is_playing()).then_some(self.macro_due),
         ]
         .into_iter()
@@ -382,6 +391,8 @@ impl<'a> Keyboard<'a> {
     async fn fire_expired(&mut self) {
         #[cfg(feature = "ergohaven_window_switching")]
         self.expire_window_switch().await;
+        #[cfg(feature = "ergohaven_delayed_english")]
+        self.expire_english_fallback().await;
         match self.next_buffered_key() {
             // `next_deadline` hides the one-shot while a key is buffered, so at most
             // one of these two can be due.
@@ -449,6 +460,8 @@ impl<'a> Keyboard<'a> {
 
     /// Process an input source's press or release.
     pub async fn process_inner(&mut self, event: KeyboardEvent) {
+        #[cfg(feature = "ergohaven_delayed_english")]
+        self.expire_english_fallback().await;
         // Check for mode transitions (e.g., entering/exiting passkey entry)
         #[cfg(feature = "passkey_entry")]
         self.passkey_entry_state.check_mode_transition();
@@ -470,10 +483,9 @@ impl<'a> Keyboard<'a> {
         let event_time = Instant::now();
 
         // Process key
-        let key_action = &self.keymap.get_action_with_layer_cache(event);
-
-        if !self.combo_on || self.process_combo(key_action, event, event_time).await {
-            self.process_key_action(key_action, event, event_time).await
+        let key_action = self.keymap.get_action_with_layer_cache(event);
+        if !self.combo_on || self.process_combo(&key_action, event, event_time).await {
+            self.process_key_action(&key_action, event, event_time).await
         }
     }
 
@@ -1462,7 +1474,61 @@ impl<'a> Keyboard<'a> {
         });
     }
 
+    async fn process_magic_action(&mut self, action: MagicAction) {
+        let mut config = self.keymap.magic_config();
+        config.apply(action);
+        self.keymap.set_magic_config(config);
+
+        #[cfg(feature = "storage")]
+        crate::storage::store_unchecked(crate::storage::StorageItem::MagicConfig(config)).await;
+
+        // QMK's clear_keyboard() clears registered HID outputs while leaving
+        // combo, fork, layer, and tap-hold authoring state intact. Pending
+        // actions therefore continue to resolve against the new mapping.
+        self.registered.clear();
+
+        if let Some(layer) = self.osl_state.value().copied() {
+            self.keymap.deactivate_layer(layer);
+        }
+        self.osl_state = OneShotState::None;
+        self.osl_deadline = None;
+        self.osm_state = OneShotState::None;
+        self.osm_deadline = None;
+        self.caps_word.deactivate();
+        self.last_key_code = HidKeyCode::No;
+
+        #[cfg(feature = "ergohaven_window_switching")]
+        {
+            self.window_switch = None;
+        }
+
+        let mouse_was_active = {
+            let report = self.mouse.report;
+            report.buttons != 0 || report.x != 0 || report.y != 0 || report.wheel != 0 || report.pan != 0
+        };
+        self.mouse = MouseState::new();
+        self.keymap.set_mouse_buttons(0);
+
+        self.send_keyboard_report(ModifierCombination::default()).await;
+        self.media_report.usage_id = 0;
+        self.send_media_report().await;
+        self.system_control_report.usage_id = 0;
+        self.send_system_control_report().await;
+        if mouse_was_active {
+            self.send_mouse_report().await;
+        }
+    }
+
     async fn process_key_action_normal(&mut self, action: Action, event: KeyboardEvent) {
+        if let Action::User(id) = action
+            && let Some(magic) = MagicAction::from_user_id(id)
+        {
+            if event.pressed {
+                self.process_magic_action(magic).await;
+            }
+            return;
+        }
+
         publish_event_async(ActionEvent {
             action,
             keyboard_event: event,
@@ -1529,6 +1595,7 @@ impl<'a> Keyboard<'a> {
                 }
             }
             Action::Modifier(modifiers) => {
+                let modifiers = self.keymap.magic_config().resolve_modifiers(modifiers);
                 if event.pressed {
                     self.register_key(HidKeyCode::No, modifiers, event);
                 } else {
@@ -1546,6 +1613,7 @@ impl<'a> Keyboard<'a> {
             }
             Action::KeyWithModifier(key_code, modifiers) => self.process_action_key(key_code, modifiers, event).await,
             Action::LayerOnWithModifier(layer_num, modifiers) => {
+                let modifiers = self.keymap.magic_config().resolve_modifiers(modifiers);
                 if event.pressed {
                     self.register_key(HidKeyCode::No, modifiers, event);
                 } else {
@@ -1560,7 +1628,8 @@ impl<'a> Keyboard<'a> {
                 self.update_osm(event);
             }
             Action::OneShotModifier(m) => {
-                self.process_action_osm(m, event).await;
+                self.process_action_osm(self.keymap.magic_config().resolve_modifiers(m), event)
+                    .await;
                 // Process OSL to avoid the OSM state stuck when an OSM is followed by an OSL
                 self.update_osl(event);
             }
@@ -1736,6 +1805,12 @@ impl<'a> Keyboard<'a> {
 
     // Process a basic keypress/release and also take care of applying one shot modifiers
     async fn process_hid_keycode(&mut self, key: HidKeyCode, mods: ModifierCombination, event: KeyboardEvent) {
+        let magic = self.keymap.magic_config();
+        self.process_hid_keycode_resolved(magic.resolve_keycode(key), magic.resolve_modifiers(mods), event)
+            .await;
+    }
+
+    async fn process_hid_keycode_resolved(&mut self, key: HidKeyCode, mods: ModifierCombination, event: KeyboardEvent) {
         #[cfg(feature = "passkey_entry")]
         if self.passkey_entry_state.is_active() {
             use crate::ble::passkey::{PASSKEY_RESPONSE, PasskeyAction};
@@ -1869,6 +1944,11 @@ impl<'a> Keyboard<'a> {
         mods: ModifierCombination,
         event: KeyboardEvent,
     ) {
+        let magic = self.keymap.magic_config();
+        key = magic.resolve_keycode(key);
+        caps_word_key = magic.resolve_keycode(caps_word_key);
+        let mods = magic.resolve_modifiers(mods);
+
         // Process `Again` key first.
         // Not all platform support `Again` key, so we manually repeat it for users.
         if key == HidKeyCode::Again {
@@ -1879,6 +1959,8 @@ impl<'a> Keyboard<'a> {
             }
         }
 
+        #[cfg(feature = "ergohaven_delayed_english")]
+        self.finish_english_fallback_for_key(key, event.pressed).await;
         #[cfg(feature = "ergohaven_language_helpers")]
         self.finish_ruen_word(key, event.pressed).await;
 
@@ -1917,7 +1999,7 @@ impl<'a> Keyboard<'a> {
         } else if key.is_mouse_key() {
             self.process_action_mouse(key, event).await;
         } else {
-            self.process_hid_keycode(key, mods, event).await;
+            self.process_hid_keycode_resolved(key, mods, event).await;
         }
         if hold_mods && !event.pressed {
             self.unregister_key(HidKeyCode::No, mods, event);
@@ -2088,12 +2170,35 @@ impl<'a> Keyboard<'a> {
             return false;
         }
 
+        #[cfg(feature = "ergohaven_delayed_english")]
+        if crate::universal_symbols::RussianLetter::from_user_id(user_id).is_some() {
+            self.restore_english_fallback().await;
+        }
         #[cfg(feature = "ergohaven_language_helpers")]
         self.sync_ruen_host_layout();
         #[cfg(feature = "ergohaven_language_helpers")]
         let host_layout = None;
         #[cfg(not(feature = "ergohaven_language_helpers"))]
         let host_layout = crate::host_data::snapshot().layout;
+        #[cfg(feature = "ergohaven_delayed_english")]
+        let previous_fallback = self.english_fallback;
+        #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "ergohaven_language_helpers")))]
+        let host_layout = if self.english_fallback.is_some() {
+            // Consume observations without letting host notification latency end fallback.
+            self.universal_symbols.observe_host_layout(host_layout);
+            None
+        } else {
+            host_layout
+        };
+        #[cfg(feature = "ergohaven_delayed_english")]
+        if matches!(
+            user_id,
+            crate::universal_symbols::USER_SET_ENGLISH
+                | crate::universal_symbols::USER_SET_RUSSIAN
+                | crate::universal_symbols::USER_TOGGLE
+        ) {
+            self.english_fallback = None;
+        }
         #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "storage"))]
         let previous_platform = self.universal_symbols.platform();
         let previous_state = self.universal_symbols;
@@ -2115,17 +2220,39 @@ impl<'a> Keyboard<'a> {
                 let sent = self.send_universal_symbols_layout_switch(platform).await;
                 if !sent {
                     self.universal_symbols = previous_state;
+                    #[cfg(feature = "ergohaven_delayed_english")]
+                    {
+                        self.english_fallback = previous_fallback;
+                    }
                 }
                 sent
             }
             crate::universal_symbols::Command::Type(resolved) => {
+                #[cfg(feature = "ergohaven_delayed_english")]
+                let delayed = resolved.temporary_layout_switch
+                    && self.universal_symbols.layout() == crate::universal_symbols::HostLayout::Russian;
+                #[cfg(not(feature = "ergohaven_delayed_english"))]
+                let delayed = false;
                 if resolved.temporary_layout_switch {
-                    self.send_universal_symbols_layout_switch(platform).await;
+                    if !self.send_universal_symbols_layout_switch(platform).await && delayed {
+                        return false;
+                    }
+                    #[cfg(feature = "ergohaven_delayed_english")]
+                    if delayed {
+                        self.universal_symbols
+                            .set_layout(crate::universal_symbols::HostLayout::English);
+                    }
                 }
                 self.send_universal_symbols_tap(resolved.stroke.keycode, resolved.stroke.modifiers)
                     .await;
-                if resolved.temporary_layout_switch {
+                if resolved.temporary_layout_switch && !delayed {
                     self.send_universal_symbols_layout_switch(platform).await;
+                }
+                #[cfg(feature = "ergohaven_delayed_english")]
+                if delayed {
+                    self.english_fallback = Some(Instant::now() + Duration::from_millis(500));
+                } else {
+                    self.extend_english_fallback(user_id);
                 }
                 true
             }
@@ -3607,7 +3734,22 @@ mod test {
                 sequence
             };
             let (handled, sequence) = embassy_futures::join::join(
-                keyboard.process_universal_symbols_user_action(USER_SYMBOL_START + 21, KeyboardEvent::key(0, 0, true)),
+                async {
+                    let handled = keyboard
+                        .process_universal_symbols_user_action(USER_SYMBOL_START + 21, KeyboardEvent::key(0, 0, true))
+                        .await;
+                    #[cfg(feature = "ergohaven_delayed_english")]
+                    {
+                        assert_eq!(
+                            keyboard.universal_symbols.layout(),
+                            crate::universal_symbols::HostLayout::English
+                        );
+                        Timer::after_millis(500).await;
+                        keyboard.fire_expired().await;
+                        assert!(keyboard.english_fallback.is_none());
+                    }
+                    handled
+                },
                 consume,
             )
             .await;
@@ -3731,7 +3873,28 @@ mod test {
                     reports
                 };
                 let (handled, reports) = embassy_futures::join::join(
-                    keyboard.process_universal_symbols_user_action(id, KeyboardEvent::key(0, 0, true)),
+                    async {
+                        let handled = keyboard
+                            .process_universal_symbols_user_action(id, KeyboardEvent::key(0, 0, true))
+                            .await;
+                        #[cfg(feature = "ergohaven_delayed_english")]
+                        {
+                            Timer::after_millis(499).await;
+                            keyboard.fire_expired().await;
+                            assert_eq!(
+                                keyboard.universal_symbols.layout(),
+                                crate::universal_symbols::HostLayout::English
+                            );
+                            assert!(
+                                keyboard.english_fallback.is_some(),
+                                "return must not happen before 500 ms"
+                            );
+                            Timer::after_millis(1).await;
+                            keyboard.fire_expired().await;
+                            assert!(keyboard.english_fallback.is_none());
+                        }
+                        handled
+                    },
                     capture,
                 )
                 .await;
@@ -3764,8 +3927,390 @@ mod test {
                     reports[12].0.duration_since(reports[11].0) >= Duration::from_millis(50),
                     "return completed before layout-switch settle"
                 );
+                #[cfg(feature = "ergohaven_delayed_english")]
+                {
+                    let delay = reports[8].0.duration_since(reports[7].0);
+                    assert!(delay >= Duration::from_millis(500), "return switch must be delayed");
+                    assert!(delay < Duration::from_millis(505), "return switch missed its deadline");
+                }
                 assert!(flash_channel.try_receive().is_err());
             }
+        });
+    }
+
+    #[cfg(all(
+        feature = "universal_symbols",
+        any(feature = "vial", feature = "ergohaven_rynk"),
+        not(feature = "_no_usb")
+    ))]
+    #[test]
+    fn universal_punctuation_burst_switches_and_restores_before_russian_typing() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{HostLayout, State, USER_SET_RUSSIAN, USER_SYMBOL_START, USER_TOGGLE_MACOS};
+
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+
+            let mut observed = std::vec::Vec::new();
+            let mut drain = || {
+                while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                    if let Report::KeyboardReport(report) = report.into_report() {
+                        if report.modifier == ModifierCombination::LCTRL.into_bits()
+                            && report.keycodes.contains(&(HidKeyCode::Space as u8))
+                        {
+                            observed.push("switch");
+                        }
+                        if report.keycodes.contains(&(HidKeyCode::Grave as u8)) {
+                            observed.push("grave");
+                        }
+                        if report.keycodes.contains(&(HidKeyCode::F as u8)) {
+                            observed.push("letter");
+                        }
+                    }
+                }
+            };
+
+            let press = KeyboardEvent::key(0, 0, true);
+            for _ in 0..3 {
+                assert!(
+                    keyboard
+                        .process_universal_symbols_user_action(USER_SYMBOL_START + 7, press)
+                        .await
+                );
+                drain();
+                Timer::after_millis(100).await;
+            }
+            keyboard
+                .process_action_key(HidKeyCode::F, ModifierCombination::new(), press)
+                .await;
+            drain();
+
+            let expected: &[&str] = if cfg!(feature = "ergohaven_delayed_english") {
+                &["switch", "grave", "grave", "grave", "switch", "letter"]
+            } else {
+                &[
+                    "switch", "grave", "switch", "switch", "grave", "switch", "switch", "grave", "switch", "letter",
+                ]
+            };
+            assert_eq!(observed, expected);
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_keeps_english_until_a_following_letter() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let russian = keyboard.universal_symbols;
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols,
+                State::default(),
+                "fallback must leave English active"
+            );
+            keyboard
+                .process_action_key(
+                    HidKeyCode::F1,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 1, true),
+                )
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols,
+                State::default(),
+                "function keys do not end fallback"
+            );
+            keyboard
+                .process_action_key(
+                    HidKeyCode::A,
+                    ModifierCombination::LSHIFT,
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols, russian,
+                "restore Russian before the following shifted letter"
+            );
+        });
+    }
+
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "_no_usb")))]
+    #[test]
+    fn english_fallback_restores_russian_before_russian_letter_actions() {
+        block_on(async {
+            use crate::universal_symbols::{
+                HostLayout, State, USER_RUSSIAN_LETTER_START, USER_SET_RUSSIAN, USER_SYMBOL_START,
+            };
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let press = KeyboardEvent::key(0, 0, true);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            crate::channel::USB_REPORT_CHANNEL.clear();
+            assert!(
+                keyboard
+                    .process_universal_symbols_user_action(USER_RUSSIAN_LETTER_START, press)
+                    .await
+            );
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+            let mut saw_letter = false;
+            let mut saw_switch = false;
+            while let Ok(report) = crate::channel::USB_REPORT_CHANNEL.try_receive() {
+                if let Report::KeyboardReport(report) = report.into_report() {
+                    if report.keycodes.contains(&(HidKeyCode::Space as u8)) {
+                        saw_switch = true;
+                    }
+                    if report.keycodes.contains(&(HidKeyCode::LeftBracket as u8)) {
+                        assert!(saw_switch, "restore Russian before emitting the letter");
+                        saw_letter = true;
+                    }
+                }
+            }
+            assert!(saw_letter, "the assigned Russian letter must not be dropped");
+        });
+    }
+
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "_no_usb")))]
+    #[test]
+    fn english_fallback_defers_the_return_switch_for_500_millis() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let russian = keyboard.universal_symbols;
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            crate::channel::USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            let mut switches = 0;
+            while let Ok(report) = crate::channel::USB_REPORT_CHANNEL.try_receive() {
+                if let Report::KeyboardReport(report) = report.into_report() {
+                    if report.modifier == ModifierCombination::LGUI.into_bits()
+                        && report.keycodes.contains(&(HidKeyCode::Space as u8))
+                    {
+                        switches += 1;
+                    }
+                }
+            }
+            assert_eq!(switches, 1, "the return switch must be deferred");
+            Timer::after_millis(499).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols, State::default());
+            Timer::after_millis(1).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols, russian);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_extends_only_for_english_punctuation_and_honors_explicit_english() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let press = KeyboardEvent::key(0, 0, true);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            Timer::after_millis(450).await;
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 16, press)
+                .await;
+            Timer::after_millis(100).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            keyboard
+                .process_universal_symbols_user_action(USER_SET_ENGLISH, press)
+                .await;
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_timeout_is_not_starved_by_queued_function_keys() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            Timer::after_millis(501).await;
+            keyboard
+                .process_inner(KeyboardEvent {
+                    source: KeyboardEventSource::KeyCode(HidKeyCode::F1),
+                    pressed: true,
+                })
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_retries_a_full_report_and_keeps_numero_symmetric() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_NUMERO, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard
+                .process_universal_symbols_user_action(USER_NUMERO, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            assert!(keyboard.english_fallback.is_none());
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            let held = [
+                HidKeyCode::A,
+                HidKeyCode::B,
+                HidKeyCode::C,
+                HidKeyCode::D,
+                HidKeyCode::E,
+                HidKeyCode::F,
+            ];
+            for (index, key) in held.into_iter().enumerate() {
+                keyboard.register_key(
+                    key,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(1, index as u8, true),
+                );
+            }
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            assert!(keyboard.english_fallback.is_some());
+            keyboard.unregister_key(
+                HidKeyCode::F,
+                ModifierCombination::new(),
+                KeyboardEvent::key(1, 5, false),
+            );
+            Timer::after_millis(10).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "_no_usb")))]
+    #[test]
+    fn english_fallback_timeout_preserves_held_modifiers() {
+        block_on(async {
+            use crate::universal_symbols::{State, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, KeyboardEvent::key(0, 0, true))
+                .await;
+            keyboard.register_key(
+                HidKeyCode::No,
+                ModifierCombination::LSHIFT,
+                KeyboardEvent::key(0, 1, true),
+            );
+            crate::state::set_usb_state(crate::types::connection::UsbState::Configured);
+            crate::channel::USB_REPORT_CHANNEL.clear();
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            let mut last_report = None;
+            while let Ok(report) = crate::channel::USB_REPORT_CHANNEL.try_receive() {
+                if let Report::KeyboardReport(report) = report.into_report() {
+                    last_report = Some(report);
+                }
+            }
+            let report = last_report.expect("restore emits a final held-key report");
+            assert_eq!(report.modifier, ModifierCombination::LSHIFT.into_bits());
+            assert_eq!(report.keycodes, [0; 6]);
+            assert!(keyboard.english_fallback.is_none());
+        });
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn english_fallback_consumes_host_observations_and_toggle_cancels_the_timer() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, State, USER_SYMBOL_START, USER_TOGGLE};
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols = State::default();
+            crate::host_data::update_layout(1);
+            let press = KeyboardEvent::key(0, 0, true);
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            // The host finally announces the English switch during the fallback window.
+            crate::host_data::update_layout(0);
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START, press)
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols.layout(),
+                HostLayout::Russian,
+                "a consumed English notice must not undo the return"
+            );
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                .await;
+            keyboard.process_universal_symbols_user_action(USER_TOGGLE, press).await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(keyboard.english_fallback.is_none());
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+        });
+    }
+
+    #[cfg(all(feature = "ergohaven_delayed_english", feature = "ergohaven_language_helpers"))]
+    #[test]
+    fn english_fallback_hands_off_to_ruen_word() {
+        block_on(async {
+            use crate::universal_symbols::{HostLayout, USER_SYMBOL_START};
+            let mut keyboard = create_test_keyboard();
+            let press = KeyboardEvent::key(0, 0, true);
+            crate::host_data::update_layout(1);
+            assert!(
+                keyboard
+                    .process_universal_symbols_user_action(USER_SYMBOL_START + 15, press)
+                    .await
+            );
+            assert!(keyboard.english_fallback.is_some());
+            crate::host_data::update_layout(0);
+
+            assert_eq!(keyboard.process_ruen_user_action(56, press).await, Some(true));
+            assert!(keyboard.english_fallback.is_none());
+            Timer::after_millis(501).await;
+            keyboard.fire_expired().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            keyboard.finish_ruen_word(HidKeyCode::Space, true).await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
         });
     }
 
@@ -4391,6 +4936,348 @@ mod test {
             assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::No);
         };
         block_on(main);
+    }
+
+    #[test]
+    fn magic_actions_are_press_triggered_and_resolve_key_modifiers() {
+        let main = async {
+            let mut keyboard = create_test_keyboard();
+            let magic = Action::User(MagicAction::SwapLAltLGui.user_id());
+            let magic_event = KeyboardEvent::key(0, 0, true);
+
+            keyboard.process_key_action_normal(magic, magic_event).await;
+            assert!(keyboard.keymap.magic_config().swap_lalt_lgui);
+
+            // QMK magic actions ignore key-up. A held key must not toggle or
+            // undo the setting when the source key is released.
+            keyboard
+                .process_key_action_normal(magic, KeyboardEvent::key(0, 0, false))
+                .await;
+            assert!(keyboard.keymap.magic_config().swap_lalt_lgui);
+
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(0, 0),
+                0,
+                KeyAction::Single(Action::KeyWithModifier(HidKeyCode::A, ModifierCombination::LALT)),
+            );
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::A);
+            assert_eq!(keyboard.resolve_modifiers(true), ModifierCombination::LGUI);
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+            assert_eq!(keyboard.resolve_modifiers(false), ModifierCombination::new());
+        };
+        block_on(main);
+    }
+
+    #[test]
+    fn magic_action_clears_registered_outputs_but_preserves_pending_state() {
+        let main = async {
+            let combo = Combo::new(rmk_types::combo::Combo::new([k!(A), k!(B)], k!(C), None));
+            let mut behavior = BehaviorConfig::default();
+            behavior.combo.combos[0] = Some(combo);
+            let mut keyboard = create_test_keyboard_with_config(behavior);
+            let magic_action = KeyAction::Single(Action::User(MagicAction::GuiOff.user_id()));
+
+            // Both layers expose the magic key so this remains reachable while
+            // the momentary layer is held.
+            for layer in 0..2 {
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(0, 0), layer, magic_action);
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(1, 0), layer, k!(A));
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(2, 0), layer, k!(B));
+            }
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(1, 2), 1, thp!(A, LShift, 0));
+
+            // Hold a momentary layer, a tap-hold key, and a combo.
+            keyboard.process_inner(KeyboardEvent::key(4, 9, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard.process_inner(KeyboardEvent::key(2, 1, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 2, true)).await;
+            assert!(!keyboard.held_buffer.is_empty());
+
+            // QMK's clear_keyboard clears registered HID outputs, but leaves
+            // combo/tap-hold authoring state and the held momentary layer.
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            assert!(!keyboard.held_buffer.is_empty());
+            assert!(keyboard.registered.is_empty());
+            assert!(keyboard.keymap.with_combos(|combos| {
+                combos
+                    .iter()
+                    .flatten()
+                    .any(|combo| combo.keys_pressed() != 0 || combo.is_triggered())
+            }));
+
+            // Releases belonging to the old layer/action still resolve cleanly
+            // after the reset and cannot leave stale output behind.
+            for event in [
+                KeyboardEvent::key(0, 0, false),
+                KeyboardEvent::key(4, 9, false),
+                KeyboardEvent::key(2, 1, false),
+                KeyboardEvent::key(0, 1, false),
+                KeyboardEvent::key(0, 2, false),
+            ] {
+                keyboard.process_inner(event).await;
+            }
+            assert!(!keyboard.keymap.is_layer_active(1));
+            assert!(keyboard.held_buffer.is_empty());
+            assert!(keyboard.registered.is_empty());
+        };
+        block_on(main);
+    }
+
+    #[test]
+    fn magic_action_preserves_a_toggled_layer() {
+        block_on(async {
+            let mut keyboard = create_test_keyboard();
+            let toggle = KeyAction::Single(Action::LayerToggle(1));
+            let magic = KeyAction::Single(Action::User(MagicAction::GuiOff.user_id()));
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, toggle);
+            for layer in 0..2 {
+                keyboard
+                    .keymap
+                    .set_action_at(KeyboardEventSource::key_pos(1, 0), layer, magic);
+            }
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard.process_inner(KeyboardEvent::key(0, 1, false)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+        });
+    }
+
+    #[test]
+    fn magic_action_from_tap_hold_does_not_reinsert_stale_release_state() {
+        block_on(async {
+            let mut keyboard = create_test_keyboard();
+            let magic = Action::User(MagicAction::GuiOff.user_id());
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(0, 0),
+                0,
+                KeyAction::TapHold(Action::Key(KeyCode::Hid(HidKeyCode::A)), magic, 0),
+            );
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert!(keyboard.keymap.magic_config().no_gui);
+            assert!(!keyboard.held_buffer.is_empty());
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert!(keyboard.held_buffer.is_empty());
+            assert!(keyboard.registered.is_empty());
+        });
+    }
+
+    #[test]
+    fn magic_action_remains_available_as_a_combo_input() {
+        block_on(async {
+            let mut behavior = BehaviorConfig::default();
+            behavior.combo.combos[0] = Some(Combo::new(rmk_types::combo::Combo::new(
+                [KeyAction::Single(Action::User(MagicAction::GuiOff.user_id())), k!(A)],
+                k!(B),
+                None,
+            )));
+            let mut keyboard = create_test_keyboard_with_config(behavior);
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(0, 0),
+                0,
+                KeyAction::Single(Action::User(MagicAction::GuiOff.user_id())),
+            );
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(1, 0), 0, k!(A));
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            assert!(!keyboard.keymap.magic_config().no_gui);
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert!(!keyboard.keymap.magic_config().no_gui);
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::B);
+
+            keyboard.process_inner(KeyboardEvent::key(0, 1, false)).await;
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert_eq!(keyboard.held_keycodes(), [HidKeyCode::No; 6]);
+        });
+    }
+
+    #[test]
+    fn magic_clear_preserves_release_of_a_held_tap_hold_layer() {
+        block_on(async {
+            let mut keyboard = create_test_keyboard();
+            let layer_hold = KeyAction::TapHold(k!(A).to_action(), Action::LayerOn(1), 0);
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, layer_hold);
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 1, layer_hold);
+            keyboard.keymap.set_action_at(
+                KeyboardEventSource::key_pos(1, 0),
+                1,
+                KeyAction::Single(Action::User(MagicAction::GuiOff.user_id())),
+            );
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+            force_timeout_first_hold(&mut keyboard).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+
+            keyboard.process_inner(KeyboardEvent::key(0, 1, true)).await;
+            assert!(keyboard.keymap.magic_config().no_gui);
+            assert!(keyboard.keymap.is_layer_active(1));
+            assert!(!keyboard.held_buffer.is_empty());
+
+            keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+            assert!(!keyboard.keymap.is_layer_active(1));
+            assert!(keyboard.held_buffer.is_empty());
+        });
+    }
+
+    #[test]
+    fn magic_clear_preserves_release_of_a_combo_layer_output() {
+        block_on(async {
+            let mut behavior = BehaviorConfig::default();
+            behavior.combo.combos[0] = Some(Combo::new(rmk_types::combo::Combo::new(
+                [k!(A), k!(B)],
+                KeyAction::Single(Action::LayerOn(1)),
+                None,
+            )));
+            let mut keyboard = create_test_keyboard_with_config(behavior);
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, k!(A));
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 1), 0, k!(B));
+
+            keyboard
+                .process_key_action_normal(Action::LayerOn(1), KeyboardEvent::combo(0, true))
+                .await;
+            assert!(keyboard.keymap.is_layer_active(1));
+            keyboard
+                .process_key_action_normal(
+                    Action::User(MagicAction::GuiOff.user_id()),
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            assert!(keyboard.keymap.is_layer_active(1));
+
+            keyboard
+                .process_key_action_normal(Action::LayerOn(1), KeyboardEvent::combo(0, false))
+                .await;
+            assert!(!keyboard.keymap.is_layer_active(1));
+        });
+    }
+
+    #[test]
+    fn magic_action_preserves_a_held_fork_without_stale_release() {
+        block_on(async {
+            let fork = Fork {
+                trigger: k!(Dot),
+                negative_output: k!(Dot),
+                positive_output: k!(Semicolon),
+                match_any: StateBits {
+                    modifiers: ModifierCombination::LSHIFT,
+                    leds: LedIndicator::default(),
+                    mouse: MouseButtons::default(),
+                },
+                suppressed_modifiers: ModifierCombination::LSHIFT,
+                options: ForkOptions::default(),
+                ..Fork::empty()
+            };
+            let mut keyboard = create_test_keyboard_with_forks(fork, Fork::empty());
+            let magic = Action::User(MagicAction::GuiOff.user_id());
+            keyboard
+                .keymap
+                .set_action_at(KeyboardEventSource::key_pos(0, 0), 0, KeyAction::Single(magic));
+
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, true),
+                )
+                .await;
+            keyboard.process_inner(KeyboardEvent::key(3, 9, true)).await;
+            assert_eq!(keyboard.held_keycodes()[0], HidKeyCode::Semicolon);
+            assert!(keyboard.fork_states.iter().any(Option::is_some));
+
+            // Drive the real magic action entry point directly so the fork's
+            // "other key down" policy cannot mask the clear itself.
+            keyboard
+                .process_key_action_normal(magic, KeyboardEvent::key(0, 0, true))
+                .await;
+            assert!(keyboard.fork_states.iter().any(Option::is_some));
+            assert!(keyboard.registered.is_empty());
+
+            keyboard.process_inner(KeyboardEvent::key(3, 9, false)).await;
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, false),
+                )
+                .await;
+            assert!(keyboard.registered.is_empty());
+        });
+    }
+
+    #[test]
+    fn magic_clear_preserves_release_of_a_fork_layer_output() {
+        block_on(async {
+            let fork = Fork {
+                trigger: k!(Dot),
+                negative_output: k!(Dot),
+                positive_output: KeyAction::Single(Action::LayerOn(1)),
+                match_any: StateBits {
+                    modifiers: ModifierCombination::LSHIFT,
+                    leds: LedIndicator::default(),
+                    mouse: MouseButtons::default(),
+                },
+                suppressed_modifiers: ModifierCombination::LSHIFT,
+                options: ForkOptions::default(),
+                ..Fork::empty()
+            };
+            let mut keyboard = create_test_keyboard_with_forks(fork, Fork::empty());
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, true),
+                )
+                .await;
+            keyboard.process_inner(KeyboardEvent::key(3, 9, true)).await;
+            assert!(keyboard.keymap.is_layer_active(1));
+
+            keyboard
+                .process_key_action_normal(
+                    Action::User(MagicAction::GuiOff.user_id()),
+                    KeyboardEvent::key(0, 0, true),
+                )
+                .await;
+            keyboard.process_inner(KeyboardEvent::key(3, 9, false)).await;
+            keyboard
+                .process_action_key(
+                    HidKeyCode::LShift,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 0, false),
+                )
+                .await;
+            assert!(!keyboard.keymap.is_layer_active(1));
+        });
     }
 
     #[test]

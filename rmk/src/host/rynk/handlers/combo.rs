@@ -6,7 +6,16 @@ use rmk_types::protocol::rynk::{GetComboBulkRequest, RynkError, RynkMessage, Set
 
 use super::super::RynkService;
 use super::bulk::{bulk_page, take_bulk, take_element};
-use super::{Handle, HandleBulk};
+use super::{Handle, HandleBulk, validate_magic_binding};
+
+fn validate_combo(config: &ComboConfig) -> Result<(), RynkError> {
+    config
+        .actions
+        .iter()
+        .copied()
+        .chain([config.output])
+        .try_for_each(validate_magic_binding)
+}
 
 impl Handle<GetCombo> for RynkService<'_> {
     async fn handle(&self, idx: u8) -> Result<ComboConfig, RynkError> {
@@ -25,6 +34,7 @@ impl Handle<GetCombo> for RynkService<'_> {
 
 impl Handle<SetCombo> for RynkService<'_> {
     async fn handle(&self, r: SetComboRequest) -> Result<(), RynkError> {
+        validate_combo(&r.config)?;
         match self.ctx.set_combo(r.index, r.config).await {
             Ok(true) => Ok(()),
             Ok(false) => Err(RynkError::Invalid),
@@ -56,7 +66,7 @@ impl HandleBulk<SetComboBulk> for RynkService<'_> {
         let mut cursor = msg.payload();
         let start_index = take_element::<u8>(&mut cursor)? as usize;
         let num_combos = self.ctx.with_combos(|combos| combos.len());
-        for (idx, config) in take_bulk::<ComboConfig>(&mut cursor, start_index, num_combos)? {
+        for (idx, config) in take_bulk::<ComboConfig>(&mut cursor, start_index, num_combos, validate_combo)? {
             self.ctx
                 .set_combo(idx as u8, config)
                 .await

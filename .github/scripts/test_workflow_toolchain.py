@@ -15,8 +15,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 # Complete pre-stabilization argv inventories, with only the stable selector
 # normalized. Review every feature/filter/flag change before refreshing these.
 ROUTING_DIGESTS = {
-    'check.sh': '7f735c480f28bee0db0d6608764761008deb7713cb95b83ccfd8ce58070c79b8',
-    'test.sh': '646e1c64e772657e7fb4535ca08a0e9d7f737bac10ded440e621dcff06c018cf',
+    'check.sh': '3b29b19fc49b266141c4d9fd215e8680b290a2ba225e9c15210f6c2fca88ffc0',
+    'test.sh': '8ffe5acc96586524ab6697cd3e4d52f017d4432f29c758eb69ed7885d823baa7',
     'host.sh': '69c395a139754b8c23891a2cea9a67193dbbce81deb247a0b80f57550d3c3478',
 }
 
@@ -136,6 +136,20 @@ class StableToolchainTests(unittest.TestCase):
         self.assertNotIn('+stable', run)
         self.assertNotIn('RUSTUP_TOOLCHAIN', run)
         self.assertRegex(channel(), r'^\d+\.\d+\.\d+$')
+
+    def test_delayed_punctuation_runs_with_production_geometry(self):
+        for script, args in [('check.sh', ['stable']), ('test.sh', [])]:
+            with self.subTest(script=script):
+                rows = [
+                    set(command[command.index('--features') + 1].split(','))
+                    for command in route_commands(script, *args)
+                    if '--features' in command
+                    and 'ergohaven_delayed_english'
+                    in command[command.index('--features') + 1].split(',')
+                ]
+                self.assertEqual(len(rows), 1, 'Reuse the existing delayed-punctuation CI row')
+                self.assertIn('universal_symbols_iso', rows[0],
+                              'Official profiles enable delayed punctuation and geometry together')
 
     def test_shell_owners_route_every_stable_command(self):
         for script, count in [('check.sh', 37), ('test.sh', 31), ('host.sh', 7)]:

@@ -36,7 +36,7 @@ jobs:
       - id: policy
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/ci_policy.py plan --profile tests
+        run: python3 .github/scripts/ci_policy.py plan --profile tests --manual-builds
 
   format:
     needs: [plan]
@@ -140,9 +140,8 @@ jobs:
           components: clippy
           targets: wasm32-unknown-unknown
       - name: Install host system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+        timeout-minutes: 10
+        run: bash .github/ci/install-system-deps.sh libdbus-1-dev pkg-config
       - uses: taiki-e/install-action@v2
         with:
           tool: wasm-pack
@@ -186,9 +185,9 @@ jobs:
           cache-bin: false
           save-if: ${{ github.event_name != 'pull_request' }}
       - name: Install QEMU
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-system-misc libdbus-1-dev pkg-config
+          bash .github/ci/install-system-deps.sh qemu-system-misc libdbus-1-dev pkg-config
           qemu-system-riscv32 --version
       - name: Run QEMU Rynk behavior verifier
         working-directory: examples/use_rust/qemu-riscv-rynk
@@ -234,9 +233,9 @@ jobs:
           cargo install flip-link 2>/dev/null || true
       - name: Install ARM build dependencies
         if: matrix.arm_gcc
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi libnewlib-dev clang libclang-dev llvm-dev
+          bash .github/ci/install-system-deps.sh gcc-arm-none-eabi libnewlib-dev clang libclang-dev llvm-dev
           libclang_dir=$(/usr/bin/llvm-config --libdir)
           echo "CLANG_PATH=/usr/bin/clang" >> "$GITHUB_ENV"
           printf 'LIBCLANG_PATH=%s\n' "$libclang_dir" >> "$GITHUB_ENV"

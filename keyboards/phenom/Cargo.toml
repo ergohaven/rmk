@@ -46,6 +46,7 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "split",
     "storage",
     "universal_symbols",
+    "ergohaven_delayed_english",
     "watchdog",
 ] }
 

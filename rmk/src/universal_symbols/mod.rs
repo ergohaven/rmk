@@ -255,13 +255,20 @@ impl State {
         Some(command)
     }
 
-    #[cfg(feature = "ergohaven_language_helpers")]
+    #[cfg(any(test, feature = "ergohaven_language_helpers", feature = "ergohaven_delayed_english"))]
     pub(crate) const fn layout(&self) -> HostLayout {
         self.layout
     }
 
     pub(crate) const fn platform(&self) -> Platform {
         self.platform
+    }
+
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "ergohaven_language_helpers")))]
+    pub(crate) fn observe_host_layout(&mut self, code: Option<u8>) {
+        if let Some(layout) = code.and_then(HostLayout::from_host_code) {
+            self.last_host_layout = Some(layout);
+        }
     }
 
     pub(crate) fn set_layout(&mut self, layout: HostLayout) -> Command {

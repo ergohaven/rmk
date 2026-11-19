@@ -61,6 +61,8 @@ ergohaven_window_switching = ["universal_symbols"]
 ergohaven_language_helpers = ["universal_symbols"]
 # Ergohaven layer helpers occupy appended board user slots 52 and 53.
 ergohaven_layer_cycling = []
+# QMK-style English fallback lifetime for Ergohaven keyboard profiles.
+ergohaven_delayed_english = ["universal_symbols"]
 # Opt-in layout-options bit 2 contract (ISO, left-hide, right-hide).
 universal_symbols_iso = ["universal_symbols"]
 # Scoped contracts for boards with zero or one existing one-bit option.

@@ -12,8 +12,9 @@ use vial::process_vial;
 use crate::config::{RmkConfig, VialConfig};
 use crate::hid::ViaReport;
 use crate::host::context::KeyboardContext;
-use crate::host::via::keycode_convert::{from_via_keycode, to_via_keycode};
+use crate::host::via::keycode_convert::{from_via_keycode, is_supported_via_keycode, to_via_keycode};
 use crate::keymap::KeyMap;
+use crate::magic::key_action_is_supported;
 use crate::{MACRO_MAX_NUM, MACRO_SPACE_SIZE, boot};
 
 pub(crate) mod keycode_convert;
@@ -301,6 +302,10 @@ async fn process_native_key_action_set(report: &mut ViaReport, ctx: &KeyboardCon
         report.input_data[4] = NATIVE_KEY_ACTION_STATUS_INVALID_PAYLOAD;
         return;
     };
+    if !key_action_is_supported(action) {
+        report.input_data[4] = NATIVE_KEY_ACTION_STATUS_INVALID_PAYLOAD;
+        return;
+    }
     if ctx.stage_action(layer, row, col, action).await.is_err() {
         report.input_data[4] = NATIVE_KEY_ACTION_STATUS_INVALID_POSITION;
     }
@@ -362,6 +367,10 @@ async fn process_native_dynamic_action_set(report: &mut ViaReport, ctx: &Keyboar
         report.input_data[4] = NATIVE_KEY_ACTION_STATUS_INVALID_PAYLOAD;
         return;
     };
+    if !key_action_is_supported(action) {
+        report.input_data[4] = NATIVE_KEY_ACTION_STATUS_INVALID_PAYLOAD;
+        return;
+    }
     let (kind, index, field) = (report.output_data[4], report.output_data[5], report.output_data[6]);
     if native_dynamic_action_set(ctx, kind, index, field, action)
         .await
@@ -547,6 +556,11 @@ impl<'a> VialService<'a> {
                 let row = report.output_data[2];
                 let col = report.output_data[3];
                 let keycode = BigEndian::read_u16(&report.output_data[4..6]);
+                if !is_supported_via_keycode(keycode) {
+                    warn!("Rejecting unsupported QMK magic keycode: {:#X}", keycode);
+                    report.input_data[0] = 0xFF;
+                    return;
+                }
                 let action = from_via_keycode(keycode);
                 info!(
                     "Setting keycode: 0x{:02X} at ({},{}), layer {} as {:?}",
@@ -589,6 +603,7 @@ impl<'a> VialService<'a> {
                 {
                     init_native_key_action_response(report, ERGOHAVEN_CUSTOM_NATIVE_KEY_ACTION_CAPS);
                     LittleEndian::write_u16(&mut report.input_data[4..6], native_key_action_capabilities());
+                    report.input_data[6..11].copy_from_slice(&crate::magic::supported_keycode_bytes());
                 } else if report.output_data[1] == ERGOHAVEN_CUSTOM_NAMESPACE
                     && report.output_data[2] == ERGOHAVEN_CUSTOM_PROFILE_RESOLUTION
                 {
@@ -666,10 +681,14 @@ impl<'a> VialService<'a> {
                 let size = report.output_data[3] as usize;
                 if size <= 28 {
                     // A save is one upload of many packets: persist it once, when the last arrives.
-                    let upload = self
+                    let Ok(upload) = self
                         .ctx
                         .keymap
-                        .macros(|m| m.write_upload(offset, &report.output_data[4..4 + size]));
+                        .macros(|m| m.write_upload(offset, &report.output_data[4..4 + size]))
+                    else {
+                        report.input_data[0] = 0xFF;
+                        return;
+                    };
                     #[cfg(feature = "storage")]
                     if let Some(changed) = upload
                         && crate::keyboard::macros::persist(self.ctx.keymap, changed)
@@ -721,14 +740,42 @@ impl<'a> VialService<'a> {
             ViaCommand::DynamicKeymapSetBuffer => {
                 debug!("Dynamic keymap set buffer");
                 let offset = BigEndian::read_u16(&report.output_data[1..3]);
-                // size <= 28
+                // QMK/VIA expresses both the offset and payload in bytes. RMK
+                // stores complete u16 keycodes, so an odd offset or payload
+                // cannot be applied atomically.
                 let size = report.output_data[3];
+                if size > 28 || !offset.is_multiple_of(2) || !size.is_multiple_of(2) {
+                    report.input_data[0] = 0xFF;
+                    return;
+                }
+                let start = offset as usize / 2;
+                let count = size as usize / 2;
+                let (rows, cols, layers) = self.ctx.keymap_dimensions();
+                let total = rows.saturating_mul(cols).saturating_mul(layers);
+                if match start.checked_add(count) {
+                    Some(end) => end > total,
+                    None => true,
+                } {
+                    report.input_data[0] = 0xFF;
+                    return;
+                }
+                for i in 0..count {
+                    let idx = 4 + i * 2;
+                    let via_keycode = BigEndian::read_u16(&report.output_data[idx..idx + 2]);
+                    if !is_supported_via_keycode(via_keycode) {
+                        warn!(
+                            "Rejecting bulk keymap write with unsupported QMK magic keycode: {:#X}",
+                            via_keycode
+                        );
+                        report.input_data[0] = 0xFF;
+                        return;
+                    }
+                }
                 let mut idx = 4;
-                let (rows, cols, _) = self.ctx.keymap_dimensions();
-                for i in 0..(size as usize) {
-                    let via_keycode = LittleEndian::read_u16(&report.output_data[idx..idx + 2]);
+                for i in 0..count {
+                    let via_keycode = BigEndian::read_u16(&report.output_data[idx..idx + 2]);
                     let action = from_via_keycode(via_keycode);
-                    let flat_index = offset as usize + i;
+                    let flat_index = start + i;
                     let (layer, in_layer) = (flat_index / (rows * cols), flat_index % (rows * cols));
                     let _ = self
                         .ctx
@@ -742,6 +789,7 @@ impl<'a> VialService<'a> {
             }
             ViaCommand::DynamicKeymapSetEncoder => {
                 warn!("Keymap set encoder -- not supported");
+                report.input_data[0] = 0xFF;
             }
             ViaCommand::Vial => {
                 process_vial(
@@ -803,6 +851,16 @@ mod tests {
         let mut data = KeymapData::new([[[KeyAction::No]]]);
         let mut behavior = BehaviorConfig::default();
         let positional = PositionalConfig::<1, 1>::default();
+        let keymap = block_on(KeyMap::new(&mut data, &mut behavior, &positional));
+        let config = RmkConfig::default();
+        let mut service = VialService::new(&keymap, &config);
+        f(&mut service)
+    }
+
+    fn with_service_1x3<R>(f: impl FnOnce(&mut VialService) -> R) -> R {
+        let mut data = KeymapData::new([[[KeyAction::No, KeyAction::No, KeyAction::No]]]);
+        let mut behavior = BehaviorConfig::default();
+        let positional = PositionalConfig::<1, 3>::default();
         let keymap = block_on(KeyMap::new(&mut data, &mut behavior, &positional));
         let config = RmkConfig::default();
         let mut service = VialService::new(&keymap, &config);
@@ -1010,6 +1068,37 @@ mod tests {
         });
     }
 
+    #[test]
+    fn macro_set_buffer_rejects_unsupported_magic_split_across_reports() {
+        with_service(|service| {
+            let mut prefix = macro_set_buffer_report_at(0, 3);
+            prefix.output_data[4..7].copy_from_slice(&[1, 5, 0x11]);
+            prefix.input_data = prefix.output_data;
+            process(service, &mut prefix);
+            assert_ne!(prefix.input_data[0], 0xFF);
+
+            let mut suffix = macro_set_buffer_report_at(3, 1);
+            suffix.output_data[4] = 0x70;
+            suffix.input_data = suffix.output_data;
+            process(service, &mut suffix);
+            assert_eq!(suffix.input_data[0], 0xFF);
+            service
+                .ctx
+                .keymap
+                .macros(|m| assert_eq!(&m.bytes()[..4], &[1, 5, 0x11, 0]));
+
+            let mut supported = macro_set_buffer_report_at(0, 4);
+            supported.output_data[4..8].copy_from_slice(&[1, 5, 0x1d, 0x70]);
+            supported.input_data = supported.output_data;
+            process(service, &mut supported);
+            assert_ne!(supported.input_data[0], 0xFF);
+            service
+                .ctx
+                .keymap
+                .macros(|m| assert_eq!(&m.bytes()[..4], &[1, 5, 0x1d, 0x70]));
+        });
+    }
+
     #[cfg(feature = "storage")]
     type Part = crate::test_support::InMemoryFlash<16_384, 4_096, 1>;
 
@@ -1163,6 +1252,89 @@ mod tests {
                 native_key_action_capabilities() & ERGOHAVEN_NATIVE_KEY_ACTION_CAP_UNIVERSAL_MACROS != 0,
                 cfg!(feature = "universal_symbols")
             );
+            assert_eq!(&report.input_data[6..11], &crate::magic::supported_keycode_bytes());
+            assert!(report.input_data[11..].iter().all(|byte| *byte == 0));
+        });
+    }
+
+    #[test]
+    fn standard_via_single_magic_write_rejects_without_mutation() {
+        with_service_1x3(|service| {
+            let mut output_data = [0u8; 32];
+            output_data[0] = ViaCommand::DynamicKeymapSetKeyCode as u8;
+            output_data[1..4].copy_from_slice(&[0, 0, 1]);
+            output_data[4..6].copy_from_slice(&0x7011u16.to_be_bytes());
+            let mut report = ViaReport {
+                input_data: output_data,
+                output_data,
+            };
+
+            process(service, &mut report);
+
+            assert_eq!(report.input_data[0], 0xFF);
+            assert_eq!(service.ctx.get_action(0, 0, 1), KeyAction::No);
+        });
+    }
+
+    #[test]
+    fn standard_via_single_kc_no_write_remains_supported() {
+        with_service_1x3(|service| {
+            let mut output_data = [0u8; 32];
+            output_data[0] = ViaCommand::DynamicKeymapSetKeyCode as u8;
+            output_data[1..4].copy_from_slice(&[0, 0, 0]);
+            output_data[4..6].copy_from_slice(&0x0004u16.to_be_bytes());
+            let mut report = ViaReport {
+                input_data: output_data,
+                output_data,
+            };
+            process(service, &mut report);
+            assert_eq!(
+                service.ctx.get_action(0, 0, 0),
+                KeyAction::Single(Action::Key(KeyCode::Hid(HidKeyCode::A)))
+            );
+
+            report.output_data[4..6].copy_from_slice(&0u16.to_be_bytes());
+            process(service, &mut report);
+            assert_eq!(service.ctx.get_action(0, 0, 0), KeyAction::No);
+        });
+    }
+
+    #[test]
+    fn standard_via_encoder_write_reports_unsupported() {
+        with_service_1x3(|service| {
+            let mut output_data = [0u8; 32];
+            output_data[0] = ViaCommand::DynamicKeymapSetEncoder as u8;
+            let mut report = ViaReport {
+                input_data: output_data,
+                output_data,
+            };
+
+            process(service, &mut report);
+
+            assert_eq!(report.input_data[0], 0xFF);
+        });
+    }
+
+    #[test]
+    fn standard_via_bulk_magic_write_uses_byte_offset_and_rejects_atomically() {
+        with_service_1x3(|service| {
+            let mut output_data = [0u8; 32];
+            output_data[0] = ViaCommand::DynamicKeymapSetBuffer as u8;
+            // QMK/VIA's offset is in bytes: start at flat key 1.
+            output_data[1..3].copy_from_slice(&2u16.to_be_bytes());
+            output_data[3] = 4;
+            output_data[4..6].copy_from_slice(&0x0004u16.to_be_bytes());
+            output_data[6..8].copy_from_slice(&0x7011u16.to_be_bytes());
+            let mut report = ViaReport {
+                input_data: output_data,
+                output_data,
+            };
+
+            process(service, &mut report);
+
+            assert_eq!(report.input_data[0], 0xFF);
+            assert_eq!(service.ctx.get_action_flat(1), KeyAction::No);
+            assert_eq!(service.ctx.get_action_flat(2), KeyAction::No);
         });
     }
 

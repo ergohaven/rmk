@@ -53,6 +53,13 @@ pub mod caps {
     pub const UNIVERSAL_NUMERO: u32 = 1 << 8;
     /// Universal Symbols include Ж, Э and Ё (`Action::User(0xB5..=0xB7)`).
     pub const EXTENDED_RUSSIAN_LETTERS: u32 = 1 << 9;
+    /// Understands the Magic remapping actions. Magic keycode 0x7000 + n
+    /// travels as `Action::User(0xC0 + n)`.
+    pub const MAGIC_REMAP: u32 = 1 << 10;
+    /// Understands the three Magic NKRO actions.
+    pub const MAGIC_NKRO: u32 = 1 << 11;
+    /// Understands the two Magic EEPROM handedness actions.
+    pub const MAGIC_HANDS: u32 = 1 << 12;
 }
 
 /// What `GetErgohavenInfo` reports.
@@ -143,9 +150,10 @@ pub struct BatteryHalves {
     pub right: u8,
 }
 
-/// Writes waiting for flash.
+/// Writes queued for flash or still being written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, MaxSize)]
 pub struct WriteStatus {
+    /// Keymap entries plus the pending board-settings block.
     pub pending_keys: u16,
     pub pending_macro_chunks: u16,
     /// A staged write failed since the last `CommitWrites`.

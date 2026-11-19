@@ -1,6 +1,8 @@
 //! Macro handlers: one whole macro per request.
 
 use rmk_types::keyboard_macros::Macro;
+#[cfg(feature = "storage")]
+use rmk_types::keyboard_macros::MacroOp;
 use rmk_types::protocol::rynk::command::{GetMacro, SetMacro};
 use rmk_types::protocol::rynk::{RynkError, RynkMessage, SetMacroRequest};
 
@@ -34,6 +36,13 @@ impl HandleBulk<SetMacro> for RynkService<'_> {
                 let r = msg.decode_request::<SetMacroRequest>()?;
                 if r.index as usize >= MACRO_MAX_NUM {
                     return Err(RynkError::Invalid);
+                }
+                for op in r.macro_ops.ops() {
+                    if let MacroOp::Tap(action) | MacroOp::Press(action) | MacroOp::Release(action) = op
+                        && !crate::magic::action_is_supported(action)
+                    {
+                        return Err(RynkError::Invalid);
+                    }
                 }
                 self.ctx
                     .keymap

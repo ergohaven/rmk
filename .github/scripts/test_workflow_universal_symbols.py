@@ -123,7 +123,10 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         self.assertEqual(PROFILE_BASELINE['previous_descriptor_hashes'],
                          {path: BASELINE['descriptors'][path] for path in paths})
         self.assertEqual(set(PROFILE_BASELINE['descriptor_hashes']), paths)
-        expected_features = {board: ['ergohaven_language_helpers', 'ergohaven_layer_cycling'] for board in boards}
+        expected_features = {
+            board: ['ergohaven_language_helpers', 'ergohaven_layer_cycling', 'ergohaven_delayed_english']
+            for board in boards
+        }
         expected_features['phenom'].insert(0, 'ergohaven_window_switching')
         self.assertEqual(PROFILE_BASELINE['additional_rmk_features'], expected_features)
 

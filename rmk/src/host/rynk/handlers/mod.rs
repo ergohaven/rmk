@@ -1,5 +1,6 @@
 //! Rynk command handlers.
 
+use rmk_types::action::KeyAction;
 use rmk_types::protocol::rynk::command::Endpoint;
 use rmk_types::protocol::rynk::{RynkError, RynkMessage};
 
@@ -14,6 +15,12 @@ mod macros;
 mod morse;
 mod status;
 mod system;
+
+fn validate_magic_binding(binding: KeyAction) -> Result<(), RynkError> {
+    crate::magic::key_action_is_supported(binding)
+        .then_some(())
+        .ok_or(RynkError::Invalid)
+}
 
 /// Fixed-size endpoints: a request → response function. [`serve`] adds the
 /// decode → handle → encode wire glue.

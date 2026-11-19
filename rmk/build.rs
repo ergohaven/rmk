@@ -12,6 +12,8 @@ fn main() {
         // These user actions use existing storage framing in both protocols.
         .filter(|feature| feature != "ergohaven_language_helpers")
         .filter(|feature| feature != "ergohaven_layer_cycling")
+        // Delaying a report does not change the stored keymap format.
+        .filter(|feature| feature != "ergohaven_delayed_english")
         // Geometry and timed window switching change reports, not stored framing.
         // Keep existing Rynk layouts; Vial retains its established feature hash.
         .filter(|feature| {

@@ -1,5 +1,5 @@
 {
-  "provenance": "Reviewed Phenom metadata: PR #83 appends Auto; PR #88 appends reserved slots 50..53 and WNEXT/WPREV at 54..55. The immutable pre-geometry descriptor hashes are retained below. PR #89 adds ergohaven_language_helpers to all supported families and pins action metadata for every production profile. The accepted PR #89/#90 composition also includes layer cycling; historical hashes remain unchanged. PR #85 updates the Phenom LED timeout field to two bytes.",
+  "provenance": "Reviewed Phenom metadata: PR #83 appends Auto; PR #88 appends reserved slots 50..53 and WNEXT/WPREV at 54..55. The immutable pre-geometry descriptor hashes are retained below. PR #89 adds ergohaven_language_helpers to all supported families and pins action metadata for every production profile. The accepted PR #89/#90 composition also includes layer cycling; historical hashes remain unchanged. PR #92 enables delayed punctuation fallback across the same firmware profiles. PR #85 updates the Phenom LED timeout field to two bytes.",
   "previous_descriptor_hashes": {
     "keyboards/classic_qube/vial.json": "2e1b28160143bbe19546446ba4e2664dab701c42280880686d433f225618beb0",
     "keyboards/classic_qube/vial_imperial44.json": "34af16939694734c98ec758a9fcc2fb310b76549178df8cd7df658246555ff86",
@@ -42,31 +42,38 @@
     "phenom": [
       "ergohaven_window_switching",
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ],
     "classic_qube": [
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ],
     "imperial44": [
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ],
     "k03": [
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ],
     "k04": [
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ],
     "op36": [
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ],
     "velvet": [
       "ergohaven_language_helpers",
-      "ergohaven_layer_cycling"
+      "ergohaven_layer_cycling",
+      "ergohaven_delayed_english"
     ]
   }
 }
