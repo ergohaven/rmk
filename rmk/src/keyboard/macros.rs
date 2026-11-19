@@ -236,12 +236,16 @@ impl<'a> Macros<'a> {
     /// `MACRO_MAX_NUM` terminators precede its end, or at the end of the buffer.
     #[cfg(feature = "vial")]
     pub(crate) fn write_upload(&mut self, offset: usize, data: &[u8]) -> Result<Option<Range<usize>>, ()> {
-        // Scan the incoming stream with the preceding bytes, so a Magic
-        // opcode that crosses report boundaries is checked before its final
-        // bytes can reach the live macro buffer.
+        // Validate the complete resulting buffer: a partial write can finish an
+        // opcode using bytes from either side of the replaced range.
         let prefix = self.buf.get(..offset).ok_or(())?;
         let end = (offset + data.len()).min(self.buf.len());
-        if !codec::supports_magic_keycodes(prefix.iter().chain(&data[..end - offset]).copied()) {
+        let resulting = prefix
+            .iter()
+            .chain(&data[..end - offset])
+            .chain(&self.buf[end..])
+            .copied();
+        if !codec::supports_magic_keycodes(resulting) {
             return Err(());
         }
         let changed = self.write(offset, data);
@@ -560,6 +564,34 @@ pub(crate) mod codec {
             assert_eq!(macros.next_op(), Some(MacroOp::Tap(Action::User(0x82))));
             assert_eq!(macros.next_op(), Some(MacroOp::Press(Action::User(0x90))));
             assert_eq!(macros.next_op(), Some(MacroOp::Release(Action::User(0x90))));
+            assert_eq!(macros.next_op(), None);
+        }
+
+        #[test]
+        fn upload_rejects_magic_completed_by_the_existing_suffix_without_mutation() {
+            let mut buffer = [0; 32];
+            buffer[..5].copy_from_slice(&[1, 5, 0x10, 0x70, 0]);
+            let original = buffer;
+            let mut macros = super::super::Macros::new(&[], &mut buffer, true);
+            assert!(macros.queue(0, true, false));
+
+            // Replacing only the low byte must not turn 0x7010 into unsupported NKRO 0x7011.
+            assert!(macros.write_upload(2, &[0x11]).is_err());
+            assert_eq!(macros.bytes(), original);
+            assert_eq!(macros.unsaved, 0..0);
+            assert!(macros.is_playing(), "rejected writes must not cancel playback");
+        }
+
+        #[test]
+        fn upload_accepts_supported_magic_completed_by_the_existing_suffix() {
+            let mut buffer = [0; 32];
+            buffer[..5].copy_from_slice(&[1, 5, 0x10, 0x70, 0]);
+            let mut macros = super::super::Macros::new(&[], &mut buffer, true);
+
+            assert!(macros.write_upload(2, &[0x0F]).is_ok());
+            assert_eq!(&macros.bytes()[..5], &[1, 5, 0x0F, 0x70, 0]);
+            assert!(macros.queue(0, true, false));
+            assert_eq!(macros.next_op(), Some(MacroOp::Tap(Action::User(0xCF))));
             assert_eq!(macros.next_op(), None);
         }
 

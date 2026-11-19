@@ -50,6 +50,8 @@ pub struct AutoMouseLayerRunner<'a, 'k> {
     /// `true` if any entry has `deactivate_on_key` or `reset_timeout_on_key` set,
     /// so action events must be inspected.
     any_action_event_configured: bool,
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    manual_layer_generation: u32,
 }
 
 impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
@@ -94,10 +96,27 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
             keymap,
             entries,
             any_action_event_configured,
+            #[cfg(feature = "ergohaven_layer_cycling")]
+            manual_layer_generation: keymap.manual_layer_generation(),
+        }
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    fn sync_manual_layer_generation(&mut self) {
+        let generation = self.keymap.manual_layer_generation();
+        if generation != self.manual_layer_generation {
+            self.manual_layer_generation = generation;
+            for entry in &mut self.entries {
+                entry.self_activated = false;
+                entry.deadline = None;
+                entry.overlap_warned = false;
+            }
         }
     }
 
     async fn on_pointing_event(&mut self, event: PointingEvent) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         let Some(idx) = match_entry(&self.entries, event.device_id) else {
             return;
         };
@@ -120,6 +139,8 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
     }
 
     async fn on_layer_change_event(&mut self, LayerChangeEvent(top): LayerChangeEvent) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         // Layer turned off externally (MO/TG key etc.) — release our hold.
         let keymap = self.keymap;
         for entry in self.entries.iter_mut() {
@@ -135,6 +156,8 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
     }
 
     async fn on_action_event(&mut self, event: ActionEvent) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         if !event.keyboard_event.pressed || !self.any_action_event_configured {
             return;
         }
@@ -147,6 +170,8 @@ impl<'a, 'k> AutoMouseLayerRunner<'a, 'k> {
     }
 
     async fn on_auto_mouse_layer_config_event(&mut self, event: AutoMouseLayerConfigEvent) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         let Some(idx) = match_entry(&self.entries, event.device_id) else {
             return;
         };
@@ -196,6 +221,8 @@ impl AutoMouseLayerRunner<'_, '_> {
     }
 
     async fn on_deadline(&mut self) {
+        #[cfg(feature = "ergohaven_layer_cycling")]
+        self.sync_manual_layer_generation();
         for layer in timeout_step(&mut self.entries, Instant::now()) {
             self.keymap.deactivate_layer_if_active(layer);
         }
@@ -467,6 +494,40 @@ mod tests {
             deadline: None,
             overlap_warned: false,
         }
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_generic_auto_timeout_preserves_manual_target() {
+        crate::test_support::test_block_on(async {
+            use rmk_types::action::KeyAction;
+
+            use crate::config::{BehaviorConfig, PositionalConfig};
+            use crate::event::KeyboardEventSource;
+            use crate::keymap::KeymapData;
+            let mut data = KeymapData::<1, 1, 4>::new([[[KeyAction::Single(Action::User(53))]]; 4]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut runner = AutoMouseLayerRunner::new(&keymap);
+            let mut config = entry(None);
+            config.config.target_layer = 2;
+            runner.entries.push(config).ok().unwrap();
+            runner
+                .on_pointing_event(event([axis(Axis::X, 5), axis(Axis::Y, 0), axis(Axis::Z, 0)]))
+                .await;
+            assert!(runner.entries[0].self_activated);
+            keymap.activate_layer(3);
+            keymap.cycle_layer(false, KeyboardEventSource::key_pos(0, 0));
+            assert_eq!(keymap.active_layer(), 2);
+            runner.entries[0].deadline = Some(Instant::now());
+            runner.on_deadline().await;
+            assert!(keymap.is_layer_active(2));
+            runner
+                .on_pointing_event(event([axis(Axis::X, 5), axis(Axis::Y, 0), axis(Axis::Z, 0)]))
+                .await;
+            assert!(!runner.entries[0].self_activated);
+        });
     }
 
     #[test]

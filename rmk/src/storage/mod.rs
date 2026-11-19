@@ -178,6 +178,11 @@ static KEYMAP_FLASH_SIGNAL: Signal<crate::RawMutex, ()> = Signal::new();
 #[cfg(feature = "host")]
 static STAGED_WRITE_FAULT: AtomicBool = AtomicBool::new(false);
 
+#[cfg(feature = "ergohaven_rynk")]
+static KEYMAP_WRITE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+#[cfg(feature = "ergohaven_rynk")]
+static MACRO_WRITE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
 /// Drains the staged writes now instead of after the quiet period.
 #[cfg(feature = "host")]
 static COMMIT_SIGNAL: Signal<crate::RawMutex, ()> = Signal::new();
@@ -191,8 +196,11 @@ const STAGED_FLUSH_TIMEOUT: Duration = Duration::from_secs(60);
 #[cfg(feature = "ergohaven_rynk")]
 pub(crate) fn staged_write_status() -> (usize, usize, bool) {
     (
-        KEYMAP_FLASH_PENDING.lock(|pending| pending.borrow().len()),
-        MACRO_FLASH_PENDING.lock(|pending| pending.borrow().len()),
+        KEYMAP_FLASH_PENDING.lock(|pending| pending.borrow().len())
+            + usize::from(DEVICE_SETTINGS_FLASH_PENDING.lock(|pending| pending.borrow().is_some()))
+            + usize::from(KEYMAP_WRITE_IN_FLIGHT.load(Ordering::Relaxed)),
+        MACRO_FLASH_PENDING.lock(|pending| pending.borrow().len())
+            + usize::from(MACRO_WRITE_IN_FLIGHT.load(Ordering::Relaxed)),
         STAGED_WRITE_FAULT.load(Ordering::Relaxed),
     )
 }
@@ -926,6 +934,19 @@ impl<F: AsyncNorFlash> crate::core_traits::Runnable for Storage<F> {
             };
             #[cfg(not(feature = "host"))]
             let (message, reply_id) = FLASH_CHANNEL.receive().await;
+            // Removing an item from the queue is not a durability acknowledgement.
+            #[cfg(feature = "ergohaven_rynk")]
+            let in_flight = if staged {
+                let flag = if matches!(message, FlashOperationMessage::Store(StorageItem::MacroChunk { .. })) {
+                    &MACRO_WRITE_IN_FLIGHT
+                } else {
+                    &KEYMAP_WRITE_IN_FLIGHT
+                };
+                flag.store(true, Ordering::Relaxed);
+                Some(flag)
+            } else {
+                None
+            };
             let result = match message {
                 FlashOperationMessage::Store(item) => self.put(item).await.map(|_| None).map_err(print_storage_error),
                 FlashOperationMessage::Read(key) => self.fetch(key).await,
@@ -939,6 +960,10 @@ impl<F: AsyncNorFlash> crate::core_traits::Runnable for Storage<F> {
             #[cfg(feature = "host")]
             if staged && result.is_err() {
                 STAGED_WRITE_FAULT.store(true, Ordering::Relaxed);
+            }
+            #[cfg(feature = "ergohaven_rynk")]
+            if let Some(flag) = in_flight {
+                flag.store(false, Ordering::Relaxed);
             }
             if let Some(id) = reply_id {
                 REPLY.signal((id, result));
@@ -1238,6 +1263,39 @@ mod tests {
                 .split(',')
                 .any(|feature| feature == "ergohaven_window_switching"),
             "transient window switching must not erase existing Rynk layouts"
+        );
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn ergohaven_language_helpers_keeps_existing_storage_feature_signature() {
+        assert!(
+            !env!("RMK_FEATURES")
+                .split(',')
+                .any(|feature| feature == "ergohaven_language_helpers"),
+            "actions that use the existing storage format must preserve saved settings"
+        );
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn ergohaven_layer_cycling_keeps_existing_storage_feature_signature() {
+        assert!(
+            !env!("RMK_FEATURES")
+                .split(',')
+                .any(|feature| feature == "ergohaven_layer_cycling"),
+            "actions that use the existing storage format must preserve saved settings"
+        );
+    }
+
+    #[cfg(feature = "ergohaven_delayed_english")]
+    #[test]
+    fn ergohaven_delayed_english_keeps_existing_storage_feature_signature() {
+        assert!(
+            !env!("RMK_FEATURES")
+                .split(',')
+                .any(|feature| feature == "ergohaven_delayed_english"),
+            "actions that use the existing storage format must preserve saved settings"
         );
     }
 
@@ -1676,6 +1734,40 @@ mod tests {
         });
     }
 
+    #[test]
+    fn magic_config_restored_by_keymap_initialization() {
+        use rmk_types::action::KeyAction;
+
+        let expected = MagicConfig {
+            swap_lctl_lgui: true,
+            swap_rctl_rgui: true,
+            ..MagicConfig::default()
+        };
+        block_on(async {
+            let payload = heapless::Vec::from_slice(&expected.to_storage_payload()).unwrap();
+            let flash = seeded(&[
+                (StorageKey::StorageConfig, StorageValue::StorageConfig(SCHEMA_HASH)),
+                (
+                    StorageKey::UserData(crate::magic::MAGIC_STORAGE_SLOT),
+                    StorageValue::UserData(payload),
+                ),
+            ])
+            .await;
+            let mut data = crate::keymap::KeymapData::new([[[KeyAction::No]]]);
+            let mut behavior = RuntimeBehaviorConfig::default();
+            let positional = crate::config::PositionalConfig::<1, 1>::default();
+            let (keymap, _) = crate::initialize_keymap_and_storage(
+                &mut data,
+                flash,
+                &RuntimeStorageConfig::default(),
+                &mut behavior,
+                &positional,
+            )
+            .await;
+            assert_eq!(keymap.magic_config(), expected);
+        });
+    }
+
     #[cfg(feature = "vial")]
     #[test]
     fn magic_config_restored_from_storage() {
@@ -1924,18 +2016,80 @@ mod tests {
         const ERASE_SIZE: usize = <TestFlash as AsyncNorFlash>::ERASE_SIZE;
 
         async fn erase(&mut self, from: u32, to: u32) -> Result<(), Self::Error> {
-            if STALL.load(core::sync::atomic::Ordering::Relaxed) {
-                core::future::pending::<()>().await;
+            while STALL.load(core::sync::atomic::Ordering::Relaxed) {
+                embassy_time::Timer::after_millis(1).await;
             }
             AsyncNorFlash::erase(&mut self.0, from, to).await
         }
 
         async fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), Self::Error> {
-            if STALL.load(core::sync::atomic::Ordering::Relaxed) {
-                core::future::pending::<()>().await;
+            while STALL.load(core::sync::atomic::Ordering::Relaxed) {
+                embassy_time::Timer::after_millis(1).await;
             }
             AsyncNorFlash::write(&mut self.0, offset, bytes).await
         }
+    }
+
+    #[cfg(feature = "ergohaven_rynk")]
+    fn check_staged_status_until_flash_completes(queue: impl FnOnce(), expected: (usize, usize, bool)) {
+        use crate::core_traits::Runnable;
+
+        clear_flash_channel();
+        let part = Part::new();
+        block_on(async {
+            let mut storage = Box::pin(Storage::new(
+                StallingFlash(async_flash_wrapper(part.clone())),
+                &RuntimeStorageConfig::default(),
+            ))
+            .await;
+            let before = part.writes();
+            queue();
+            commit_staged_writes();
+            assert_eq!(staged_write_status(), expected, "queued writes must be visible");
+
+            STALL.store(true, Ordering::Relaxed);
+            let mut run = pin!(storage.run());
+            select(run.as_mut(), async {
+                while !KEYMAP_FLASH_PENDING.lock(|pending| pending.borrow().is_empty())
+                    || !MACRO_FLASH_PENDING.lock(|pending| pending.borrow().is_empty())
+                    || DEVICE_SETTINGS_FLASH_PENDING.lock(|pending| pending.borrow().is_some())
+                {
+                    Timer::after_millis(1).await;
+                }
+            })
+            .await;
+            assert_eq!(part.writes(), before);
+            assert_eq!(staged_write_status(), expected, "in-flight writes must remain visible");
+
+            STALL.store(false, Ordering::Relaxed);
+            select(run, flush_staged_writes()).await;
+            assert!(part.writes() > before);
+            assert_eq!(staged_write_status(), (0, 0, false));
+        });
+    }
+
+    #[cfg(feature = "ergohaven_rynk")]
+    #[test]
+    fn staged_status_counts_in_flight_key() {
+        check_staged_status_until_flash_completes(
+            || assert!(queue_keymap_flash_write(0, 0, 0, KeyAction::No)),
+            (1, 0, false),
+        );
+    }
+
+    #[cfg(feature = "ergohaven_rynk")]
+    #[test]
+    fn staged_status_counts_in_flight_macro() {
+        check_staged_status_until_flash_completes(|| queue_macro_flash_write(0, [0; MACRO_CHUNK_SIZE]), (0, 1, false));
+    }
+
+    #[cfg(feature = "ergohaven_rynk")]
+    #[test]
+    fn staged_status_counts_queued_and_in_flight_settings() {
+        check_staged_status_until_flash_completes(
+            || queue_device_settings_flash_write(config::VialDeviceSettingsData::empty()),
+            (1, 0, false),
+        );
     }
 
     /// A write that times out fails on its own: the map keeps what was stored before,
