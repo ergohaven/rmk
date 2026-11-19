@@ -10,7 +10,7 @@ use {
     embedded_storage_async::nor_flash::NorFlash,
 };
 
-use crate::config::{BehaviorConfig, Hand, MouseKeyConfig, OneShotModifiersConfig, PositionalConfig};
+use crate::config::{BehaviorConfig, Hand, MagicConfig, MouseKeyConfig, OneShotModifiersConfig, PositionalConfig};
 use crate::event::{KeyboardEvent, KeyboardEventSource, LayerChangeEvent, publish_event};
 use crate::input_device::rotary_encoder::Direction;
 use crate::keyboard::combo::Combo;
@@ -136,6 +136,8 @@ struct KeyMapInner<'a> {
     encoders: Option<&'a mut [EncoderAction]>,
     /// Flat touchpad data: num_layer * num_touchpad
     touchpads: &'a mut [TouchAction],
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    manual_layer_generation: u32,
     /// Per-layer activation state
     layer_state: &'a mut [bool],
     /// Layer cache for keys: row * col
@@ -449,6 +451,8 @@ impl<'a> KeyMap<'a> {
                 encoders,
                 touchpads,
                 layer_state,
+                #[cfg(feature = "ergohaven_layer_cycling")]
+                manual_layer_generation: 0,
                 layer_cache,
                 encoder_layer_cache,
                 touch_layer_cache,
@@ -630,6 +634,51 @@ impl<'a> KeyMap<'a> {
         self.inner.borrow().num_layer
     }
 
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    pub(crate) fn manual_layer_generation(&self) -> u32 {
+        self.inner.borrow().manual_layer_generation
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    pub(crate) fn cycle_layer(&self, forward: bool, source: KeyboardEventSource) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let current = inner.get_activated_layer() as usize;
+        let count = inner.num_layer.min(16);
+        if current >= count {
+            return false;
+        }
+        let default = inner.behavior.default_layer as usize;
+        for step in 1..=count {
+            let next = if forward {
+                (current + step) % count
+            } else {
+                (current + count - step) % count
+            };
+            // RMK resolves no bindings below the saved default layer.
+            if next < default {
+                continue;
+            }
+            if source.is_physical() {
+                let action = [next, default]
+                    .into_iter()
+                    .map(|layer| inner.get_action_at(source, layer))
+                    .find(|action| *action != KeyAction::Transparent)
+                    .unwrap_or(KeyAction::No);
+                if matches!(action, KeyAction::No | KeyAction::Single(rmk_types::action::Action::No)) {
+                    continue;
+                }
+            }
+            inner.layer_state.fill(false);
+            if next != default {
+                inner.layer_state[next] = true;
+            }
+            inner.manual_layer_generation = inner.manual_layer_generation.wrapping_add(1);
+            inner.update_tri_layer();
+            return true;
+        }
+        false
+    }
+
     pub(crate) fn get_activated_layer(&self) -> u8 {
         self.inner.borrow().get_activated_layer()
     }
@@ -648,6 +697,14 @@ impl<'a> KeyMap<'a> {
 
     pub(crate) fn set_layout_option(&self, layout_option: u32) {
         self.inner.borrow_mut().layout_option = layout_option;
+    }
+
+    pub(crate) fn magic_config(&self) -> MagicConfig {
+        self.inner.borrow().behavior.magic
+    }
+
+    pub(crate) fn set_magic_config(&self, magic: MagicConfig) {
+        self.inner.borrow_mut().behavior.magic = magic;
     }
 
     /// The behavior config as one storage item; taken after a RAM change so the

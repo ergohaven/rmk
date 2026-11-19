@@ -40,10 +40,13 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "defmt",
     "ergohaven_rynk",
     "ergohaven_window_switching",
+    "ergohaven_language_helpers",
+    "ergohaven_layer_cycling",
     "rp2040",
     "split",
     "storage",
     "universal_symbols",
+    "ergohaven_delayed_english",
     "watchdog",
 ] }
 

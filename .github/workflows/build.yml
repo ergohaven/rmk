@@ -32,7 +32,7 @@ jobs:
       - id: policy
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/ci_policy.py plan --profile firmware
+        run: python3 .github/scripts/ci_policy.py plan --profile firmware --manual-builds
 
   validate-profile:
     needs: [plan]
@@ -45,7 +45,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install validation tools
-        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ripgrep jq
+        timeout-minutes: 10
+        run: bash .github/ci/install-system-deps.sh ripgrep jq
 
       - name: Validate profile contract
         run: |
@@ -147,9 +148,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install ARM toolchain
+        timeout-minutes: 10
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi clang libclang-dev
+          bash .github/ci/install-system-deps.sh gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi clang libclang-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -287,9 +288,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install ARM toolchain
+        timeout-minutes: 10
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi clang libclang-dev
+          bash .github/ci/install-system-deps.sh gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi clang libclang-dev
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -397,9 +398,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install ARM toolchain
+        timeout-minutes: 10
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi
+          bash .github/ci/install-system-deps.sh gcc-arm-none-eabi binutils-arm-none-eabi libnewlib-arm-none-eabi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

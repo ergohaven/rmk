@@ -33,8 +33,8 @@ normal Rynk service reports the directly connected image target
 keyboard unlock challenge. The maintenance-only service applies to the
 fixed-role peripherals in the table.
 
-`GetErgohavenInfo` retains its existing payload. `FIRMWARE_TARGET` (bit 10)
-advertises the new query. `USB_MAINTENANCE` (bit 11) tells the host this interface
+`GetErgohavenInfo` retains its existing payload. `FIRMWARE_TARGET` (bit 13)
+advertises the new query. `USB_MAINTENANCE` (bit 14) tells the host this interface
 serves maintenance only. Normal keyboard services advertise `FIRMWARE_TARGET`
 without `USB_MAINTENANCE`. Clients must negotiate revision 3 and inspect these
 capabilities before selecting the editor or updater UI. An app supporting only
@@ -92,7 +92,7 @@ bootloaders, and requires USB hardware configuration.
 ## Entropy integration and verification
 
 1. Discover the directly connected Rynk USB component and read its wire revision,
-   model UID, version and firmware target. Show a maintenance flow when bit 11
+   model UID, version and firmware target. Show a maintenance flow when bit 14
    is set, instead of attempting keymap/settings initialization.
 2. Select the model/topology archive and the image matching the reported target.
    Classic standalone and Qube profiles share a USB product ID and UID.

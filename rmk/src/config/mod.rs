@@ -31,6 +31,8 @@ pub use positional::{Hand, PositionalConfig};
 pub use storage::StorageConfig;
 pub use vial::{VialConfig, VialDeviceSettings, VialDeviceSettingsData};
 
+pub use crate::magic::MagicConfig;
+
 /// Internal configurations for RMK keyboard.
 #[cfg_attr(not(feature = "rynk"), derive(Default))]
 pub struct RmkConfig<'a> {

@@ -6,6 +6,7 @@ use rmk_types::keycode::KeyCode;
 use rmk_types::morse::{Morse, MorseMode, MorseProfile};
 
 use crate::keyboard::combo::Combo;
+use crate::magic::MagicConfig;
 use crate::{
     AUTO_MOUSE_LAYER_MAX_NUM, COMBO_MAX_NUM, FORK_MAX_NUM, MORSE_MAX_NUM, MORSE_PROFILE_MAX_NUM, MOUSE_KEY_INTERVAL,
     MOUSE_WHEEL_INTERVAL,
@@ -16,6 +17,9 @@ use crate::{
 pub struct BehaviorConfig {
     /// Base layer; restored from flash (`DefaultLayer`) on boot, set at runtime by DF/PDF
     pub default_layer: u8,
+    /// QMK-compatible runtime key remapping switches, persisted separately
+    /// from the layout when storage is enabled.
+    pub magic: MagicConfig,
     pub tri_layer: Option<[u8; 3]>,
     pub tap: TapConfig,
     pub one_shot: OneShotConfig,

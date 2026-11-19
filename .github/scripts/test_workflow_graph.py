@@ -44,9 +44,10 @@ class WorkflowGraphTests(unittest.TestCase):
         # coverage edits must review/update these baselines, not drop this test.
         # build.yml retains macOS geometry profiles, display storage and sticky key regressions.
         # Official Vial artifacts are retired; manual/core Vial coverage is retained.
+        # Seven APT steps now share bounded transport settings and strict index refreshes.
         expected = {
-            'build.yml': '54705410ee6442ac0c6ed8d7cd2ff5e3a1e2e451055ecc833d2a666c85afdf67',
-            'ci.yml': 'b7453c5ec7c7c6aab407bcee2c4a92ff8e0d9285e7d8a601292e7991264fb708',
+            'build.yml': 'd00878d7749bd6ecc737f68b078410779f7a7da8457a5e0e8c0ba21b0415a9a5',
+            'ci.yml': '8cb82bf86dd8a19a24e13bc0aca52027f06d3fa6103d0b12076ac9de7f38e8c8',
         }
         for name, (_, owners) in OWNERS.items():
             jobs = load(name)['jobs']
@@ -161,7 +162,7 @@ class WorkflowGraphTests(unittest.TestCase):
             self.assertEqual(set(jobs['plan']['outputs']), {'run', 'reason', 'source_run'})
             policy = jobs['plan']['steps'][-1]
             self.assertEqual(policy['env'], {'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'})
-            self.assertEqual(policy['run'], f'python3 .github/scripts/ci_policy.py plan --profile {profile}')
+            self.assertEqual(policy['run'], f'python3 .github/scripts/ci_policy.py plan --profile {profile} --manual-builds')
             complete = jobs['complete']
             self.assertEqual(complete['permissions'], {'contents': 'read'})
             self.assertEqual(complete['steps'][1]['env'], {'CI_NEEDS': '${{ toJSON(needs) }}'})

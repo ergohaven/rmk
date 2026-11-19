@@ -25,6 +25,7 @@ pub(super) fn take_bulk<'a, T: DeserializeOwned + 'a>(
     cursor: &mut &'a [u8],
     start: usize,
     total: usize,
+    validate: impl Fn(&T) -> Result<(), RynkError>,
 ) -> Result<impl Iterator<Item = (usize, T)> + 'a, RynkError> {
     let count = take_element::<u16>(cursor)? as usize;
     if count == 0 || start + count > total {
@@ -32,7 +33,7 @@ pub(super) fn take_bulk<'a, T: DeserializeOwned + 'a>(
     }
     let mut elements = *cursor;
     for _ in 0..count {
-        take_element::<T>(cursor)?;
+        validate(&take_element::<T>(cursor)?)?;
     }
     Ok((start..start + count).zip(core::iter::from_fn(move || take_element::<T>(&mut elements).ok())))
 }
@@ -43,7 +44,7 @@ mod tests {
 
     use alloc::vec::Vec;
 
-    use rmk_types::action::KeyAction;
+    use rmk_types::action::{Action, KeyAction};
     use rmk_types::protocol::rynk::MAX_BULK_KEYS;
 
     use super::*;
@@ -57,7 +58,9 @@ mod tests {
             len += postcard::to_slice(&KeyAction::No, &mut bytes[len..]).unwrap().len();
         }
         let mut input = &bytes[..len];
-        let items: Vec<_> = take_bulk::<KeyAction>(&mut input, 0, count).unwrap().collect();
+        let items: Vec<_> = take_bulk::<KeyAction>(&mut input, 0, count, |_| Ok(()))
+            .unwrap()
+            .collect();
         assert_eq!(items.len(), count);
 
         let mut len = postcard::to_slice(&2u16, &mut bytes).unwrap().len();
@@ -65,8 +68,23 @@ mod tests {
         bytes[len] = 0x7f;
         let mut input = &bytes[..=len];
         assert!(matches!(
-            take_bulk::<KeyAction>(&mut input, 0, 2),
+            take_bulk::<KeyAction>(&mut input, 0, 2, |_| Ok(())),
             Err(RynkError::Malformed)
+        ));
+    }
+
+    #[test]
+    fn bulk_keymap_rejects_unsupported_magic_before_yielding_any_action() {
+        let mut bytes = [0; 32];
+        let mut len = postcard::to_slice(&2u16, &mut bytes).unwrap().len();
+        len += postcard::to_slice(&KeyAction::No, &mut bytes[len..]).unwrap().len();
+        // EE Hands Left is not implemented by this board configuration.
+        let unsupported = KeyAction::Single(Action::User(0xde));
+        len += postcard::to_slice(&unsupported, &mut bytes[len..]).unwrap().len();
+        let mut input = &bytes[..len];
+        assert!(matches!(
+            take_bulk::<KeyAction>(&mut input, 0, 2, |action| super::super::validate_magic_binding(*action)),
+            Err(RynkError::Invalid),
         ));
     }
 }

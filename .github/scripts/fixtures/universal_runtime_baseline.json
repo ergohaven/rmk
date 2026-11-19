@@ -1,11 +1,11 @@
 {
-  "provenance": "PR #86 adds QMK-compatible Ж/Э/Ё. PR #88 excludes its transient window helper from the Rynk storage feature signature, without changing stored framing or Vial hash policy. Keep the historical geometry fixture immutable.",
+  "provenance": "PR #86 adds QMK-compatible \u0416/\u042d/\u0401. PR #88 excludes its transient window helper from the Rynk storage feature signature, without changing stored framing or Vial hash policy. Keep the historical geometry fixture immutable. PR #89 excludes ergohaven_language_helpers from the storage feature signature because it leaves stored framing intact. The accepted composition excludes both transient language and layer helpers without changing stored framing. PR #92 excludes delayed punctuation fallback from the storage feature signature and uses the shared host layout tracking.",
   "previous_runtime_hashes": {
     "rmk/src/universal_symbols/mod.rs": "0ebfc620e48ee0bf90bb2c36e8cfbfe7d2b225d302082225a04f7f5fe9faae34",
     "rmk/build.rs": "be6961ff2ad45bcc945bd937f11107605a5832eee290c8c88561298765281a9f"
   },
   "runtime_hashes": {
-    "rmk/src/universal_symbols/mod.rs": "529d0cb450d1500e1c2be27bbe51a3da46e018a9e61d88399ea2c06326756f0f",
-    "rmk/build.rs": "9dc749448462ad2734d61a93798471c78be7795e82507e23135b968eab568b08"
+    "rmk/src/universal_symbols/mod.rs": "8ecf84aebd5733bee38380541042d8ae42688a2cfb43249510336920da2ad3c4",
+    "rmk/build.rs": "82deb4269138d0af1275e7b49c202657f64a11a401e0867d0623e36f00cb5d41"
   }
 }

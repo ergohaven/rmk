@@ -117,6 +117,7 @@ pub mod keyboard;
 pub mod keymap;
 pub mod layout_macro;
 pub mod light;
+pub mod magic;
 pub mod matrix;
 pub(crate) mod mouse_chunk;
 pub mod processor;
@@ -133,6 +134,8 @@ pub mod universal_symbols;
 pub mod usb;
 #[cfg(feature = "watchdog")]
 pub mod watchdog;
+
+pub use magic::{MagicAction, MagicConfig};
 
 // Test-only helpers for `#[cfg(test)]` modules under `src/` and for the
 // simulator harness in `tests/integration/simulator`; never part of a firmware
@@ -203,8 +206,6 @@ pub async fn initialize_keymap_and_storage_with_vial<
         config::VialDeviceSettings<'static>,
     >,
 ) -> (KeyMap<'a>, Storage<F>) {
-    // `mut` is only taken by the host build's keymap restore below.
-    #[cfg_attr(not(feature = "host"), allow(unused_mut))]
     let mut storage = Storage::new(flash, storage_config).await;
 
     #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
@@ -217,7 +218,16 @@ pub async fn initialize_keymap_and_storage_with_vial<
     #[cfg(feature = "host")]
     let keymap = KeyMap::new_from_storage(data, Some(&mut storage), behavior_config, positional_config).await;
     #[cfg(not(feature = "host"))]
-    let keymap = KeyMap::new(data, behavior_config, positional_config).await;
+    let keymap = {
+        if let Ok(Some(storage::StorageValue::UserData(payload))) = storage
+            .fetch(storage::StorageKey::UserData(magic::MAGIC_STORAGE_SLOT))
+            .await
+            && let Some(magic) = MagicConfig::from_storage_payload(payload.as_slice())
+        {
+            behavior_config.magic = magic;
+        }
+        KeyMap::new(data, behavior_config, positional_config).await
+    };
 
     (keymap, storage)
 }

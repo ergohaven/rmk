@@ -84,6 +84,11 @@ impl<F: AsyncNorFlash> Storage<F> {
                     behavior.tap.tap_interval = c.tap_interval;
                     behavior.tap.tap_capslock_interval = c.tap_capslock_interval;
                 }
+                (StorageKey::UserData(crate::magic::MAGIC_STORAGE_SLOT), StorageValue::UserData(data)) => {
+                    if let Some(magic) = crate::magic::MagicConfig::from_storage_payload(data.as_slice()) {
+                        behavior.magic = magic;
+                    }
+                }
                 (StorageKey::Combo(idx), StorageValue::Combo(config)) => {
                     if let Some(slot) = behavior.combo.combos.get_mut(idx as usize) {
                         *slot = Some(Combo::new(config));

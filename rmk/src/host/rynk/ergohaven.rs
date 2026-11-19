@@ -32,6 +32,23 @@ const CAPS: u32 = caps::FIRMWARE_TARGET
         0
     };
 
+const fn magic_caps(supported: u64) -> u32 {
+    const NKRO: u64 = 0b111 << 0x11;
+    const HANDS: u64 = 0b11 << 0x1e;
+    const REMAP: u64 = ((1 << 35) - 1) & !(NKRO | HANDS);
+
+    (if supported & REMAP == REMAP {
+        caps::MAGIC_REMAP
+    } else {
+        0
+    }) | (if supported & NKRO == NKRO { caps::MAGIC_NKRO } else { 0 })
+        | (if supported & HANDS == HANDS {
+            caps::MAGIC_HANDS
+        } else {
+            0
+        })
+}
+
 impl RynkService<'_> {
     /// Serve an Ergohaven command; `None` for a command outside its table.
     pub(super) async fn dispatch_ergohaven(&self, msg: &mut RynkMessage<'_>) -> Option<Result<(), RynkError>> {
@@ -60,7 +77,7 @@ impl RynkService<'_> {
 
 impl Handle<GetErgohavenInfo> for RynkService<'_> {
     async fn handle(&self, _: ()) -> Result<ErgohavenInfo, RynkError> {
-        Ok(ergohaven_info(&self.ergohaven, CAPS))
+        Ok(ergohaven_info(&self.ergohaven, CAPS | magic_caps(crate::magic::supported_keycodes())))
     }
 }
 
@@ -294,6 +311,18 @@ mod tests {
             .into_iter()
             .map(|(_, _, payload)| payload)
             .collect()
+    }
+
+    #[test]
+    fn magic_capability_groups_require_each_action_in_the_group() {
+        let all = (1u64 << 35) - 1;
+        assert_eq!(magic_caps(0), 0);
+        assert_eq!(
+            magic_caps(all),
+            caps::MAGIC_REMAP | caps::MAGIC_NKRO | caps::MAGIC_HANDS
+        );
+        assert_eq!(magic_caps(all & !(1 << 0x12)), caps::MAGIC_REMAP | caps::MAGIC_HANDS);
+        assert_eq!(magic_caps(all & !(1 << 0x22)), caps::MAGIC_NKRO | caps::MAGIC_HANDS);
     }
 
     #[test]

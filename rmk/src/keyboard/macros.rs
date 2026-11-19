@@ -235,17 +235,28 @@ impl<'a> Macros<'a> {
     /// in order, each ending in `0x00`, so the upload is complete when
     /// `MACRO_MAX_NUM` terminators precede its end, or at the end of the buffer.
     #[cfg(feature = "vial")]
-    pub(crate) fn write_upload(&mut self, offset: usize, data: &[u8]) -> Option<Range<usize>> {
+    pub(crate) fn write_upload(&mut self, offset: usize, data: &[u8]) -> Result<Option<Range<usize>>, ()> {
+        // Validate the complete resulting buffer: a partial write can finish an
+        // opcode using bytes from either side of the replaced range.
+        let prefix = self.buf.get(..offset).ok_or(())?;
+        let end = (offset + data.len()).min(self.buf.len());
+        let resulting = prefix
+            .iter()
+            .chain(&data[..end - offset])
+            .chain(&self.buf[end..])
+            .copied();
+        if !codec::supports_magic_keycodes(resulting) {
+            return Err(());
+        }
         let changed = self.write(offset, data);
         if self.unsaved.is_empty() {
             self.unsaved = changed;
         } else if !changed.is_empty() {
             self.unsaved = self.unsaved.start.min(changed.start)..self.unsaved.end.max(changed.end);
         }
-        let end = (offset + data.len()).min(self.buf.len());
         let complete =
             end == self.buf.len() || self.buf[..end].iter().filter(|&&b| b == 0).count() >= crate::MACRO_MAX_NUM;
-        complete.then(|| core::mem::take(&mut self.unsaved))
+        Ok(complete.then(|| core::mem::take(&mut self.unsaved)))
     }
 
     /// Empty every macro, all zero in both encodings, and return the chunks to persist.
@@ -327,7 +338,7 @@ pub(crate) mod codec {
     use rmk_types::action::{Action, KeyAction};
     use rmk_types::keyboard_macros::MacroOp;
 
-    use crate::host::via::keycode_convert::{from_via_keycode, to_via_keycode};
+    use crate::host::via::keycode_convert::{from_via_keycode, is_supported_via_keycode, to_via_keycode};
 
     /// The longest delay one Vial delay op holds: two 1-based bytes.
     const VIAL_DELAY_MAX: u16 = 254 * 255 + 254;
@@ -361,11 +372,7 @@ pub(crate) mod codec {
                         let ms = (at(2)?.max(1) - 1) as u16 + (at(3)?.max(1) - 1) as u16 * 255;
                         (Some(MacroOp::Delay(ms)), 4)
                     }
-                    kind @ 5..=7 => {
-                        let raw = u16::from_le_bytes([at(2)?, at(3)?]);
-                        let keycode = if raw & 0xFF00 == 0xFF00 { (raw & 0xFF) << 8 } else { raw };
-                        (key_op(kind - 4, keycode), 4)
-                    }
+                    kind @ 5..=7 => (key_op(kind - 4, extended_keycode(at(2)?, at(3)?)), 4),
                     _ => (None, 2),
                 }
             } else {
@@ -380,6 +387,41 @@ pub(crate) mod codec {
             }
         }
         None
+    }
+
+    fn extended_keycode(lo: u8, hi: u8) -> u16 {
+        if hi == 0xFF {
+            u16::from(lo) << 8
+        } else {
+            u16::from_le_bytes([lo, hi])
+        }
+    }
+
+    /// Inspect complete extended ops, leaving a partial trailing op for the
+    /// next upload packet, and skip other ops by their encoded length.
+    pub(super) fn supports_magic_keycodes(mut bytes: impl Iterator<Item = u8>) -> bool {
+        while let Some(byte) = bytes.next() {
+            if byte != 1 {
+                continue;
+            }
+            match bytes.next() {
+                Some(1..=3) => {
+                    bytes.next();
+                }
+                Some(4) => {
+                    bytes.nth(1);
+                }
+                Some(5..=7) => {
+                    if let (Some(lo), Some(hi)) = (bytes.next(), bytes.next())
+                        && !is_supported_via_keycode(extended_keycode(lo, hi))
+                    {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
     }
 
     /// `None` for a keycode with no action here.
@@ -515,11 +557,41 @@ pub(crate) mod codec {
         fn uploaded_universal_macro_queues_actions_for_playback() {
             let mut buffer = [0u8; 128];
             let mut macros = super::super::Macros::new(&[], &mut buffer, false);
-            macros.write_upload(0, &[1, 5, 0x82, 0x7E, 1, 6, 0x90, 0x7E, 1, 7, 0x90, 0x7E, 0]);
+            macros
+                .write_upload(0, &[1, 5, 0x82, 0x7E, 1, 6, 0x90, 0x7E, 1, 7, 0x90, 0x7E, 0])
+                .unwrap();
             assert!(macros.queue(0, true, false));
             assert_eq!(macros.next_op(), Some(MacroOp::Tap(Action::User(0x82))));
             assert_eq!(macros.next_op(), Some(MacroOp::Press(Action::User(0x90))));
             assert_eq!(macros.next_op(), Some(MacroOp::Release(Action::User(0x90))));
+            assert_eq!(macros.next_op(), None);
+        }
+
+        #[test]
+        fn upload_rejects_magic_completed_by_the_existing_suffix_without_mutation() {
+            let mut buffer = [0; 32];
+            buffer[..5].copy_from_slice(&[1, 5, 0x10, 0x70, 0]);
+            let original = buffer;
+            let mut macros = super::super::Macros::new(&[], &mut buffer, true);
+            assert!(macros.queue(0, true, false));
+
+            // Replacing only the low byte must not turn 0x7010 into unsupported NKRO 0x7011.
+            assert!(macros.write_upload(2, &[0x11]).is_err());
+            assert_eq!(macros.bytes(), original);
+            assert_eq!(macros.unsaved, 0..0);
+            assert!(macros.is_playing(), "rejected writes must not cancel playback");
+        }
+
+        #[test]
+        fn upload_accepts_supported_magic_completed_by_the_existing_suffix() {
+            let mut buffer = [0; 32];
+            buffer[..5].copy_from_slice(&[1, 5, 0x10, 0x70, 0]);
+            let mut macros = super::super::Macros::new(&[], &mut buffer, true);
+
+            assert!(macros.write_upload(2, &[0x0F]).is_ok());
+            assert_eq!(&macros.bytes()[..5], &[1, 5, 0x0F, 0x70, 0]);
+            assert!(macros.queue(0, true, false));
+            assert_eq!(macros.next_op(), Some(MacroOp::Tap(Action::User(0xCF))));
             assert_eq!(macros.next_op(), None);
         }
 
