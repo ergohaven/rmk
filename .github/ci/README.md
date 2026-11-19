@@ -1,5 +1,32 @@
 # CI toolchain maintenance
 
+## Automatic checks and manual builds
+
+Ordinary pull requests and pushes to `main` run the Python CI selection and
+workflow-contract checks. The existing test and firmware planners opt into
+`--manual-builds`, so their heavy owners are skipped until a maintainer explicitly
+runs the corresponding workflow with `workflow_dispatch`. Dispatch selects the
+complete graph even for documentation-only changes. No evening build is scheduled
+automatically; start it only after the owner's command.
+
+A green automatic planning/completion run is not a firmware or native-test pass.
+Skipped coverage never produces a full-validation receipt. Keep the full owner
+matrices, strict completion checks and release/publish workflows intact; the
+unflagged selection/reuse API remains available to those other callers.
+
+## System dependencies
+
+The seven package-installation steps in `ci.yml` and `build.yml` call
+`bash .github/ci/install-system-deps.sh PACKAGE...`; each workflow keeps its
+existing package list and a ten-minute step limit. The helper gives APT three
+file retries and sixty-second HTTP/HTTPS acquire timeouts. An incomplete index
+refresh is an error, so installation cannot silently use stale indexes.
+
+These are bounded transport-resilience settings, not a repair of Ubuntu's
+network service. Keep the runner's sources, mirror failover, signature/TLS checks
+and OS selection unchanged. Review this budget when updating runner images;
+validate changes with the dependency tests and the final exact-source CI wave.
+
 ## Stable baseline
 
 The root `rust-toolchain.toml` owns the exact stable release used by core and
