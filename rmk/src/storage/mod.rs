@@ -1217,6 +1217,28 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn ergohaven_language_helpers_keeps_existing_storage_feature_signature() {
+        assert!(
+            !env!("RMK_FEATURES")
+                .split(',')
+                .any(|feature| feature == "ergohaven_language_helpers"),
+            "actions that use the existing storage format must preserve saved settings"
+        );
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn ergohaven_layer_cycling_keeps_existing_storage_feature_signature() {
+        assert!(
+            !env!("RMK_FEATURES")
+                .split(',')
+                .any(|feature| feature == "ergohaven_layer_cycling"),
+            "actions that use the existing storage format must preserve saved settings"
+        );
+    }
+
     #[cfg(feature = "ergohaven_delayed_english")]
     #[test]
     fn ergohaven_delayed_english_keeps_existing_storage_feature_signature() {

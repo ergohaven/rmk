@@ -60,14 +60,14 @@ pub(crate) enum HostLayout {
 }
 
 impl HostLayout {
-    const fn toggled(self) -> Self {
+    pub(crate) const fn toggled(self) -> Self {
         match self {
             Self::English => Self::Russian,
             Self::Russian => Self::English,
         }
     }
 
-    const fn from_host_code(code: u8) -> Option<Self> {
+    pub(crate) const fn from_host_code(code: u8) -> Option<Self> {
         match code {
             0 => Some(Self::English),
             1 => Some(Self::Russian),
@@ -255,15 +255,16 @@ impl State {
         Some(command)
     }
 
-    pub(crate) const fn platform(&self) -> Platform {
-        self.platform
-    }
-
+    #[cfg(any(feature = "ergohaven_language_helpers", feature = "ergohaven_delayed_english"))]
     pub(crate) const fn layout(&self) -> HostLayout {
         self.layout
     }
 
-    #[cfg(feature = "ergohaven_delayed_english")]
+    pub(crate) const fn platform(&self) -> Platform {
+        self.platform
+    }
+
+    #[cfg(all(feature = "ergohaven_delayed_english", not(feature = "ergohaven_language_helpers")))]
     pub(crate) fn observe_host_layout(&mut self, code: Option<u8>) {
         if let Some(layout) = code.and_then(HostLayout::from_host_code) {
             self.last_host_layout = Some(layout);
@@ -271,7 +272,7 @@ impl State {
     }
 
     pub(crate) fn set_layout(&mut self, layout: HostLayout) -> Command {
-        if self.layout() == layout {
+        if self.layout == layout {
             Command::None
         } else {
             self.layout = layout;

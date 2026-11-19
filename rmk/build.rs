@@ -9,6 +9,9 @@ fn main() {
     // When it changes, the storage is erased.
     let mut features: Vec<String> = std::env::vars()
         .filter_map(|(key, _)| key.strip_prefix("CARGO_FEATURE_").map(str::to_lowercase))
+        // These user actions use existing storage framing in both protocols.
+        .filter(|feature| feature != "ergohaven_language_helpers")
+        .filter(|feature| feature != "ergohaven_layer_cycling")
         // Delaying a report does not change the stored keymap format.
         .filter(|feature| feature != "ergohaven_delayed_english")
         // Geometry and timed window switching change reports, not stored framing.

@@ -24,6 +24,9 @@ impl Keyboard<'_> {
             self.english_fallback = Some(Instant::now() + Duration::from_millis(10));
             return;
         }
+        #[cfg(feature = "ergohaven_language_helpers")]
+        self.sync_ruen_host_layout();
+        #[cfg(not(feature = "ergohaven_language_helpers"))]
         self.universal_symbols
             .observe_host_layout(crate::host_data::snapshot().layout);
         self.universal_symbols.set_layout(HostLayout::Russian);

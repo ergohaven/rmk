@@ -1,4 +1,4 @@
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use embassy_sync::blocking_mutex::Mutex;
@@ -11,7 +11,7 @@ pub const HOST_TEXT_LEN: usize = 64;
 
 static HOST_HOUR: AtomicU8 = AtomicU8::new(UNKNOWN);
 static HOST_MINUTE: AtomicU8 = AtomicU8::new(UNKNOWN);
-static HOST_LAYOUT: AtomicU8 = AtomicU8::new(UNKNOWN);
+static HOST_LAYOUT: Mutex<RawMutex, Cell<(u8, u32)>> = Mutex::new(Cell::new((UNKNOWN, 0)));
 static HOST_MEDIA_ARTIST: Mutex<RawMutex, RefCell<heapless::String<HOST_TEXT_LEN>>> =
     Mutex::new(RefCell::new(heapless::String::new()));
 static HOST_MEDIA_TITLE: Mutex<RawMutex, RefCell<heapless::String<HOST_TEXT_LEN>>> =
@@ -36,7 +36,20 @@ pub fn update_time(hour: u8, minute: u8) {
 }
 
 pub fn update_layout(layout: u8) {
-    HOST_LAYOUT.store(layout, Ordering::Relaxed);
+    HOST_LAYOUT.lock(|state| {
+        let (previous, revision) = state.get();
+        if previous != layout {
+            state.set((layout, revision.wrapping_add(1)));
+        }
+    });
+}
+
+#[cfg(feature = "ergohaven_language_helpers")]
+pub(crate) fn layout_snapshot() -> (Option<u8>, u32) {
+    HOST_LAYOUT.lock(|state| {
+        let (layout, revision) = state.get();
+        (known(layout), revision)
+    })
 }
 
 pub fn clear_time() {
@@ -65,7 +78,7 @@ pub fn snapshot() -> HostData {
     HostData {
         hour: known(HOST_HOUR.load(Ordering::Relaxed)),
         minute: known(HOST_MINUTE.load(Ordering::Relaxed)),
-        layout: known(HOST_LAYOUT.load(Ordering::Relaxed)),
+        layout: HOST_LAYOUT.lock(|state| known(state.get().0)),
         media_artist: HOST_MEDIA_ARTIST.lock(|cell| cell.borrow().clone()),
         media_title: HOST_MEDIA_TITLE.lock(|cell| cell.borrow().clone()),
     }
