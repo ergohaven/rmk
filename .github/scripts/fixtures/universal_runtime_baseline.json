@@ -5,7 +5,7 @@
     "rmk/build.rs": "be6961ff2ad45bcc945bd937f11107605a5832eee290c8c88561298765281a9f"
   },
   "runtime_hashes": {
-    "rmk/src/universal_symbols/mod.rs": "8d982dfae702922074dc89503575abe5750aadbd43ce760436f8cd90755ce721",
+    "rmk/src/universal_symbols/mod.rs": "8ecf84aebd5733bee38380541042d8ae42688a2cfb43249510336920da2ad3c4",
     "rmk/build.rs": "82deb4269138d0af1275e7b49c202657f64a11a401e0867d0623e36f00cb5d41"
   }
 }
