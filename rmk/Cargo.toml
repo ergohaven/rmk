@@ -57,6 +57,10 @@ host = ["dep:byteorder"]
 universal_symbols = []
 # Phenom window helpers occupy appended board user slots 54..55.
 ergohaven_window_switching = ["universal_symbols"]
+# Stateful Ergohaven language helpers occupy board user slots 56..59.
+ergohaven_language_helpers = ["universal_symbols"]
+# Ergohaven layer helpers occupy appended board user slots 52 and 53.
+ergohaven_layer_cycling = []
 # Opt-in layout-options bit 2 contract (ISO, left-hide, right-hide).
 universal_symbols_iso = ["universal_symbols"]
 # Scoped contracts for boards with zero or one existing one-bit option.

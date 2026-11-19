@@ -40,6 +40,8 @@ pub(crate) mod macros;
 pub(crate) mod morse;
 pub(crate) mod mouse;
 pub(crate) mod oneshot;
+#[cfg(feature = "ergohaven_language_helpers")]
+mod ruen;
 #[cfg(feature = "steno")]
 pub(crate) mod steno;
 
@@ -272,6 +274,8 @@ pub struct Keyboard<'a> {
     window_switch: Option<(ModifierCombination, Instant)>,
     #[cfg(feature = "ergohaven_window_switching")]
     window_layer_subscriber: <crate::event::LayerChangeEvent as SubscribableEvent>::Subscriber,
+    #[cfg(feature = "ergohaven_language_helpers")]
+    ruen: ruen::LanguageHelpers,
 
     /// Firmware-native EN/RU punctuation state.
     #[cfg(feature = "universal_symbols")]
@@ -313,6 +317,8 @@ impl<'a> Keyboard<'a> {
             window_layer_subscriber: crate::event::LayerChangeEvent::subscriber(),
             #[cfg(feature = "universal_symbols")]
             universal_symbols: crate::universal_symbols::State::default(),
+            #[cfg(feature = "ergohaven_language_helpers")]
+            ruen: ruen::LanguageHelpers::default(),
             #[cfg(feature = "steno")]
             steno: crate::keyboard::steno::StenoChord::new(),
             #[cfg(feature = "passkey_entry")]
@@ -1563,6 +1569,15 @@ impl<'a> Keyboard<'a> {
             Action::KeyboardControl(c) => self.process_action_keyboard_control(c, event).await,
             Action::Special(special_key) => self.process_action_special(special_key, event).await,
             Action::User(id) => {
+                #[cfg(feature = "ergohaven_layer_cycling")]
+                if matches!(id, 52 | 53) {
+                    if event.pressed && self.keymap.cycle_layer(id == 52, event.source) {
+                        // Cycling replaced the whole layer mask; pending OSL no longer owns it.
+                        self.osl_state = OneShotState::None;
+                        self.osl_deadline = None;
+                    }
+                    return;
+                }
                 #[cfg(feature = "ergohaven_window_switching")]
                 if (54..=55).contains(&id) {
                     if event.pressed {
@@ -1600,7 +1615,12 @@ impl<'a> Keyboard<'a> {
                     }
                     return;
                 }
-                #[cfg(feature = "universal_symbols")]
+                #[cfg(feature = "ergohaven_language_helpers")]
+                let had_action_report = match self.process_ruen_user_action(id, event).await {
+                    Some(sent) => sent,
+                    None => self.process_universal_symbols_user_action(id, event).await,
+                };
+                #[cfg(all(feature = "universal_symbols", not(feature = "ergohaven_language_helpers")))]
                 let had_action_report = self.process_universal_symbols_user_action(id, event).await;
                 #[cfg(not(feature = "universal_symbols"))]
                 let (had_action_report, _) = (false, id);
@@ -1859,6 +1879,9 @@ impl<'a> Keyboard<'a> {
             }
         }
 
+        #[cfg(feature = "ergohaven_language_helpers")]
+        self.finish_ruen_word(key, event.pressed).await;
+
         // Pre-check
         if event.pressed {
             // Record last press time, only for the simple key
@@ -2065,6 +2088,11 @@ impl<'a> Keyboard<'a> {
             return false;
         }
 
+        #[cfg(feature = "ergohaven_language_helpers")]
+        self.sync_ruen_host_layout();
+        #[cfg(feature = "ergohaven_language_helpers")]
+        let host_layout = None;
+        #[cfg(not(feature = "ergohaven_language_helpers"))]
         let host_layout = crate::host_data::snapshot().layout;
         #[cfg(all(any(feature = "vial", feature = "ergohaven_rynk"), feature = "storage"))]
         let previous_platform = self.universal_symbols.platform();
@@ -2426,6 +2454,183 @@ mod test {
         create_test_keyboard_with_config(BehaviorConfig::default())
     }
 
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_skips_no_and_preserves_press_release_lookup() {
+        block_on(async {
+            let mut layers = [[[KeyAction::No; 2]]; 16];
+            layers[0][0] = [KeyAction::Single(Action::User(52)), KeyAction::Single(Action::User(53))];
+            for layer in [1, 4, 15] {
+                layers[layer][0] = [KeyAction::Transparent; 2];
+            }
+            let mut data = crate::keymap::KeymapData::new(layers);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 2>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            for (col, expected) in [(0, 1), (0, 4), (0, 15), (0, 0), (1, 15), (1, 4), (1, 1), (1, 0)] {
+                keyboard.process_inner(KeyboardEvent::key(0, col, true)).await;
+                assert_eq!(keymap.active_layer(), expected);
+                keyboard.process_inner(KeyboardEvent::key(0, col, false)).await;
+                assert_eq!(keymap.active_layer(), expected, "release must not cycle");
+            }
+            assert_eq!(
+                keymap.get_action_at(KeyboardEventSource::key_pos(0, 0), 5),
+                KeyAction::No,
+                "cycling must preserve explicit No bindings"
+            );
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_replaces_active_mask_and_preserves_default() {
+        block_on(async {
+            let mut data = crate::keymap::KeymapData::<1, 1, 16>::new([[[KeyAction::Single(Action::User(52))]]; 16]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            keymap.set_default_layer(5);
+            keymap.activate_layer(3);
+            keymap.activate_layer(15);
+            keyboard
+                .process_key_action_normal(Action::User(52), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keymap.get_default_layer(), 5);
+            assert_eq!(keymap.active_layer(), 5);
+            assert!(!keymap.is_layer_active(3));
+            assert!(!keymap.is_layer_active(15));
+            keymap.set_default_layer(0);
+            for expected in 1..16 {
+                keyboard
+                    .process_key_action_normal(Action::User(52), KeyboardEvent::key(0, 0, true))
+                    .await;
+                assert_eq!(keymap.active_layer(), expected);
+            }
+            keyboard
+                .process_key_action_normal(Action::User(52), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(keymap.active_layer(), 0);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_uses_encoder_direction_and_synthetic_sources() {
+        use rmk_types::action::EncoderAction;
+
+        use crate::input_device::rotary_encoder::Direction;
+        block_on(async {
+            let next = KeyAction::Single(Action::User(52));
+            let prev = KeyAction::Single(Action::User(53));
+            let encoders = [
+                EncoderAction {
+                    clockwise: next,
+                    counter_clockwise: prev,
+                },
+                EncoderAction {
+                    clockwise: KeyAction::No,
+                    counter_clockwise: KeyAction::No,
+                },
+                EncoderAction {
+                    clockwise: KeyAction::Transparent,
+                    counter_clockwise: KeyAction::Transparent,
+                },
+            ];
+            let mut data = crate::keymap::KeymapData::<1, 1, 3, 1>::new_with_encoder(
+                [[[KeyAction::No]]; 3],
+                encoders.map(|a| [a]),
+            );
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            for (direction, expected) in [
+                (Direction::Clockwise, 2),
+                (Direction::Clockwise, 0),
+                (Direction::CounterClockwise, 2),
+                (Direction::CounterClockwise, 0),
+            ] {
+                keyboard
+                    .process_inner(KeyboardEvent::rotary_encoder(0, direction, true))
+                    .await;
+                keyboard
+                    .process_inner(KeyboardEvent::rotary_encoder(0, direction, false))
+                    .await;
+                assert_eq!(keymap.active_layer(), expected);
+            }
+            keyboard
+                .process_key_action_normal(
+                    Action::User(52),
+                    KeyboardEvent {
+                        pressed: true,
+                        source: KeyboardEventSource::Macro,
+                    },
+                )
+                .await;
+            assert_eq!(
+                keymap.active_layer(),
+                1,
+                "macro actions have no physical position to filter"
+            );
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_nonzero_default_changes_visible_layer_on_every_press() {
+        block_on(async {
+            let mut data = crate::keymap::KeymapData::<1, 2, 5>::new(
+                [[[KeyAction::Single(Action::User(52)), KeyAction::Single(Action::User(53))]]; 5],
+            );
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 2>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            keymap.set_default_layer(2);
+            for (col, expected) in [(0, 3), (0, 4), (0, 2), (1, 4), (1, 3), (1, 2)] {
+                keyboard.process_inner(KeyboardEvent::key(0, col, true)).await;
+                assert_eq!(keymap.active_layer(), expected);
+                keyboard.process_inner(KeyboardEvent::key(0, col, false)).await;
+                assert_eq!(keymap.active_layer(), expected);
+                assert_eq!(keymap.get_default_layer(), 2);
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_layer_cycling")]
+    #[test]
+    fn phenom_layer_cycling_releases_one_shot_layer_ownership() {
+        block_on(async {
+            let mut data = crate::keymap::KeymapData::<1, 1, 3>::new([[[KeyAction::Single(Action::User(52))]]; 3]);
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 1>::default();
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            keyboard.process_action_osl(1, KeyboardEvent::key(0, 0, true)).await;
+            keyboard.process_action_osl(1, KeyboardEvent::key(0, 0, false)).await;
+            for expected in [2, 0, 1] {
+                keyboard.process_inner(KeyboardEvent::key(0, 0, true)).await;
+                keyboard.process_inner(KeyboardEvent::key(0, 0, false)).await;
+                assert_eq!(keymap.active_layer(), expected);
+            }
+            keyboard.osl_deadline = Some(Instant::now());
+            keyboard.fire_oneshot_timeout().await;
+            assert_eq!(
+                keymap.active_layer(),
+                1,
+                "old OSL timeout must not clear the manual layer"
+            );
+            keyboard.update_osl(KeyboardEvent::key(0, 0, false));
+            assert_eq!(
+                keymap.active_layer(),
+                1,
+                "old OSL release must not clear the manual layer"
+            );
+        });
+    }
+
     async fn force_timeout_first_hold(keyboard: &mut Keyboard<'static>) {
         let key = keyboard.next_buffered_key().unwrap();
         embassy_time::Timer::at(key.timeout_time).await;
@@ -2448,6 +2653,427 @@ mod test {
             fork: cfg,
             ..BehaviorConfig::default()
         })
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_word_returns_to_russian_before_each_word_separator() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{
+                Command, Platform, USER_RUSSIAN_LETTER_START, USER_SET_RUSSIAN, USER_TOGGLE_MACOS,
+            };
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            for platform in [Platform::Pc, Platform::Mac] {
+                if keyboard.universal_symbols.platform() != platform {
+                    keyboard.universal_symbols.handle(USER_TOGGLE_MACOS, None);
+                }
+                for separator in [
+                    HidKeyCode::Space,
+                    HidKeyCode::Enter,
+                    HidKeyCode::Escape,
+                    HidKeyCode::Minus,
+                ] {
+                    keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_key_action_normal(Action::User(56), KeyboardEvent::key(0, 0, true))
+                        .await;
+                    keyboard
+                        .process_key_action_normal(Action::User(56), KeyboardEvent::key(0, 0, false))
+                        .await;
+                    assert_eq!(
+                        keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                        Some(Command::None),
+                        "LG_WORD switches Russian to English"
+                    );
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_action_key(
+                            HidKeyCode::A,
+                            ModifierCombination::new(),
+                            KeyboardEvent::key(0, 1, true),
+                        )
+                        .await;
+                    let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                        panic!("keyboard report");
+                    };
+                    assert_eq!((report.modifier, report.keycodes[0]), (0, HidKeyCode::A as u8));
+                    keyboard
+                        .process_action_key(
+                            HidKeyCode::A,
+                            ModifierCombination::new(),
+                            KeyboardEvent::key(0, 1, false),
+                        )
+                        .await;
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_action_key(separator, ModifierCombination::new(), KeyboardEvent::key(0, 2, true))
+                        .await;
+                    assert!(matches!(
+                        keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                        Some(Command::TypeRussianLetter(_))
+                    ));
+                    let mut last = None;
+                    while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                        let Report::KeyboardReport(report) = report.into_report() else {
+                            panic!("keyboard report");
+                        };
+                        last = Some(report);
+                    }
+                    let last = last.expect("separator report after the layout switch");
+                    assert_eq!(last.modifier, 0);
+                    assert!(last.keycodes.contains(&(separator as u8)));
+                    keyboard
+                        .process_action_key(separator, ModifierCombination::new(), KeyboardEvent::key(0, 2, false))
+                        .await;
+                }
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_word_honors_host_changes_without_reusing_a_stale_layout() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::HostLayout;
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            for host_returns_to_russian in [false, true] {
+                crate::host_data::update_layout(1);
+                let mut keyboard = create_test_keyboard();
+                USB_REPORT_CHANNEL.clear();
+                keyboard
+                    .process_key_action_normal(Action::User(56), KeyboardEvent::key(0, 0, true))
+                    .await;
+                assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+                if host_returns_to_russian {
+                    crate::host_data::update_layout(0);
+                    crate::host_data::update_layout(1);
+                } else {
+                    crate::host_data::update_layout(1);
+                }
+                USB_REPORT_CHANNEL.clear();
+                keyboard
+                    .process_action_key(
+                        HidKeyCode::Space,
+                        ModifierCombination::new(),
+                        KeyboardEvent::key(0, 1, true),
+                    )
+                    .await;
+                let mut reports = 0;
+                while let Ok(report) = USB_REPORT_CHANNEL.try_receive() {
+                    let Report::KeyboardReport(report) = report.into_report() else {
+                        panic!("keyboard report");
+                    };
+                    reports += 1;
+                    if host_returns_to_russian {
+                        assert_eq!(report.modifier, 0, "do not toggle a host that returned to Russian");
+                    }
+                }
+                assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+                if host_returns_to_russian {
+                    assert_eq!(reports, 1, "only the separator is needed");
+                } else {
+                    assert!(
+                        reports > 1,
+                        "the stale initial Russian report must not suppress the return switch"
+                    );
+                }
+            }
+        });
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_word_consumes_one_shot_shift_and_enables_caps_word() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{Command, USER_RUSSIAN_LETTER_START, USER_SET_RUSSIAN};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            keyboard
+                .process_action_osm(ModifierCombination::LSHIFT, KeyboardEvent::key(0, 3, true))
+                .await;
+            keyboard
+                .process_action_osm(ModifierCombination::LSHIFT, KeyboardEvent::key(0, 3, false))
+                .await;
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(56), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                Some(Command::None)
+            );
+            assert!(keyboard.caps_word.is_active());
+            assert!(keyboard.osm_state.value().is_none());
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::A,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 1, true),
+                )
+                .await;
+            let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                panic!("keyboard report");
+            };
+            assert_eq!(
+                (report.modifier, report.keycodes[0]),
+                (ModifierCombination::LSHIFT.into_bits(), HidKeyCode::A as u8)
+            );
+            keyboard
+                .process_action_key(
+                    HidKeyCode::A,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 1, false),
+                )
+                .await;
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::Space,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, 2, true),
+                )
+                .await;
+            assert!(!keyboard.caps_word.is_active());
+            assert!(matches!(
+                keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                Some(Command::TypeRussianLetter(_))
+            ));
+        });
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_mod_taps_toggle_and_holds_use_the_configured_tapping_term() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{Command, USER_RUSSIAN_LETTER_START};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut config = BehaviorConfig::default();
+            config.morse.default_profile = MorseProfile::const_default().with_hold_timeout_ms(Some(50));
+            let mut keyboard = create_test_keyboard_with_config(config);
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(57), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert!(matches!(
+                keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                Some(Command::TypeRussianLetter(_))
+            ));
+            keyboard
+                .process_key_action_normal(Action::User(57), KeyboardEvent::key(0, 0, false))
+                .await;
+            assert!(matches!(
+                keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                Some(Command::TypeRussianLetter(_))
+            ));
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(57), KeyboardEvent::key(0, 0, true))
+                .await;
+            assert_eq!(
+                keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                Some(Command::None)
+            );
+            Timer::after_millis(60).await;
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(57), KeyboardEvent::key(0, 0, false))
+                .await;
+            assert!(matches!(
+                keyboard.universal_symbols.handle(USER_RUSSIAN_LETTER_START, None),
+                Some(Command::TypeRussianLetter(_))
+            ));
+        });
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_word_keeps_a_failed_return_pending_until_report_capacity_recovers() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{HostLayout, USER_SET_RUSSIAN};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols.handle(USER_SET_RUSSIAN, None);
+            let held = [
+                HidKeyCode::A,
+                HidKeyCode::B,
+                HidKeyCode::C,
+                HidKeyCode::D,
+                HidKeyCode::E,
+                HidKeyCode::F,
+            ];
+            for (index, key) in held.iter().enumerate() {
+                keyboard.register_key(
+                    *key,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, index as u8, true),
+                );
+            }
+            keyboard
+                .process_key_action_normal(Action::User(56), KeyboardEvent::key(3, 3, true))
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            assert!(!keyboard.caps_word.is_active());
+            for (index, key) in held.iter().enumerate() {
+                keyboard.unregister_key(
+                    *key,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, index as u8, false),
+                );
+            }
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_key_action_normal(Action::User(56), KeyboardEvent::key(3, 3, true))
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            for (index, key) in held.iter().enumerate() {
+                keyboard.register_key(
+                    *key,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(0, index as u8, true),
+                );
+            }
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::Space,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 4, true),
+                )
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            keyboard
+                .process_action_key(
+                    HidKeyCode::Space,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 4, false),
+                )
+                .await;
+            keyboard.unregister_key(
+                HidKeyCode::F,
+                ModifierCombination::new(),
+                KeyboardEvent::key(0, 5, false),
+            );
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_action_key(
+                    HidKeyCode::Space,
+                    ModifierCombination::new(),
+                    KeyboardEvent::key(3, 4, true),
+                )
+                .await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+        });
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_store_revert_runs_through_the_macro_playback_pipeline() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{HostLayout, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            static OPS: &[MacroOp] = &[
+                MacroOp::Tap(Action::User(58)),
+                MacroOp::Tap(Action::User(USER_SET_RUSSIAN)),
+                MacroOp::Tap(Action::User(USER_SYMBOL_START)),
+                MacroOp::Tap(Action::User(59)),
+                MacroOp::Tap(Action::User(USER_SYMBOL_START)),
+            ];
+            static MACROS: &[&[MacroOp]] = &[OPS];
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            crate::host_data::update_layout(0);
+            let mut keyboard = create_test_keyboard_with_config(BehaviorConfig {
+                keyboard_macros: MACROS,
+                ..BehaviorConfig::default()
+            });
+            keyboard
+                .process_key_action_normal(Action::TriggerMacro(0), KeyboardEvent::key(0, 0, true))
+                .await;
+            keyboard.fire_macro().await;
+            crate::host_data::update_layout(1);
+            USB_REPORT_CHANNEL.clear();
+            keyboard.fire_macro().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::Russian);
+            USB_REPORT_CHANNEL.clear();
+            keyboard.fire_macro().await;
+            let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                panic!("keyboard report");
+            };
+            assert_eq!(report.keycodes[0], HidKeyCode::Slash as u8);
+            USB_REPORT_CHANNEL.clear();
+            keyboard.fire_macro().await;
+            assert_eq!(keyboard.universal_symbols.layout(), HostLayout::English);
+            USB_REPORT_CHANNEL.clear();
+            keyboard.fire_macro().await;
+            let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                panic!("keyboard report");
+            };
+            assert_eq!(report.keycodes[0], HidKeyCode::Dot as u8);
+            keyboard.fire_macro().await;
+            assert!(!keyboard.keymap.macros(|m| m.is_playing()));
+        });
+    }
+
+    #[cfg(feature = "ergohaven_language_helpers")]
+    #[test]
+    fn phenom_language_store_revert_protects_macros_and_delays_host_resynchronization() {
+        block_on(async {
+            use crate::channel::USB_REPORT_CHANNEL;
+            use crate::universal_symbols::{USER_SET_ENGLISH, USER_SET_RUSSIAN, USER_SYMBOL_START};
+            crate::state::set_usb_state(rmk_types::connection::UsbState::Configured);
+            crate::host_data::update_layout(0);
+            let mut keyboard = create_test_keyboard();
+            keyboard.universal_symbols.handle(USER_SET_ENGLISH, Some(0));
+            keyboard
+                .process_key_action_normal(Action::User(58), KeyboardEvent::key(0, 0, true))
+                .await;
+            crate::host_data::update_layout(1);
+            for restored in [false, true] {
+                if restored {
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_universal_symbols_user_action(USER_SET_RUSSIAN, KeyboardEvent::key(0, 1, true))
+                        .await;
+                    USB_REPORT_CHANNEL.clear();
+                    keyboard
+                        .process_key_action_normal(Action::User(59), KeyboardEvent::key(0, 0, true))
+                        .await;
+                }
+                USB_REPORT_CHANNEL.clear();
+                keyboard
+                    .process_universal_symbols_user_action(USER_SYMBOL_START, KeyboardEvent::key(0, 2, true))
+                    .await;
+                let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                    panic!("keyboard report");
+                };
+                assert_eq!(
+                    report.keycodes[0],
+                    HidKeyCode::Dot as u8,
+                    "STORE and the post-REVERT grace period must ignore host layout updates"
+                );
+            }
+            Timer::after_millis(501).await;
+            USB_REPORT_CHANNEL.clear();
+            keyboard
+                .process_universal_symbols_user_action(USER_SYMBOL_START, KeyboardEvent::key(0, 2, true))
+                .await;
+            let Report::KeyboardReport(report) = USB_REPORT_CHANNEL.receive().await.into_report() else {
+                panic!("keyboard report");
+            };
+            assert_eq!(
+                report.keycodes[0],
+                HidKeyCode::Slash as u8,
+                "host resynchronization resumes after 500 ms"
+            );
+        });
     }
 
     #[cfg(all(

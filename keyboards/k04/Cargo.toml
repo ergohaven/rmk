@@ -55,6 +55,8 @@ rmk = { path = "../../rmk", default-features = false, features = [
     "storage",
     "ble_profile_names",
     "universal_symbols",
+    "ergohaven_language_helpers",
+    "ergohaven_layer_cycling",
     "nrf52840_ble",
     "split",
     "async_matrix",

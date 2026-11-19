@@ -9,6 +9,9 @@ fn main() {
     // When it changes, the storage is erased.
     let mut features: Vec<String> = std::env::vars()
         .filter_map(|(key, _)| key.strip_prefix("CARGO_FEATURE_").map(str::to_lowercase))
+        // These user actions use existing storage framing in both protocols.
+        .filter(|feature| feature != "ergohaven_language_helpers")
+        .filter(|feature| feature != "ergohaven_layer_cycling")
         // Geometry and timed window switching change reports, not stored framing.
         // Keep existing Rynk layouts; Vial retains its established feature hash.
         .filter(|feature| {
