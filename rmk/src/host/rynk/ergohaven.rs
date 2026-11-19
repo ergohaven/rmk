@@ -94,15 +94,18 @@ impl Handle<GetFirmwareTarget> for RynkService<'_> {
 
 impl Handle<GetBoardDefinition> for RynkService<'_> {
     async fn handle(&self, offset: u32) -> Result<LayoutChunk, RynkError> {
-        let blob = self.ergohaven.board_definition;
-        let start = (offset as usize).min(blob.len());
-        let end = (start + RYNK_BLE_CHUNK_SIZE).min(blob.len());
-        let bytes = Vec::from_slice(&blob[start..end]).map_err(|_| RynkError::Internal)?;
-        Ok(LayoutChunk {
-            total_len: blob.len() as u32,
-            bytes,
-        })
+        board_definition_chunk(self.ergohaven.board_definition, offset)
     }
+}
+
+pub(super) fn board_definition_chunk(blob: &[u8], offset: u32) -> Result<LayoutChunk, RynkError> {
+    let start = (offset as usize).min(blob.len());
+    let end = (start + RYNK_BLE_CHUNK_SIZE).min(blob.len());
+    let bytes = Vec::from_slice(&blob[start..end]).map_err(|_| RynkError::Internal)?;
+    Ok(LayoutChunk {
+        total_len: blob.len() as u32,
+        bytes,
+    })
 }
 
 impl Handle<GetLayoutOption> for RynkService<'_> {

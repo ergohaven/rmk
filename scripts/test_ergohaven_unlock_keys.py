@@ -75,9 +75,11 @@ class FactoryUnlockTests(unittest.TestCase):
                     self.assertLess(col, config["layout"]["cols"])
 
     def test_native_maintenance_challenges_are_factory_keys_on_the_local_half(self):
-        paths = [("k04", n) for n in ("keyboard.toml", "keyboard_mini.toml", "keyboard_micro.toml",
-                                          "keyboard_qube.toml", "keyboard_qube_mini.toml", "keyboard_qube_micro.toml")]
-        for folder, name in paths:
+        for profile in release_profiles():
+            folder, name = profile["keyboard"], profile["keyboard_toml"]
+            if folder == "phenom":
+                # Either wired half becomes central when directly connected.
+                continue
             config = tomllib.loads((ROOT / "keyboards" / folder / name).read_text())
             coordinates = [tuple(map(int, pair)) for pair in re.findall(r"\((\d+),(\d+),[^)]+\)", config["layout"]["map"])]
             keys = config["keymap"]["layer"][0]["keys"].split()

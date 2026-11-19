@@ -18,6 +18,9 @@ implementation is tracked separately in
 | --- | --- | --- |
 | K:04, Mini, Micro standalone | Left USB/BLE half | Right: `Peripheral(0)` |
 | K:04, Mini, Micro Qube | Qube dongle | Left: `Peripheral(0)`, right: `Peripheral(1)` |
+| K:03, Imperial44, OP36 standalone | Left USB/BLE half | Right: `Peripheral(0)` |
+| Velvet standalone | Right USB/BLE half | Left: `Peripheral(0)` |
+| K:03, Imperial44, OP36, Velvet Qube | Qube dongle | Left: `Peripheral(0)`, right: `Peripheral(1)` |
 
 `GetFirmwareTarget` (`0x7E60`) returns `Standalone`, `Central` or
 `Peripheral(index)`. The index names the zero-based `[[split.peripheral]]`
@@ -47,7 +50,7 @@ while the application firmware is running.
 The service accepts only:
 
 - `GetVersion`, `GetCapabilities`, `GetDeviceInfo`, `GetErgohavenInfo` and
-  `GetFirmwareTarget`;
+  `GetFirmwareTarget` and `GetBoardDefinition`;
 - `GetLockStatus`, `UnlockPoll` and `Lock`;
 - `BootloaderJump`, only after physical unlocking.
 
@@ -66,7 +69,7 @@ Each native profile opts in with local matrix positions, before split offsets:
 usb_maintenance_unlock_keys = [[2, 1], [2, 2]]
 ```
 
-Right peripherals use the factory **J + K** positions. Qube left peripherals use
+Right peripherals use the factory **J + K** positions. Left peripherals use
 **D + F**. These physical positions remain the challenge after key remapping.
 `GetLockStatus` reports them in local coordinates. Entropy should map them
 through the target profile's matrix offsets for display, and poll `UnlockPoll`
@@ -92,6 +95,8 @@ bootloaders, and requires USB hardware configuration.
    model UID, version and firmware target. Show a maintenance flow when bit 11
    is set, instead of attempting keymap/settings initialization.
 2. Select the model/topology archive and the image matching the reported target.
+   Classic standalone and Qube profiles share a USB product ID and UID.
+   Read the definition's `entropy.firmwareUpdate.asset` to distinguish them.
    Unlock locally, then send `BootloaderJump`. A successful reset can disconnect
    USB before the acknowledgement arrives.
 3. Match the newly appearing bootloader on the same physical USB port, perform

@@ -910,6 +910,41 @@ mod tests {
                 vec!["split", "ergohaven_rynk", "adafruit_bl"],
                 "USBD",
             ),
+            (
+                "classic_qube",
+                vec![
+                    "keyboard.toml",
+                    "keyboard_k03.toml",
+                    "keyboard_imperial44.toml",
+                    "keyboard_velvet.toml",
+                ],
+                vec!["split", "ergohaven_rynk", "adafruit_bl"],
+                "USBD",
+            ),
+            (
+                "k03",
+                vec!["keyboard.toml"],
+                vec!["split", "ergohaven_rynk", "adafruit_bl"],
+                "USBD",
+            ),
+            (
+                "imperial44",
+                vec!["keyboard.toml"],
+                vec!["split", "ergohaven_rynk", "adafruit_bl"],
+                "USBD",
+            ),
+            (
+                "op36",
+                vec!["keyboard.toml"],
+                vec!["split", "ergohaven_rynk", "adafruit_bl"],
+                "USBD",
+            ),
+            (
+                "velvet",
+                vec!["keyboard.toml"],
+                vec!["split", "ergohaven_rynk", "adafruit_bl"],
+                "USBD",
+            ),
         ] {
             for profile in profiles {
                 let config = rmk_config::KeyboardTomlConfig::new_from_toml_path(
@@ -921,7 +956,7 @@ mod tests {
                 };
                 for id in 0..split.peripheral.len() {
                     for native in [true, false] {
-                        let maintenance = native && folder == "k04";
+                        let maintenance = native && folder != "phenom";
                         let features = Some(if native {
                             features.iter().map(|s| s.to_string()).collect()
                         } else {

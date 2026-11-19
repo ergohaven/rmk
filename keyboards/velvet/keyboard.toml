@@ -108,6 +108,7 @@ row_pins = ["P1_13", "P0_02", "P0_29", "P0_30"]
 col_pins = ["P0_24", "P0_09", "P0_10", "P1_11", "P1_10", "P0_03"]
 
 [[split.peripheral]]
+usb_maintenance_unlock_keys = [[1, 3], [1, 4]]
 rows = 4
 cols = 6
 row_offset = 0

@@ -12,7 +12,7 @@ use rmk_types::protocol::rynk::{
 };
 
 use super::RYNK_UNLOCK_WINDOW;
-use super::ergohaven::ergohaven_info;
+use super::ergohaven::{board_definition_chunk, ergohaven_info};
 use super::handlers::{serve, system};
 use crate::config::{DeviceConfig, ErgohavenConfig};
 use crate::event::{KeyboardEvent, SubscribableEvent};
@@ -94,6 +94,10 @@ impl PeripheralRynkService {
                     caps::FIRMWARE_TARGET | caps::USB_MAINTENANCE,
                 ))
             }
+            Cmd::GetBoardDefinition => {
+                let offset = msg.decode_request::<u32>()?;
+                msg.encode_response(&board_definition_chunk(self.ergohaven.board_definition, offset)?)
+            }
             Cmd::GetFirmwareTarget => {
                 msg.decode_request::<()>()?;
                 msg.encode_response(&FirmwareTarget::Peripheral(self.id))
@@ -171,9 +175,9 @@ mod tests {
 
     use embedded_io_async::{ErrorKind, ErrorType};
     use rmk_types::protocol::rynk::ergohaven::{ERGOHAVEN_RYNK_REVISION, ErgohavenInfo};
-    use rmk_types::protocol::rynk::{DeviceInfo, FirmwareVersion, LockStatus};
+    use rmk_types::protocol::rynk::{DeviceInfo, FirmwareVersion, LayoutChunk, LockStatus};
 
-    use super::super::tests::{ChunkRead, VecWrite, decode_frames, req};
+    use super::super::tests::{ChunkRead, VecWrite, decode_frames, req, req_with};
     use super::*;
     use crate::event::publish_event;
     use crate::test_support::test_block_on as block_on;
@@ -252,6 +256,19 @@ mod tests {
     }
 
     #[test]
+    fn locked_maintenance_reads_the_topology_definition_by_offset() {
+        let service = service();
+        for (offset, expected) in [(0u32, b"board".as_slice()), (2, b"ard"), (6, b"")] {
+            let frames = requests(&service, req_with(Cmd::GetBoardDefinition.raw(), 0, &offset));
+            let chunk = postcard::from_bytes::<Result<LayoutChunk, RynkError>>(&frames[0].2)
+                .unwrap()
+                .unwrap();
+            assert_eq!(chunk.total_len, 5);
+            assert_eq!(chunk.bytes.as_slice(), expected);
+        }
+    }
+
+    #[test]
     fn maintenance_rejects_locked_boot_and_all_configuration_commands() {
         let service = service();
         let before = crate::boot::BOOTLOADER_JUMPS.load(Ordering::Relaxed);
@@ -260,7 +277,6 @@ mod tests {
             Cmd::Reboot,
             Cmd::StorageReset,
             Cmd::GetMatrixState,
-            Cmd::GetBoardDefinition,
             Cmd::GetKeyAction,
             Cmd::SetKeyAction,
             Cmd::SetSetting,
