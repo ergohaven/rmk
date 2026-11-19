@@ -1,6 +1,7 @@
 mod board;
 #[path = "../../common/default_layer_names.rs"]
 mod default_layer_names;
+mod double_reset;
 mod layer_led;
 // The K:04 module sources, shared as they are. Phenom leaves their LED and
 // Qube parts unused, and does not declare their K:04-only features.
@@ -25,6 +26,13 @@ macro_rules! phenom {
     ($($side:tt)*) => {
         #[rmk::macros::rmk_central($($side)*)]
         mod keyboard {
+            #[Overwritten(chip_init)]
+            fn init_chip() {
+                let config = ::embassy_rp::config::Config::default();
+                let mut p = ::embassy_rp::init(config);
+                crate::double_reset::check();
+            }
+
             add_interrupt!(
                 I2C0_IRQ => ::embassy_rp::i2c::InterruptHandler<::embassy_rp::peripherals::I2C0>;
                 PIO0_IRQ_0 => ::embassy_rp::pio::InterruptHandler<::embassy_rp::peripherals::PIO0>;
@@ -120,7 +128,11 @@ macro_rules! phenom {
     };
 }
 
-fn modules(i2c: board::TouchpadI2c, pins: board::TrackballPins, primary: bool) -> (trackball::Trackball, touchpad::Touchpad) {
+fn modules(
+    i2c: board::TouchpadI2c,
+    pins: board::TrackballPins,
+    primary: bool,
+) -> (trackball::Trackball, touchpad::Touchpad) {
     let (ball_id, touch_id) = role::module_ids(IS_RIGHT);
     let sensor = trackball::new_trackball_from_pins(ball_id, pins);
     let ball = if primary {
@@ -132,7 +144,8 @@ fn modules(i2c: board::TouchpadI2c, pins: board::TrackballPins, primary: bool) -
 }
 
 async fn run_peripheral_matrix<M: rmk::input_device::InputDevice<Event = rmk::event::KeyboardEvent>>(
-    matrix: &mut M, local: rmk::split::PeripheralMatrixConfig,
+    matrix: &mut M,
+    local: rmk::split::PeripheralMatrixConfig,
 ) -> ! {
     loop {
         if let Some(event) = role::local_matrix_event(matrix.read_event().await, local) {

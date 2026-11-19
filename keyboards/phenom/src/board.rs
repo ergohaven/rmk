@@ -22,6 +22,9 @@ pub type TouchpadI2c = embassy_rp::i2c::I2c<'static, I2C0, embassy_rp::i2c::Asyn
 pub const DEFAULT_BALL_AXIS: [u8; 2] = [2, 2];
 pub const DEFAULT_TOUCH_AXIS: [u8; 2] = [3, 1];
 
+/// Phenom's base layer uses the white palette entry, as in its QMK firmware.
+pub const DEFAULT_BASE_LAYER_COLOR: u8 = 1;
+
 /// The PMW3610 pins of the module slot, the same on both halves. The slot has
 /// no MOTION line, so the trackball polls the sensor.
 pub struct TrackballPins {
@@ -60,3 +63,6 @@ pub const PARK_UNSELECTED_ENCODERS: bool = false;
 
 /// Probe available pointing modules when the side is set to Auto.
 pub const AUTO_MODULES: bool = true;
+
+/// Wired Phenom keeps a selected touchpad responsive after normal input idle.
+pub const TOUCHPAD_POWER_SAVING: bool = false;

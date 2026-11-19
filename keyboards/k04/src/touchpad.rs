@@ -265,14 +265,25 @@ impl Touchpad {
         ok &= self
             .write_u16(REG_REPORT_RATE_IDLE_TOUCH, REPORT_RATE_IDLE_TOUCH_MS)
             .await;
-        ok &= self.write_u16(REG_REPORT_RATE_IDLE, REPORT_RATE_IDLE_MS).await;
+        let idle_report_rate = if crate::board::TOUCHPAD_POWER_SAVING {
+            REPORT_RATE_IDLE_MS
+        } else {
+            REPORT_RATE_ACTIVE_MS
+        };
+        ok &= self.write_u16(REG_REPORT_RATE_IDLE, idle_report_rate).await;
         ok &= self.write_u16(REG_REPORT_RATE_LP1, REPORT_RATE_LP1_MS).await;
         ok &= self.write_u16(REG_REPORT_RATE_LP2, REPORT_RATE_LP2_MS).await;
         ok &= self.write_u8(REG_ACTIVE_MODE_TIMEOUT, ACTIVE_MODE_TIMEOUT_SECS).await;
         ok &= self
             .write_u8(REG_IDLE_TOUCH_MODE_TIMEOUT, IDLE_TOUCH_MODE_TIMEOUT_SECS)
             .await;
-        ok &= self.write_u8(REG_IDLE_MODE_TIMEOUT, IDLE_MODE_TIMEOUT_SECS).await;
+        // IQS5xx timeout 255 disables the idle-to-LP1/LP2 transition, as in QMK.
+        let idle_timeout = if crate::board::TOUCHPAD_POWER_SAVING {
+            IDLE_MODE_TIMEOUT_SECS
+        } else {
+            u8::MAX
+        };
+        ok &= self.write_u8(REG_IDLE_MODE_TIMEOUT, idle_timeout).await;
         ok &= self.write_u8(REG_LP1_MODE_TIMEOUT, LP1_MODE_TIMEOUT_20_SECS).await;
         ok &= self.write_u8(REG_SYSTEM_CONFIG_1, 0x46).await;
         ok &= self.write_u8(REG_BOTTOM_BETA, 5).await;
@@ -643,6 +654,9 @@ fn scroll_delta(x: i16, y: i16) -> Option<(i16, i16)> {
 }
 
 fn touch_poll_interval(idle_for: Duration) -> Duration {
+    if !crate::board::TOUCHPAD_POWER_SAVING {
+        return Duration::from_millis(REPORT_RATE_ACTIVE_MS as u64);
+    }
     let interval_ms = if idle_for < TOUCH_ACTIVE_POLL_WINDOW {
         REPORT_RATE_ACTIVE_MS
     } else if idle_for < TOUCH_IDLE_POLL_WINDOW {

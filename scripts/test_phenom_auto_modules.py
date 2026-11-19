@@ -26,14 +26,27 @@ runtime = (ROOT / "keyboards/k04/src/module_settings.rs").read_text()
 runtime_parts = [line for line in runtime.splitlines() if re.match(r"const \w+:[^\n]+;$", line)]
 runtime_parts += ["#[derive(Clone, Copy, Debug, PartialEq, Eq)]\n" + block(runtime, "pub enum ModuleSelection"), block(runtime, "impl ModuleSelection")]
 runtime_parts += ['static SETTINGS: [AtomicU8; SETTINGS_LEN] = [const { AtomicU8::new(0) }; SETTINGS_LEN];']
-for name in ["apply_settings_packet", "module_selection", "ensure_initialized", "module_selections", "set_layer_color_index", "unpack_color"]:
+for name in ["apply_settings_packet", "module_selection", "ensure_initialized", "module_selections", "set_layer_color_index", "layer_color_index", "byte", "unpack_color"]:
     marker = ("pub(crate) fn " if name == "apply_settings_packet" else "pub fn " if name == "module_selection" else "fn ") + name + "("
     runtime_parts.append(block(runtime, marker))
-harness += "\nmod runtime { use super::*;\n" + "\n".join(runtime_parts) + "\nfn apply_module_selection_runtime() {}\n}\n"
+harness += "\nmod runtime { use super::*;\n" + "\n".join(runtime_parts) + "\nfn apply_module_selection_runtime() {}\npub fn base_color() -> u8 { layer_color_index(0) }\n}\n"
 harness += "\nmod rmk { pub mod input_device { pub mod rotary_encoder { pub fn set_encoder_steps(_: u8, _: u8) {} } } }\n"
 harness += r'''
 #[test]
 fn defaults_manual_overrides_legacy_storage_and_auto_round_trip() {
+    reset_module_settings();
+    let base_color = if cfg!(feature="auto_modules") { 1 } else { 0 };
+    assert_eq!(module_layer_color_index(0), base_color, "factory base layer: Phenom white, K04 off");
+    assert_eq!(runtime::base_color(), base_color, "local fallback agrees before settings arrive");
+    for color in [0, 1, 19] {
+        module_set_layer_color_index(0, color);
+        let stored = serialize_module_settings();
+        reset_module_settings();
+        deserialize_module_settings(&stored);
+        assert_eq!(module_layer_color_index(0), color, "saved explicit color survives loading");
+        runtime::apply_settings_packet(&module_settings_sync_packet());
+        assert_eq!(runtime::base_color(), color, "settings sync preserves saved color");
+    }
     reset_module_settings();
     let default = if cfg!(feature="auto_modules") { 4 } else { 3 };
     assert_eq!(module_selection_value(0), default, "factory left module");

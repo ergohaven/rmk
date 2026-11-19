@@ -274,7 +274,7 @@ fn ensure_initialized() {
     SETTINGS[IDX_RIGHT_ENCODER_STEPS].store(0, Ordering::Relaxed);
     rmk::input_device::rotary_encoder::set_encoder_steps(0, 1);
     rmk::input_device::rotary_encoder::set_encoder_steps(1, 1);
-    set_layer_color_index(0, 0);
+    set_layer_color_index(0, crate::board::DEFAULT_BASE_LAYER_COLOR);
     set_layer_color_index(1, 2);
     set_layer_color_index(2, 16);
     set_layer_color_index(3, 24);

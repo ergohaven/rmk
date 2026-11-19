@@ -72,3 +72,5 @@ rustc +"$RMK_STABLE_TOOLCHAIN" --edition 2021 --test keyboards/k04/src/media_lab
 "$k04_tests/media_label"
 
 python3 scripts/test_phenom_auto_modules.py
+python3 scripts/test_touchpad_board_policy.py
+python3 scripts/test_phenom_double_reset.py
