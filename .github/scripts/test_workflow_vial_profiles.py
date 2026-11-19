@@ -38,15 +38,11 @@ class VialProfiles(unittest.TestCase):
                     vial = tomllib.loads((ROOT / 'keyboards' / model / name.replace('.toml', '_vial.toml')).read_text())
                     original['host']['vial_enabled'] = True
                     original['host']['rynk_enabled'] = False
-                    expected_maintenance = {
-                        'keyboard.toml': [[2, 1], [2, 2]],
-                        'keyboard_micro.toml': [[1, 1], [1, 2]],
-                    }.get(name) if model == 'k04' else None
                     for native_board, vial_board in zip(
                             original['split']['peripheral'], vial['split']['peripheral'], strict=True):
                         self.assertNotIn('usb_maintenance_unlock_keys', vial_board)
-                        self.assertEqual(native_board.pop('usb_maintenance_unlock_keys', None),
-                                         expected_maintenance)
+                        # The factory-key test checks each native challenge's coordinates.
+                        self.assertTrue(native_board.pop('usb_maintenance_unlock_keys', None))
                     self.assertEqual(original, vial)
 
     def test_descriptor_masks_and_build_selectors(self):
