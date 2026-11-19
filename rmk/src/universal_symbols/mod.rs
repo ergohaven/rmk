@@ -255,7 +255,7 @@ impl State {
         Some(command)
     }
 
-    #[cfg(any(feature = "ergohaven_language_helpers", feature = "ergohaven_delayed_english"))]
+    #[cfg(any(test, feature = "ergohaven_language_helpers", feature = "ergohaven_delayed_english"))]
     pub(crate) const fn layout(&self) -> HostLayout {
         self.layout
     }
