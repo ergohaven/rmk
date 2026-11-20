@@ -2,7 +2,7 @@
 
 Phenom Full, Mini and Micro use the same `firmware.rs` startup hook in both physical-side binaries. A single startup arms a 200 ms window, then clears the marker and continues normal startup. A second physical Reset during that window clears the marker and enters the RP2040 ROM USB bootloader with both UF2 mass storage and PICOBOOT enabled. Connect USB to the half being put into bootloader mode.
 
-Every normal startup, including a recovery reboot, therefore takes an additional **200 ms** before USB initialization and role election. The interval starts after HAL clock initialization, not at the electrical edge of the Reset button. This matches the QMK/Pico SDK arm–wait–clear behavior; power-cycling is not a guaranteed double-Reset gesture.
+Every normal startup, including a recovery reboot, therefore takes an additional **200 ms** before USB initialization and role election. The interval starts after HAL clock initialization, not at the electrical edge of the Reset button. This matches the timeout configured in Ergohaven QMK (`RP2040_BOOTLOADER_DOUBLE_TAP_RESET_TIMEOUT 200U`). Power-cycling is not a guaranteed double-Reset gesture. Matching that timeout is not a claim of identical end-to-end startup timing between the two firmware frameworks.
 
 ## Retention and Rust boundary
 

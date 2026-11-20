@@ -254,9 +254,7 @@ fn ensure_initialized() {
         return;
     }
     SETTINGS[0].store(VERSION, Ordering::Relaxed);
-    if crate::board::AUTO_MODULES {
-        SETTINGS[IDX_MODULE_SELECT].store(0x30, Ordering::Relaxed);
-    }
+
     let default_ball_dpi = if cfg!(feature = "production_v22") { 2 } else { 4 };
     SETTINGS[IDX_LEFT_BALL_DPI].store(default_ball_dpi, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_BALL_DPI].store(default_ball_dpi, Ordering::Relaxed);
@@ -268,8 +266,8 @@ fn ensure_initialized() {
     SETTINGS[IDX_RIGHT_SCROLL_SENS].store(8, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_SNIPER_SENS].store(4, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_TEXT_SENS].store(16, Ordering::Relaxed);
-    SETTINGS[IDX_LED_BRIGHTNESS].store(8, Ordering::Relaxed);
-    SETTINGS[IDX_LED_TIMEOUT_SEC].store(1, Ordering::Relaxed);
+    SETTINGS[IDX_LED_BRIGHTNESS].store(crate::board::DEFAULT_LED_BRIGHTNESS, Ordering::Relaxed);
+    SETTINGS[IDX_LED_TIMEOUT_SEC].store(crate::board::DEFAULT_LED_TIMEOUT_SEC, Ordering::Relaxed);
     SETTINGS[IDX_LEFT_ENCODER_STEPS].store(0, Ordering::Relaxed);
     SETTINGS[IDX_RIGHT_ENCODER_STEPS].store(0, Ordering::Relaxed);
     rmk::input_device::rotary_encoder::set_encoder_steps(0, 1);
@@ -299,6 +297,9 @@ fn ensure_initialized() {
 }
 
 fn module_selections() -> [ModuleSelection; 2] {
+    if crate::board::AUTO_MODULES {
+        return [ModuleSelection::Auto; 2];
+    }
     let packed = SETTINGS[IDX_MODULE_SELECT].load(Ordering::Relaxed);
     core::array::from_fn(|side| {
         ModuleSelection::from_raw(if packed & (0x10 << side) != 0 {

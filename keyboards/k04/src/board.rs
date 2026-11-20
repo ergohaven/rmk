@@ -21,6 +21,8 @@ pub const DEFAULT_TOUCH_AXIS: [u8; 2] = [0, 0];
 /// K:04 reserves the base-layer indication for connection and power state.
 pub const DEFAULT_BASE_LAYER_COLOR: u8 = 0;
 
+pub const DEFAULT_LED_BRIGHTNESS: u8 = 8;
+
 /// The PMW3610 pins of the K:04 module connector, the same on both halves.
 pub struct TrackballPins {
     pub sck: TrackballSck,
@@ -74,6 +76,8 @@ pub const PARK_UNSELECTED_ENCODERS: bool = true;
 
 /// Probe available pointing modules when the side is set to Auto.
 pub const AUTO_MODULES: bool = false;
+
+pub const DEFAULT_LED_TIMEOUT_SEC: u8 = 1;
 
 /// Preserve adaptive sensor and host polling for battery-powered K:04.
 pub const TOUCHPAD_POWER_SAVING: bool = true;

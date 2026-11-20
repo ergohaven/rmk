@@ -163,7 +163,7 @@ const MODULE_DEFAULTS: [u8; MODULE_SETTINGS_LEN] = {
     data[IDX_LEFT_TOUCH_AXIS] = crate::board::DEFAULT_TOUCH_AXIS[0];
     data[IDX_RIGHT_TOUCH_AXIS] = crate::board::DEFAULT_TOUCH_AXIS[1];
     data[IDX_FLAGS] = DEFAULT_ACCELERATION_FLAGS;
-    data[IDX_MODULE_SELECT] = 3 | (2 << 2) | if crate::board::AUTO_MODULES { 0x30 } else { 0 };
+    data[IDX_MODULE_SELECT] = 3 | (2 << 2);
     data[IDX_LEFT_SCROLL_SENS] = 8;
     data[IDX_RIGHT_SCROLL_SENS] = 8;
     data[IDX_LEFT_SNIPER_SENS] = 4;
@@ -172,8 +172,8 @@ const MODULE_DEFAULTS: [u8; MODULE_SETTINGS_LEN] = {
     data[IDX_RIGHT_TEXT_SENS] = 16;
     data[IDX_AUTO_LAYER] = 4;
     data[IDX_AUTO_FLAGS] = DEFAULT_AUTO_FLAGS;
-    data[IDX_LED_BRIGHTNESS] = 8;
-    data[IDX_LED_TIMEOUT_SEC] = 1;
+    data[IDX_LED_BRIGHTNESS] = crate::board::DEFAULT_LED_BRIGHTNESS;
+    data[IDX_LED_TIMEOUT_SEC] = crate::board::DEFAULT_LED_TIMEOUT_SEC;
     // Keep the former 30-minute index for downgrade compatibility.
     data[IDX_RESERVED_HOST_DISCONNECT_TIMEOUT] = 3;
     data[IDX_AUTO_LAYER_TIMEOUT] = if cfg!(feature = "standalone") { 9 } else { 1 };
@@ -225,9 +225,33 @@ const _: () = {
     }
 };
 
-static LAYER_NAME_LEN: [AtomicU8; LAYER_NAME_COUNT] = [const { AtomicU8::new(0) }; LAYER_NAME_COUNT];
-static LAYER_NAME_BYTES: [AtomicU8; LAYER_NAME_COUNT * LAYER_NAME_MAX] =
-    [const { AtomicU8::new(0) }; LAYER_NAME_COUNT * LAYER_NAME_MAX];
+// A fresh settings store does not invoke deserialize, so defaults must exist
+// before the first host read. Restored names still replace these values.
+static LAYER_NAME_LEN: [AtomicU8; LAYER_NAME_COUNT] = {
+    let mut lengths = [const { AtomicU8::new(0) }; LAYER_NAME_COUNT];
+    let mut index = 0;
+    while index < LAYER_NAME_COUNT {
+        let len = crate::DEFAULT_LAYER_NAMES[index].len();
+        assert!(len <= LAYER_NAME_MAX);
+        lengths[index] = AtomicU8::new(len as u8);
+        index += 1;
+    }
+    lengths
+};
+static LAYER_NAME_BYTES: [AtomicU8; LAYER_NAME_COUNT * LAYER_NAME_MAX] = {
+    let mut bytes = [const { AtomicU8::new(0) }; LAYER_NAME_COUNT * LAYER_NAME_MAX];
+    let mut index = 0;
+    while index < LAYER_NAME_COUNT {
+        let name = crate::DEFAULT_LAYER_NAMES[index].as_bytes();
+        let mut offset = 0;
+        while offset < name.len() {
+            bytes[index * LAYER_NAME_MAX + offset] = AtomicU8::new(name[offset]);
+            offset += 1;
+        }
+        index += 1;
+    }
+    bytes
+};
 static LAYER_NAMES_VERSION: AtomicU8 = AtomicU8::new(0);
 static MODULE_SETTINGS: [AtomicU8; MODULE_SETTINGS_LEN] = [const { AtomicU8::new(0) }; MODULE_SETTINGS_LEN];
 
@@ -389,7 +413,7 @@ fn deserialize(bytes: &[u8]) {
             if migrate_placeholders {
                 migrate_legacy_placeholders();
             }
-            repair_unreadable_layer_names();
+            repair_layer_names();
             LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
             publish_module_settings();
             return;
@@ -399,7 +423,7 @@ fn deserialize(bytes: &[u8]) {
     deserialize_module_settings(&[]);
     deserialize_fixed_layer_names(bytes);
     migrate_legacy_placeholders();
-    repair_unreadable_layer_names();
+    repair_layer_names();
     LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
     publish_module_settings();
 }
@@ -478,15 +502,33 @@ fn layer_name_is_readable(bytes: &[u8]) -> bool {
     str::from_utf8(bytes).is_ok_and(|name| !name.chars().any(char::is_control))
 }
 
-fn repair_unreadable_layer_names() {
+fn repair_layer_names() {
     let mut bytes = [0u8; LAYER_NAME_MAX];
+    // Old hosts could save a complete unnamed/numeric profile in the current
+    // storage format too. Preserve intentional blanks/Main in a custom profile.
+    let mut generated_profile = true;
+    for index in 0..LAYER_NAME_COUNT {
+        let len = LAYER_NAME_LEN[index].load(Ordering::Acquire).min(LAYER_NAME_MAX as u8) as usize;
+        let base = index * LAYER_NAME_MAX;
+        for (offset, byte) in bytes.iter_mut().enumerate() {
+            *byte = LAYER_NAME_BYTES[base + offset].load(Ordering::Relaxed);
+        }
+        if !crate::default_layer_names::is_legacy_placeholder(index, &bytes[..len]) {
+            generated_profile = false;
+            break;
+        }
+    }
     for (index, default_name) in crate::DEFAULT_LAYER_NAMES.iter().enumerate() {
         let len = LAYER_NAME_LEN[index].load(Ordering::Acquire).min(LAYER_NAME_MAX as u8) as usize;
         let base = index * LAYER_NAME_MAX;
         for (offset, byte) in bytes.iter_mut().enumerate() {
             *byte = LAYER_NAME_BYTES[base + offset].load(Ordering::Relaxed);
         }
-        if !layer_name_is_readable(&bytes[..len]) {
+        let name = &bytes[..len];
+        let blank_or_main = name.is_empty() || (index == 0 && name.eq_ignore_ascii_case(b"Main"));
+        let generated = crate::default_layer_names::is_legacy_placeholder(index, name)
+            && (generated_profile || !blank_or_main);
+        if !layer_name_is_readable(name) || generated {
             store_raw_layer_name(index, default_name.as_bytes());
         }
     }
@@ -948,10 +990,12 @@ fn module_set_touch_gestures(side: u8, enabled: bool) {
 fn module_selection_value(side: u8) -> u8 {
     let side = usize::from(side != 0);
     let select = module_byte(IDX_MODULE_SELECT);
-    if crate::board::AUTO_MODULES && select & (0x10 << side) != 0 {
-        4
+    let value = (select >> (side * 2)) & 0x03;
+    if crate::board::AUTO_MODULES {
+        // This is the editor's module category, not a hardware enable switch.
+        value.clamp(1, MODULE_SELECT_TOUCH)
     } else {
-        (select >> (side * 2)) & 0x03
+        value
     }
 }
 
@@ -960,11 +1004,12 @@ fn module_set_module_selection(side: u8, value: u8) {
     let auto = 0x10 << side;
     let shift = side * 2;
     let mut select = module_byte(IDX_MODULE_SELECT) & !auto;
-    if crate::board::AUTO_MODULES && value == 4 {
-        select |= auto;
+    let value = if crate::board::AUTO_MODULES {
+        value.clamp(1, MODULE_SELECT_TOUCH)
     } else {
-        select = (select & !(0x03 << shift)) | ((value.min(MODULE_SELECT_TOUCH) & 0x03) << shift);
-    }
+        value.min(MODULE_SELECT_TOUCH)
+    };
+    select = (select & !(0x03 << shift)) | ((value & 0x03) << shift);
     module_set_byte(IDX_MODULE_SELECT, select & 0x3f);
 }
 

@@ -25,6 +25,12 @@ pub const DEFAULT_TOUCH_AXIS: [u8; 2] = [3, 1];
 /// Phenom's base layer uses the white palette entry, as in its QMK firmware.
 pub const DEFAULT_BASE_LAYER_COLOR: u8 = 1;
 
+/// 30% in Entropy's 0..=255 brightness range.
+pub const DEFAULT_LED_BRIGHTNESS: u8 = 77;
+
+/// Keep the wired layer indicator lit until the user configures a timeout.
+pub const DEFAULT_LED_TIMEOUT_SEC: u8 = 0;
+
 /// The PMW3610 pins of the module slot, the same on both halves. The slot has
 /// no MOTION line, so the trackball polls the sensor.
 pub struct TrackballPins {
@@ -61,7 +67,7 @@ pub const PACE_SPLIT_TRACKBALL: bool = false;
 /// battery to save, so both encoders always run, as in the QMK firmware.
 pub const PARK_UNSELECTED_ENCODERS: bool = false;
 
-/// Probe available pointing modules when the side is set to Auto.
+/// Always detect installed modules; the host selector only chooses settings to edit.
 pub const AUTO_MODULES: bool = true;
 
 /// Wired Phenom keeps a selected touchpad responsive after normal input idle.

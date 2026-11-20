@@ -110,7 +110,8 @@ impl LayerLed {
         } else {
             let color = module_settings::layer_color(self.layer);
             let brightness = u16::from(module_settings::led_brightness());
-            let scale = |value: u8| (u16::from(value) * brightness / 255) as u8;
+            // Entropy's full brightness range maps to half the former LED output.
+            let scale = |value: u8| (u16::from(value) * brightness / (255 * 2)) as u8;
             RGB8::new(scale(color.r), scale(color.g), scale(color.b))
         };
         if self.shown != Some(color) {

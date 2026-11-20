@@ -42,6 +42,12 @@ pub const STANDARD_WITH_MOUSE: [&str; LAYER_NAME_COUNT] = [
     "15",
 ];
 
+pub const PHENOM: [&str; LAYER_NAME_COUNT] = {
+    let mut names = STANDARD_WITH_MOUSE;
+    names[1] = "Num + Nav";
+    names
+};
+
 const NUMERIC: [&str; LAYER_NAME_COUNT] = [
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15",
 ];
@@ -73,7 +79,7 @@ mod tests {
 
     #[test]
     fn factory_names_fit_firmware_limit() {
-        for profile in [STANDARD_NO_MOUSE, STANDARD_WITH_MOUSE] {
+        for profile in [STANDARD_NO_MOUSE, STANDARD_WITH_MOUSE, PHENOM] {
             assert!(profile.iter().all(|name| !name.is_empty() && name.len() <= 12));
         }
     }

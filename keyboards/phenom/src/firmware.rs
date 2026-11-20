@@ -18,7 +18,7 @@ mod touchpad;
 #[path = "../../k04/src/trackball.rs"]
 mod trackball;
 
-const DEFAULT_LAYER_NAMES: [&str; 16] = default_layer_names::STANDARD_WITH_MOUSE;
+const DEFAULT_LAYER_NAMES: [&str; 16] = default_layer_names::PHENOM;
 
 mod role;
 
