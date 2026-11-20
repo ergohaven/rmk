@@ -49,6 +49,9 @@ use vial as host_usb;
 
 pub(crate) static USB_REMOTE_WAKEUP: Signal<RawMutex, ()> = Signal::new();
 static USB_STATE_CHANGED: Signal<RawMutex, ()> = Signal::new();
+#[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+pub(crate) static PERIPHERAL_USB_RESET: Signal<RawMutex, ()> = Signal::new();
+
 #[cfg(feature = "split")]
 static USB_CONFIGURED: Signal<RawMutex, ()> = Signal::new();
 
@@ -624,6 +627,51 @@ async fn run_usb_logger<D: Driver<'static>>(logger_class: CdcAcmClass<'static, D
     logger_fut.await;
 }
 
+/// Run a vendor Rynk interface on a fixed-role peripheral without adding
+/// keyboard/mouse HID interfaces. Challenge coordinates are local to its matrix.
+#[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+pub async fn run_peripheral_usb_maintenance<D: Driver<'static>>(
+    driver: D,
+    config: DeviceConfig<'static>,
+    ergohaven: crate::config::ErgohavenConfig<'static>,
+    id: u8,
+    rows: u8,
+    cols: u8,
+    unlock_keys: &'static [(u8, u8)],
+) {
+    let service = crate::host::rynk::maintenance::PeripheralRynkService::new(
+        config.clone(),
+        ergohaven,
+        id,
+        rows,
+        cols,
+        unlock_keys,
+    );
+    #[cfg(feature = "_dfu")]
+    let product_name = config.product_name;
+    let mut builder = new_usb_builder(driver, config, default_config_descriptor());
+    let (mut rx, mut tx) = rynk::build_host_usb(&mut builder);
+    #[cfg(feature = "usb_log")]
+    let logger = run_usb_logger(add_usb_logger!(&mut builder));
+    #[cfg(not(feature = "usb_log"))]
+    let logger = core::future::pending::<()>();
+    #[cfg(feature = "_dfu")]
+    dfu::register_dfu_iface(
+        &mut builder,
+        product_name,
+        #[cfg(feature = "dfu_split")]
+        0,
+    );
+    let mut usb = builder.build();
+    embassy_futures::join::join4(
+        usb.run(),
+        rynk::run_host_usb(&mut rx, &mut tx, &service),
+        service.run_keys(),
+        logger,
+    )
+    .await;
+}
+
 #[cfg(any(feature = "usb_log", feature = "_dfu"))]
 pub async fn run_peripheral_usb<D: Driver<'static>>(driver: D, config: DeviceConfig<'static>) {
     #[cfg(feature = "_dfu")]
@@ -775,6 +823,8 @@ impl Handler for UsbDeviceHandler {
             info!("Device enabled");
             set_usb_state_and_notify(UsbState::Enabled);
         } else {
+            #[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+            PERIPHERAL_USB_RESET.signal(());
             #[cfg(feature = "split")]
             USB_CONFIGURED.reset();
             info!("Device disabled");
@@ -783,6 +833,8 @@ impl Handler for UsbDeviceHandler {
     }
 
     fn reset(&mut self) {
+        #[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+        PERIPHERAL_USB_RESET.signal(());
         #[cfg(feature = "split")]
         USB_CONFIGURED.reset();
         BOOT_MODE.store(false, Ordering::Relaxed);
@@ -802,6 +854,8 @@ impl Handler for UsbDeviceHandler {
             set_usb_state_and_notify(UsbState::Configured);
             info!("Device configured, it may now draw up to the configured current from Vbus.")
         } else {
+            #[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+            PERIPHERAL_USB_RESET.signal(());
             #[cfg(feature = "split")]
             USB_CONFIGURED.reset();
             set_usb_state_and_notify(UsbState::Enabled);
@@ -889,6 +943,21 @@ mod tests {
     fn reset_usb_signals() {
         USB_REMOTE_WAKEUP.reset();
         USB_STATE_CHANGED.reset();
+    }
+
+    #[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+    #[test]
+    fn reset_deconfigure_and_disconnect_cancel_peripheral_maintenance() {
+        let mut handler = UsbDeviceHandler::new();
+        for callback in [
+            <UsbDeviceHandler as Handler>::reset,
+            |h: &mut UsbDeviceHandler| h.configured(false),
+            |h: &mut UsbDeviceHandler| h.enabled(false),
+        ] {
+            super::PERIPHERAL_USB_RESET.reset();
+            callback(&mut handler);
+            assert!(super::PERIPHERAL_USB_RESET.signaled());
+        }
     }
 
     #[test]

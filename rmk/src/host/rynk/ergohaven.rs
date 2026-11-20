@@ -3,10 +3,10 @@
 
 use heapless::Vec;
 use rmk_types::protocol::rynk::ergohaven::{
-    BatteryHalves, CommitWrites, ERGOHAVEN_RYNK_REVISION, ErgohavenInfo, GetBatteryHalves, GetBoardDefinition,
-    GetErgohavenInfo, GetLayoutOption, GetSetting, GetSettingKeys, GetWriteStatus, HOST_DATA_TEXT_MAX_LEN,
-    HostDataUpdate, SetHostData, SetLayoutOption, SetSetting, SetSettingRequest, SettingKeysPage, SettingValue,
-    WriteStatus, caps,
+    BatteryHalves, CommitWrites, ERGOHAVEN_RYNK_REVISION, ErgohavenInfo, FirmwareTarget, GetBatteryHalves,
+    GetBoardDefinition, GetErgohavenInfo, GetFirmwareTarget, GetLayoutOption, GetSetting, GetSettingKeys,
+    GetWriteStatus, HOST_DATA_TEXT_MAX_LEN, HostDataUpdate, SetHostData, SetLayoutOption, SetSetting,
+    SetSettingRequest, SettingKeysPage, SettingValue, WriteStatus, caps,
 };
 use rmk_types::protocol::rynk::{Cmd, FirmwareVersion, LayoutChunk, RYNK_BLE_CHUNK_SIZE, RynkError, RynkMessage};
 
@@ -15,7 +15,8 @@ use super::handlers::{Handle, serve};
 use crate::host::settings::{self, SETTING_VALUE_LEN};
 
 /// What this build can do, as `GetErgohavenInfo` reports it.
-const CAPS: u32 = caps::LAYOUT_OPTIONS
+const CAPS: u32 = caps::FIRMWARE_TARGET
+    | caps::LAYOUT_OPTIONS
     | caps::STAGED_WRITES
     | caps::HOST_TIME
     | caps::HOST_MEDIA
@@ -52,6 +53,7 @@ impl RynkService<'_> {
     /// Serve an Ergohaven command; `None` for a command outside its table.
     pub(super) async fn dispatch_ergohaven(&self, msg: &mut RynkMessage<'_>) -> Option<Result<(), RynkError>> {
         Some(match msg.header().cmd {
+            Cmd::GetFirmwareTarget => serve::<GetFirmwareTarget, _>(self, msg).await,
             Cmd::GetErgohavenInfo => serve::<GetErgohavenInfo, _>(self, msg).await,
             Cmd::GetBoardDefinition => serve::<GetBoardDefinition, _>(self, msg).await,
             Cmd::GetLayoutOption => serve::<GetLayoutOption, _>(self, msg).await,
@@ -75,39 +77,52 @@ impl RynkService<'_> {
 
 impl Handle<GetErgohavenInfo> for RynkService<'_> {
     async fn handle(&self, _: ()) -> Result<ErgohavenInfo, RynkError> {
-        let config = &self.ergohaven;
-        let mut keyboard_uid = [0; 8];
-        let len = config.keyboard_uid.len().min(keyboard_uid.len());
-        keyboard_uid[..len].copy_from_slice(&config.keyboard_uid[..len]);
-        let version = config.firmware_version;
-        Ok(ErgohavenInfo {
-            revision: ERGOHAVEN_RYNK_REVISION,
-            firmware: FirmwareVersion {
-                major: (version >> 16) as u8,
-                minor: (version >> 8) as u8,
-                patch: version as u8,
-            },
-            keyboard_uid,
-            caps: CAPS | magic_caps(crate::magic::supported_keycodes()),
-            // FNV-1a: a cache key for the host, not a checksum.
-            definition_hash: config.board_definition.iter().fold(0x811c_9dc5, |hash, &byte| {
-                (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
-            }),
-        })
+        Ok(ergohaven_info(&self.ergohaven, CAPS | magic_caps(crate::magic::supported_keycodes())))
+    }
+}
+
+/// Shared model/version identity; the maintenance service advertises only its own caps.
+pub(super) fn ergohaven_info(config: &crate::config::ErgohavenConfig<'_>, caps: u32) -> ErgohavenInfo {
+    let mut keyboard_uid = [0; 8];
+    let len = config.keyboard_uid.len().min(keyboard_uid.len());
+    keyboard_uid[..len].copy_from_slice(&config.keyboard_uid[..len]);
+    let version = config.firmware_version;
+    ErgohavenInfo {
+        revision: ERGOHAVEN_RYNK_REVISION,
+        firmware: FirmwareVersion {
+            major: (version >> 16) as u8,
+            minor: (version >> 8) as u8,
+            patch: version as u8,
+        },
+        keyboard_uid,
+        caps,
+        // FNV-1a: a cache key for the host, not a checksum.
+        definition_hash: config.board_definition.iter().fold(0x811c_9dc5, |hash, &byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+        }),
+    }
+}
+
+impl Handle<GetFirmwareTarget> for RynkService<'_> {
+    async fn handle(&self, _: ()) -> Result<FirmwareTarget, RynkError> {
+        Ok(self.firmware_target)
     }
 }
 
 impl Handle<GetBoardDefinition> for RynkService<'_> {
     async fn handle(&self, offset: u32) -> Result<LayoutChunk, RynkError> {
-        let blob = self.ergohaven.board_definition;
-        let start = (offset as usize).min(blob.len());
-        let end = (start + RYNK_BLE_CHUNK_SIZE).min(blob.len());
-        let bytes = Vec::from_slice(&blob[start..end]).map_err(|_| RynkError::Internal)?;
-        Ok(LayoutChunk {
-            total_len: blob.len() as u32,
-            bytes,
-        })
+        board_definition_chunk(self.ergohaven.board_definition, offset)
     }
+}
+
+pub(super) fn board_definition_chunk(blob: &[u8], offset: u32) -> Result<LayoutChunk, RynkError> {
+    let start = (offset as usize).min(blob.len());
+    let end = (start + RYNK_BLE_CHUNK_SIZE).min(blob.len());
+    let bytes = Vec::from_slice(&blob[start..end]).map_err(|_| RynkError::Internal)?;
+    Ok(LayoutChunk {
+        total_len: blob.len() as u32,
+        bytes,
+    })
 }
 
 impl Handle<GetLayoutOption> for RynkService<'_> {
@@ -312,11 +327,27 @@ mod tests {
 
     #[test]
     fn info_reports_the_revision_firmware_uid_and_definition_hash() {
-        let replies = exchange(b"abc", [req(Cmd::GetErgohavenInfo.raw(), 1)]);
+        let replies = exchange(
+            b"abc",
+            [
+                req(Cmd::GetErgohavenInfo.raw(), 1),
+                req(Cmd::GetFirmwareTarget.raw(), 2),
+            ],
+        );
         let info = postcard::from_bytes::<Result<ErgohavenInfo, RynkError>>(&replies[0])
             .unwrap()
             .unwrap();
         assert_eq!(info.revision, ERGOHAVEN_RYNK_REVISION);
+        assert_ne!(info.caps & caps::FIRMWARE_TARGET, 0);
+        assert_eq!(info.caps & caps::USB_MAINTENANCE, 0);
+        assert_eq!(
+            reply::<FirmwareTarget>(&replies[1]).unwrap(),
+            if cfg!(feature = "split") {
+                FirmwareTarget::Central
+            } else {
+                FirmwareTarget::Standalone
+            }
+        );
         assert_eq!(
             info.firmware,
             FirmwareVersion {

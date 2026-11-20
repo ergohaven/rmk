@@ -142,6 +142,13 @@ events = [
 # --- Split + BLE-gated internal subscribers ---
 
 [[subscriber]]
+features = ["split", "ergohaven_rynk"]
+events = [
+    # host/rynk/maintenance.rs: always-on local physical unlock listener.
+    { name = "keyboard" },
+]
+
+[[subscriber]]
 features = ["split", "_ble"]
 events = [
     # split/driver.rs: each PeripheralManager syncs host advertising mode

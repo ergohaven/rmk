@@ -109,6 +109,7 @@ resolution = 2
 internal_pullup = true
 
 [[split.peripheral]]
+usb_maintenance_unlock_keys = [[1, 1], [1, 2]]
 rows = 4
 cols = 6
 row_offset = 4

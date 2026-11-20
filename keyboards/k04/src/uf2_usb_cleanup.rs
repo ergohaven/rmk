@@ -1,10 +1,10 @@
 //! Remove USB/POWER state left behind when the UF2 bootloader jumps directly
 //! into the split-peripheral application.
 //!
-//! The right half does not own a USB device driver. If the bootloader leaves
-//! USBD or POWER USB interrupts armed, removing VBUS can therefore dispatch an
-//! interrupt into the application's default handler. A hardware Reset clears
-//! the same state, which is why the failure disappears after a manual Reset.
+//! Legacy right-half builds do not own a USB driver; stale bootloader USB/POWER
+//! interrupts can dispatch into their default handler when VBUS disappears.
+//! Native Rynk builds now initialize a maintenance USB driver after this cleanup.
+//! Both paths first clear the bootloader's state, as a hardware Reset would.
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -50,7 +50,7 @@ unsafe fn clear_uf2_usb_state() {
     write_volatile(NVIC_ICER1 as *mut u32, USBD_IRQ_BIT_IN_BANK1);
 
     // Disconnect the USB pull-up and fully disable the peripheral. The right
-    // split half never enables USBD again; UF2 remains available after Reset.
+    // split half either stays USB-free (legacy) or initializes its own driver.
     write_volatile(USBD_USBPULLUP as *mut u32, 0);
     write_volatile(USBD_SHORTS as *mut u32, 0);
     write_volatile(USBD_ENABLE as *mut u32, 0);

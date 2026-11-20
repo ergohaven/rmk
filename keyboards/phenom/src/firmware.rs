@@ -62,6 +62,12 @@ macro_rules! phenom {
                 let local = crate::role::matrix_config(crate::IS_RIGHT, ROW, COL);
                 let remote = crate::role::matrix_config(!crate::IS_RIGHT, ROW, COL);
                 let mut encoder = encoder_0;
+                use ::rmk::types::protocol::rynk::ergohaven::FirmwareTarget;
+                let host_service = host_service.with_firmware_target(if crate::IS_RIGHT {
+                    FirmwareTarget::Peripheral(0)
+                } else {
+                    FirmwareTarget::Central
+                });
                 let mut usb_transport = ::rmk::usb::UsbTransport::new(driver, rmk_config.device_config)
                     .with_host_service(&host_service);
                 {

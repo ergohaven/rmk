@@ -7,6 +7,8 @@
 #[cfg(feature = "ergohaven_rynk")]
 mod ergohaven;
 mod handlers;
+#[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+pub(crate) mod maintenance;
 mod topics;
 
 use core::pin::pin;
@@ -42,6 +44,8 @@ pub struct RynkService<'a> {
     /// What the Ergohaven commands serve.
     #[cfg(feature = "ergohaven_rynk")]
     ergohaven: crate::config::ErgohavenConfig<'static>,
+    #[cfg(feature = "ergohaven_rynk")]
+    firmware_target: rmk_types::protocol::rynk::ergohaven::FirmwareTarget,
     /// Ergohaven keeps one gate for the whole service, as its Vial firmware
     /// did: an unlock lasts until `Lock` or a reboot, not one connection.
     #[cfg(feature = "ergohaven_rynk")]
@@ -60,6 +64,12 @@ impl<'a> RynkService<'a> {
             #[cfg(feature = "ergohaven_rynk")]
             ergohaven: config.ergohaven_config,
             #[cfg(feature = "ergohaven_rynk")]
+            firmware_target: if cfg!(feature = "split") {
+                rmk_types::protocol::rynk::ergohaven::FirmwareTarget::Central
+            } else {
+                rmk_types::protocol::rynk::ergohaven::FirmwareTarget::Standalone
+            },
+            #[cfg(feature = "ergohaven_rynk")]
             lock: HostLock::new(
                 config.lock_config.unlock_keys,
                 keymap,
@@ -67,6 +77,13 @@ impl<'a> RynkService<'a> {
                 RYNK_UNLOCK_WINDOW,
             ),
         }
+    }
+
+    /// Set the local firmware image target on a board that elects its USB role.
+    #[cfg(feature = "ergohaven_rynk")]
+    pub fn with_firmware_target(mut self, target: rmk_types::protocol::rynk::ergohaven::FirmwareTarget) -> Self {
+        self.firmware_target = target;
+        self
     }
 
     /// Whether `cmd` needs a storage write to persist its effect.

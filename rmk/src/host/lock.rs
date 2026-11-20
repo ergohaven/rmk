@@ -8,6 +8,24 @@ use rmk_types::protocol::rynk::LockStatus;
 
 use crate::keymap::KeyMap;
 
+/// Held physical keys, supplied by a keymap or a peripheral's local scanner.
+pub(crate) trait HeldKeys {
+    fn held(&self, row: u8, col: u8) -> bool;
+}
+
+impl HeldKeys for KeyMap<'_> {
+    fn held(&self, row: u8, col: u8) -> bool {
+        self.read_matrix_key(row, col)
+    }
+}
+
+#[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+impl HeldKeys for core::cell::RefCell<crate::matrix::MatrixState> {
+    fn held(&self, row: u8, col: u8) -> bool {
+        self.borrow().read(row, col)
+    }
+}
+
 /// Unlock gate. Interior mutability lets protocol handlers update it through a
 /// shared reference without holding a borrow across an `.await` point.
 pub(crate) struct HostLock<'a> {
@@ -20,11 +38,11 @@ pub(crate) struct HostLock<'a> {
     /// passes 100 ms; Rynk passes 500 ms to tolerate a BLE WebHID round trip.
     window: Duration,
     unlock_keys: &'a [(u8, u8)],
-    keymap: &'a KeyMap<'a>,
+    held_keys: &'a dyn HeldKeys,
 }
 
 impl<'a> HostLock<'a> {
-    pub fn new(unlock_keys: &'a [(u8, u8)], keymap: &'a KeyMap<'a>, insecure: bool, window: Duration) -> Self {
+    pub fn new(unlock_keys: &'a [(u8, u8)], held_keys: &'a dyn HeldKeys, insecure: bool, window: Duration) -> Self {
         Self {
             unlocked: Cell::new(insecure),
             unlocking: Cell::new(false),
@@ -32,7 +50,7 @@ impl<'a> HostLock<'a> {
             insecure,
             window,
             unlock_keys,
-            keymap,
+            held_keys,
         }
     }
 
@@ -80,7 +98,7 @@ impl<'a> HostLock<'a> {
     fn remaining_held(&self) -> u8 {
         let mut counter = self.unlock_keys.len() as u8;
         for (row, col) in self.unlock_keys {
-            if self.keymap.read_matrix_key(*row, *col) {
+            if self.held_keys.held(*row, *col) {
                 counter -= 1;
             }
         }

@@ -411,6 +411,21 @@ mod tests {
     };
 
     #[test]
+    fn reserves_peripheral_maintenance_key_subscriber_only_for_native_split() {
+        let config: KeyboardTomlConfig = toml::from_str("").unwrap();
+        for (features, expected) in [
+            (vec!["split", "vial"], 4),
+            (vec!["ergohaven_rynk"], 3),
+            (vec!["split", "ergohaven_rynk"], 5),
+            (vec!["split", "ergohaven_rynk", "_ble"], 8),
+        ] {
+            let constants = config.build_constants(&features).unwrap();
+            let event = constants.events.iter().find(|e| e.name == "keyboard").unwrap();
+            assert_eq!(event.subs, expected, "features: {features:?}");
+        }
+    }
+
+    #[test]
     fn window_switching_reserves_one_layer_subscriber_with_explicit_phenom_counts() {
         for config in [
             toml::from_str("").unwrap(),
