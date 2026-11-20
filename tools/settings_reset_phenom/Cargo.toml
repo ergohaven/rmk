@@ -1,0 +1,19 @@
+[package]
+name = "settings-reset-phenom"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+members = ["."]
+
+[dependencies]
+cortex-m = "0.7.7"
+cortex-m-rt = "0.7.5"
+embassy-rp = { version = "=0.10.0", features = ["rp2040", "critical-section-impl"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = true
+codegen-units = 1
+panic = "abort"
