@@ -1,0 +1,10 @@
+/* Same RP2040 BOOT2/RAM as keyboards/phenom; cap code below settings. */
+MEMORY {
+    BOOT2 : ORIGIN = 0x10000000, LENGTH = 0x100
+    FLASH : ORIGIN = 0x10000100, LENGTH = 1024K - 0x100
+    RAM : ORIGIN = 0x20000000, LENGTH = 256K
+}
+EXTERN(BOOT2_FIRMWARE)
+SECTIONS {
+    .boot2 ORIGIN(BOOT2) : { KEEP(*(.boot2)); } > BOOT2
+} INSERT BEFORE .text;
