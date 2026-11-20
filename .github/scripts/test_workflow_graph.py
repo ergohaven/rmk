@@ -29,10 +29,16 @@ class WorkflowGraphTests(unittest.TestCase):
                 jobs = load(name)['jobs']
                 self.assertIn('plan', jobs)
                 for owner in owners:
-                    self.assertIn('plan', jobs[owner]['needs'])
-                    self.assertIn("needs.plan.outputs.run == 'true'", jobs[owner]['if'])
+                    if name == 'build.yml' and owner in ('build', 'build-qube'):
+                        self.assertNotIn('needs', jobs[owner])
+                        self.assertIn("github.event_name == 'workflow_dispatch'", jobs[owner]['if'])
+                    else:
+                        self.assertIn('plan', jobs[owner]['needs'])
+                        self.assertIn("needs.plan.outputs.run == 'true'", jobs[owner]['if'])
                 self.assertEqual(set(jobs['complete']['needs']), {'plan', *owners})
-                self.assertEqual(jobs['complete']['if'], '${{ always() }}')
+                self.assertEqual(jobs['complete']['if'],
+                                 "${{ always() && github.event_name != 'workflow_dispatch' }}"
+                                 if name == 'build.yml' else '${{ always() }}')
 
     def test_original_job_payloads_are_preserved(self):
         # Pre-policy owner payloads from 89a6f853; build.yml since gained the Phenom
@@ -143,7 +149,8 @@ class WorkflowGraphTests(unittest.TestCase):
         workflow = load('ci.yml')
         triggers = workflow.get('on', workflow.get(True))
         self.assertEqual(triggers['pull_request']['branches'], ['main', 'upstream-merge'])
-        self.assertIn('workflow_dispatch', triggers)
+        self.assertNotIn('workflow_dispatch', triggers)
+        self.assertIn('workflow_call', triggers)
 
     def test_automatic_push_is_production_only(self):
         for name in ('build.yml', 'ci.yml'):
@@ -156,13 +163,16 @@ class WorkflowGraphTests(unittest.TestCase):
             workflow = load(name)
             jobs = workflow['jobs']
             self.assertIn('github.event_name', workflow['concurrency']['group'])
+            self.assertNotIn('github.workflow', workflow['concurrency']['group'])
             self.assertEqual(jobs['plan']['permissions'],
                              {'contents': 'read', 'actions': 'read', 'pull-requests': 'read'})
             self.assertEqual(jobs['plan']['steps'][0]['with']['fetch-depth'], 0)
-            self.assertEqual(set(jobs['plan']['outputs']), {'run', 'reason', 'source_run'})
+            self.assertEqual(set(jobs['plan']['outputs']), {'run'})
             policy = jobs['plan']['steps'][-1]
-            self.assertEqual(policy['env'], {'GH_TOKEN': '${{ secrets.GITHUB_TOKEN }}'})
-            self.assertEqual(policy['run'], f'python3 .github/scripts/ci_policy.py plan --profile {profile} --manual-builds')
+            self.assertEqual(set(policy['env']), {'FULL_VALIDATION'})
+            self.assertIn('inputs.full-validation == true', policy['env']['FULL_VALIDATION'])
+            self.assertIn("startsWith(github.ref, 'refs/tags/v')", policy['env']['FULL_VALIDATION'])
+            self.assertEqual(policy['run'], r'''printf 'run=%s\n' "$FULL_VALIDATION" >> "$GITHUB_OUTPUT"''')
             complete = jobs['complete']
             self.assertEqual(complete['permissions'], {'contents': 'read'})
             self.assertEqual(complete['steps'][1]['env'], {'CI_NEEDS': '${{ toJSON(needs) }}'})

@@ -65,8 +65,30 @@ jobs:
             printf '\nApprove the `crates-io` deployment to publish.\n'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  publish:
+  validate-release:
     needs: plan
+    if: needs.plan.outputs.release == 'true'
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      full-validation: true
+
+  validate-firmware:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/build.yml
+    with:
+      full-validation: true
+
+  publish:
+    needs: [plan, validate-release, validate-firmware]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     concurrency:

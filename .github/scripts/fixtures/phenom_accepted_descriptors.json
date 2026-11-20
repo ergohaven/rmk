@@ -1,0 +1,14 @@
+{
+  "source_commit": "41e39aefcf11fd954ef7a3ccbf3a7ac07cec835c",
+  "purpose": "Accepted Phenom module-editor bounds and Full/Mini/Micro thumb geometry; retain immutable geometry/profile fixtures",
+  "previous_descriptor_hashes": {
+    "keyboards/phenom/vial.json": "4b8dbbc00611bc54ac5feb094a1d55fb95883d39e7d730913ebd6417df9e3d13",
+    "keyboards/phenom/vial_micro.json": "251b238e337a3a94fd5bec048c6962463b99a004d4b02d69b9709ceb1e0e6da8",
+    "keyboards/phenom/vial_mini.json": "b6611b37088707b6c50a3fcc4429b20678854cab27dc00262ad57bcbd269b438"
+  },
+  "descriptor_hashes": {
+    "keyboards/phenom/vial.json": "c38cc2feea0124022d5695be2820ee01ce4b6f225c2c4e5d60e1ddd6b904bacb",
+    "keyboards/phenom/vial_micro.json": "9d590297065dc8a02ebe34d13ed47d4db6d4668788a8579be184fbfe73b6e08c",
+    "keyboards/phenom/vial_mini.json": "7a3ea3874a0c74e791e7f0e9cf08a7bb66e01e8b38c1ad2d0c41dcf5c482e943"
+  }
+}

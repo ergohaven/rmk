@@ -1,62 +1,54 @@
-# RMK workflow coverage gates
+# RMK test builds and release qualification
 
-`build.yml` delegates firmware selection to `ci_policy.py plan --profile firmware`;
-`ci.yml` delegates the complete general test profile to `--profile tests`.
-The shared policy helper and its tests are separately owned: these workflow
-changes require both to be installed together before publication.
+## Ordinary test firmware
 
-The policy contract is conservative: documentation-only changes do not build
-firmware or run the expensive test graph; test-only changes still run the entire
-general test profile but do not build production firmware. Runtime, configuration,
-build-policy and unknown changes retain the full firmware profile. Direct pushes
-without validated evidence remain full. Push reuse requires successful original
-same-workflow PR proof for the identical Git tree, not just equal commit messages,
-ancestry or a previous reused result. Dispatch/release behavior remains full;
-release and user-build workflow owners are unchanged. Automatic firmware pushes
-are intentionally restricted to `main`; feature-branch updates are checked by
-`pull_request`, avoiding a second push matrix. No tag triggers are added.
+Run **Build Ergohaven RMK Firmware** (`build.yml`) manually on the intended
+branch. Only the existing standalone and Qube matrices run: compile the
+matching physical halves (and Qube dongle), convert to UF2, upload the
+per-profile artifacts. The production inventory remains ten standalone and
+seven Qube profiles, all RMK/Rynk. No host/native tests, migration executables,
+storage-reset utilities, simulator, example matrix or policy API lookup runs
+in an ordinary manual firmware build.
 
-All original jobs, runners, matrices, features and test commands remain intact.
-Only policy dependencies/conditions are added. In particular `.github/ci/test.sh`
-continues to own its complete native, feature and macro tests; there is no second
-local feature matrix. Concurrency is scoped by workflow, event and PR/ref so a
-push does not cancel a PR's only validation wave.
+The manual matrices do not depend on the contract-test planner. A failed
+lightweight configuration check therefore cannot silently turn an explicit
+artifact request into a complete qualification campaign. Compilation failures
+still fail the affected matrix job; fail-fast remains disabled.
 
-Each workflow has an `always()` completion job depending on every original owner.
-`workflow_complete.py` rejects failed/cancelled planners, missing decisions,
-missing dependencies, and any missing/skipped full-profile owner. Its only full
-profile exclusions mirror the original actual graph conditions:
+## Automatic changes and releases
 
-- `bloat-report` is skipped outside `pull_request`.
-- `build-esp` is skipped only when successful discovery emits an empty array or
-  an array whose first item is null, matching `fromJson(esp)[0] != null`.
-- All stable matrix children must succeed through their aggregate job result.
+Main pushes and PRs execute the lightweight workflow/policy contracts and
+completion gates only. `ci.yml` no longer has a manual full-test dispatch.
+Full test and firmware qualification runs on `v*` tags, or when the existing
+Publish gate calls both workflows with `full-validation: true`. Reusable calls
+inherit their caller's event: this explicit boolean, not an assumed
+`workflow_call` event name, selects the full graph.
 
-The summary distinguishes full coverage from policy skip/reuse. Only a verified
-full graph can execute `record` and upload
-`ci-proof-PROFILE-RUN_ID-RUN_ATTEMPT`; docs/reuse results cannot propagate new proof.
-Original job/check names and event-specific bloat reporting are preserved. Branch
-protection is not changed here; the integrator must reconcile required contexts
-before landing.
+Release qualification retains all native/feature/macro tests, format and
+lockfile checks, host/Wasm, QEMU, discovered stable/ESP examples, firmware
+profiles, migration preflight and storage utilities. Existing owner payload
+preservation digests remain unchanged. The Publish job waits for both full
+profiles before the existing approval/OIDC/secret-protected publishing steps.
+No signing, identity, approval or secret boundary is relaxed. The separate
+user-config build and upstream release-PR automation are unchanged.
 
-## Focused verification
+The two reusable owners have distinct concurrency prefixes, so calls from one
+Publish workflow cannot cancel one another. Completion/proof jobs remain
+fail-closed; an ordinary artifact-only dispatch skips the full firmware proof
+rather than advertising partial coverage as release qualification.
 
-Install `PyYAML==6.0.3`, then run:
+## Lightweight verification
+
+With `PyYAML==6.0.3` installed:
 
 ```sh
-python3 -m unittest discover -s .github/scripts -p test_ci_policy.py
-python3 -m unittest discover -s .github/scripts -p 'test_workflow_*.py'
-actionlint -shellcheck= -pyflakes= .github/workflows/build.yml .github/workflows/ci.yml
+python3 -m unittest discover -s .github/scripts -p 'test_*.py'
 git diff --check
 ```
 
-Planner jobs execute both Python suites before making a selection. Workflow tests
-freeze the pre-policy original owner payloads from `89a6f853`, including all build
-and test steps, matrices and runners; deliberate future changes must review those
-baselines. Completion tests cover each required owner failing/cancelling/skipping,
-PR/push/manual graphs, ESP present/empty/null/invalid output, planner failure,
-policy skip without proof, and the actual CLI output/summary path.
-
-These are local graph/selection-boundary checks, not hosted Actions execution,
-firmware compilation or hardware verification. Same-tree evidence lookup and
-path classification must additionally pass the shared helper's own tests.
+These checks validate workflow routing, preserved payloads, actual shell
+selection/completion boundaries and production descriptor contracts without
+compiling firmware. They do not establish hosted build success or hardware
+acceptance. The immutable historical geometry/profile fixtures are retained;
+a separate source-pinned successor covers the already accepted Phenom module
+editor bounds and thumb geometry.

@@ -3,16 +3,27 @@ name: Build Ergohaven RMK Firmware
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      full-validation:
+        description: Run the complete profile for release callers
+        type: boolean
+        default: true
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: rmk-firmware-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   plan:
-    name: Plan firmware coverage
+    name: Workflow contracts and release selection
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,8 +31,6 @@ jobs:
       pull-requests: read
     outputs:
       run: ${{ steps.policy.outputs.run }}
-      reason: ${{ steps.policy.outputs.reason }}
-      source_run: ${{ steps.policy.outputs.source_run }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,9 +39,10 @@ jobs:
       - run: python3 -m pip install 'PyYAML==6.0.3'
       - run: python3 -m unittest discover -s .github/scripts -p 'test_workflow_*.py'
       - id: policy
+        name: Select full release validation only
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/ci_policy.py plan --profile firmware --manual-builds
+          FULL_VALIDATION: ${{ inputs.full-validation == true || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) }}
+        run: printf 'run=%s\n' "$FULL_VALIDATION" >> "$GITHUB_OUTPUT"
 
   validate-profile:
     needs: [plan]
@@ -72,8 +82,7 @@ jobs:
         run: python3 scripts/test_k04_usb_power_indicator.py
 
   build:
-    needs: [plan]
-    if: needs.plan.outputs.run == 'true'
+    if: github.event_name == 'workflow_dispatch' || inputs.full-validation == true || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     name: Build ${{ matrix.output_name }} firmware
     runs-on: ubuntu-latest
     strategy:
@@ -229,8 +238,7 @@ jobs:
           retention-days: 30
 
   build-qube:
-    needs: [plan]
-    if: needs.plan.outputs.run == 'true'
+    if: github.event_name == 'workflow_dispatch' || inputs.full-validation == true || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     name: Build ${{ matrix.output_name }} firmware
     runs-on: ubuntu-latest
     strategy:
@@ -493,7 +501,7 @@ jobs:
 
   complete:
     name: Complete firmware coverage
-    if: ${{ always() }}
+    if: ${{ always() && github.event_name != 'workflow_dispatch' }}
     needs: [plan, validate-profile, build, build-qube, build-settings-reset]
     runs-on: ubuntu-latest
     permissions:

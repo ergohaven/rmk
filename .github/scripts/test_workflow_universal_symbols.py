@@ -14,6 +14,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_geometry_baseline.json').read_text())
 PROFILE_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_profile_baseline.json').read_text())
+PHENOM_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/phenom_accepted_descriptors.json').read_text())
 GEOMETRY = ['Universal Symbols geometry', 'ANSI', 'ISO']
 ISO_FEATURES = {'universal_symbols_iso', 'universal_symbols_iso_bit0', 'universal_symbols_iso_bit1'}
 # Keep the immutable 22-profile fixture for manual Vial and historical proofs.
@@ -130,8 +131,8 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         expected_features['phenom'].insert(0, 'ergohaven_window_switching')
         self.assertEqual(PROFILE_BASELINE['additional_rmk_features'], expected_features)
 
-    def test_phenom_production_profiles_advertise_auto_after_manual_module_values(self):
-        expected = ['None', 'Encoder', 'Trackball', 'Touchpad', 'Auto']
+    def test_phenom_production_profiles_expose_only_module_editor_categories(self):
+        expected = ['None', 'Encoder', 'Trackball', 'Touchpad']
         profiles = []
         for entries in rows().values():
             for row in entries:
@@ -143,6 +144,9 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                                for group in descriptor(row)['settings'] for field in group['fields']
                                if field.get('qsid') in (149, 150)]
                     self.assertEqual(choices, [(149, expected), (150, expected)])
+                    fields = [field for group in descriptor(row)['settings'] for field in group['fields']
+                              if field.get('qsid') in (149, 150)]
+                    self.assertTrue(all(field['min'] == 1 for field in fields))
         self.assertCountEqual(profiles, ['phenom', 'phenom_mini', 'phenom_micro'])
 
     def test_descriptors_only_prepend_selector_and_reindex_conditions(self):
@@ -153,7 +157,8 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                     original_bytes = (ROOT / path).read_bytes()
                     # Reviewed product metadata evolves; the immutable geometry
                     # reference remains available and all current bytes stay pinned.
-                    digest = PROFILE_BASELINE['descriptor_hashes'].get(path, BASELINE['descriptors'][path])
+                    digest = PHENOM_BASELINE['descriptor_hashes'].get(
+                        path, PROFILE_BASELINE['descriptor_hashes'].get(path, BASELINE['descriptors'][path]))
                     self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), digest)
                     original = json.loads(original_bytes)
                     current = descriptor(row)
@@ -229,6 +234,17 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         self.assertEqual(set(runtime['runtime_hashes']), set(BASELINE['runtime_hashes']))
         for path, digest in runtime['runtime_hashes'].items():
             self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), digest, path)
+
+    def test_accepted_phenom_successor_preserves_historical_descriptor_guards(self):
+        expected = {f'keyboards/phenom/{name}' for name in
+                    ('vial.json', 'vial_mini.json', 'vial_micro.json')}
+        self.assertEqual(PHENOM_BASELINE['source_commit'], '41e39aefcf11fd954ef7a3ccbf3a7ac07cec835c')
+        self.assertEqual(set(PHENOM_BASELINE['descriptor_hashes']), expected)
+        self.assertEqual(PHENOM_BASELINE['previous_descriptor_hashes'],
+                         {path: PROFILE_BASELINE['descriptor_hashes'][path] for path in expected})
+        for path, digest in PHENOM_BASELINE['descriptor_hashes'].items():
+            accepted = subprocess.check_output(['git', 'show', PHENOM_BASELINE['source_commit'] + ':' + path], cwd=ROOT)
+            self.assertEqual(hashlib.sha256(accepted).hexdigest(), digest, path)
 
     def test_protocol_guards_remain_but_do_not_reject_rynk_geometry(self):
         for model in ('k03', 'op36', 'imperial44', 'velvet', 'k04'):
