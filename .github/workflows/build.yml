@@ -126,30 +126,8 @@ jobs:
             build_features: "--features universal_mac_iso"
             central_output_name: velvet_standalone_right_main.uf2
             peripheral_output_name: velvet_standalone_left_peripheral.uf2
-          - keyboard: phenom
-            output_name: phenom
-            keyboard_toml: keyboard.toml
-            vial_json: vial_universal.json
-            build_features: "--features universal_mac_iso"
-            target: thumbv6m-none-eabi
-            uf2_base: "0x10000000"
-            uf2_family: "0xE48BFF56"
-          - keyboard: phenom
-            output_name: phenom_mini
-            keyboard_toml: keyboard_mini.toml
-            vial_json: vial_mini_universal.json
-            build_features: "--features universal_mac_iso"
-            target: thumbv6m-none-eabi
-            uf2_base: "0x10000000"
-            uf2_family: "0xE48BFF56"
-          - keyboard: phenom
-            output_name: phenom_micro
-            keyboard_toml: keyboard_micro.toml
-            vial_json: vial_micro_universal.json
-            build_features: "--features universal_mac_iso"
-            target: thumbv6m-none-eabi
-            uf2_base: "0x10000000"
-            uf2_family: "0xE48BFF56"
+          # Phenom/Phenom Mini/Phenom Micro ship QMK/Vial for now.
+          # Keep their RMK sources available for manual development builds.
 
 
     steps:

@@ -1,0 +1,36 @@
+{
+  "source_commit": "b73b77dd13eabde5c3aa202a8d386b8404f4dab0",
+  "purpose": "Paused official Phenom profiles retained for manual configuration/descriptor coverage and exact workflow preservation; not a production matrix",
+  "rows": [
+    {
+      "keyboard": "phenom",
+      "output_name": "phenom",
+      "keyboard_toml": "keyboard.toml",
+      "vial_json": "vial_universal.json",
+      "build_features": "--features universal_mac_iso",
+      "target": "thumbv6m-none-eabi",
+      "uf2_base": "0x10000000",
+      "uf2_family": "0xE48BFF56"
+    },
+    {
+      "keyboard": "phenom",
+      "output_name": "phenom_mini",
+      "keyboard_toml": "keyboard_mini.toml",
+      "vial_json": "vial_mini_universal.json",
+      "build_features": "--features universal_mac_iso",
+      "target": "thumbv6m-none-eabi",
+      "uf2_base": "0x10000000",
+      "uf2_family": "0xE48BFF56"
+    },
+    {
+      "keyboard": "phenom",
+      "output_name": "phenom_micro",
+      "keyboard_toml": "keyboard_micro.toml",
+      "vial_json": "vial_micro_universal.json",
+      "build_features": "--features universal_mac_iso",
+      "target": "thumbv6m-none-eabi",
+      "uf2_base": "0x10000000",
+      "uf2_family": "0xE48BFF56"
+    }
+  ]
+}

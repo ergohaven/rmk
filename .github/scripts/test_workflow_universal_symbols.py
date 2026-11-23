@@ -15,6 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_geometry_baseline.json').read_text())
 PROFILE_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_profile_baseline.json').read_text())
 PHENOM_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/phenom_accepted_descriptors.json').read_text())
+PAUSED_PHENOM = json.loads((ROOT / '.github/scripts/fixtures/paused_phenom_profiles.json').read_text())
 GEOMETRY = ['Universal Symbols geometry', 'ANSI', 'ISO']
 ISO_FEATURES = {'universal_symbols_iso', 'universal_symbols_iso_bit0', 'universal_symbols_iso_bit1'}
 # Keep the immutable 22-profile fixture for manual Vial and historical proofs.
@@ -25,6 +26,13 @@ OFFICIAL_BASELINE_ROWS = {job: [row for row in entries if not row['output_name']
 def rows():
     jobs = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']
     return {job: jobs[job]['strategy']['matrix']['include'] for job in BASELINE['rows']}
+
+
+def geometry_rows():
+    """Retain descriptor/feature coverage for the paused manual Phenom profiles."""
+    current = rows()
+    current['build'].extend(copy.deepcopy(PAUSED_PHENOM['rows']))
+    return current
 
 
 def width(label):
@@ -78,8 +86,9 @@ def visible(key, values):
 class WorkflowUniversalSymbolsTests(unittest.TestCase):
     def test_complete_inventory_and_unchanged_non_geometry_matrix(self):
         current = rows()
-        self.assertEqual(sum(map(len, current.values())), 17)
+        self.assertEqual(sum(map(len, current.values())), 14)
         for job, old_rows in OFFICIAL_BASELINE_ROWS.items():
+            old_rows = [row for row in old_rows if row['keyboard'] != 'phenom']
             self.assertEqual([row['output_name'] for row in current[job]],
                              [row['output_name'] for row in old_rows])
             for old, new in zip(old_rows, current[job]):
@@ -94,7 +103,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
 
     def test_every_role_resolves_exact_mask_without_protocol_or_hardware_changes(self):
         root = tomllib.loads((ROOT / 'rmk/Cargo.toml').read_text())['features']
-        for job, entries in rows().items():
+        for job, entries in geometry_rows().items():
             for old, row in zip(OFFICIAL_BASELINE_ROWS[job], entries):
                 manifest = tomllib.loads((ROOT / 'keyboards' / row['keyboard'] / 'Cargo.toml').read_text())
                 previous = BASELINE['manifests'][row['keyboard']]
@@ -131,10 +140,10 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         expected_features['phenom'].insert(0, 'ergohaven_window_switching')
         self.assertEqual(PROFILE_BASELINE['additional_rmk_features'], expected_features)
 
-    def test_phenom_production_profiles_expose_only_module_editor_categories(self):
+    def test_paused_manual_phenom_profiles_retain_module_editor_categories(self):
         expected = ['None', 'Encoder', 'Trackball', 'Touchpad']
         profiles = []
-        for entries in rows().values():
+        for entries in geometry_rows().values():
             for row in entries:
                 if row['keyboard'] != 'phenom':
                     continue
@@ -150,7 +159,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         self.assertCountEqual(profiles, ['phenom', 'phenom_mini', 'phenom_micro'])
 
     def test_descriptors_only_prepend_selector_and_reindex_conditions(self):
-        for job, entries in rows().items():
+        for job, entries in geometry_rows().items():
             for old, row in zip(OFFICIAL_BASELINE_ROWS[job], entries):
                 with self.subTest(profile=row['output_name']):
                     path = str(pathlib.Path('keyboards') / old['keyboard'] / old['vial_json'])
@@ -190,7 +199,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                     self.assertEqual(restored, original)
 
     def test_all_old_packed_options_and_visibility_are_identical_for_both_geometries(self):
-        for job, entries in rows().items():
+        for job, entries in geometry_rows().items():
             for old, row in zip(OFFICIAL_BASELINE_ROWS[job], entries):
                 original, current = descriptor(old), descriptor(row)
                 labels = original['layouts'].get('labels', [])
@@ -214,7 +223,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                                              [visible(key, (geometry, *values)) for key in new_keys])
 
     def test_device_setting_option_references_keep_the_same_packed_bit(self):
-        for job, entries in rows().items():
+        for job, entries in geometry_rows().items():
             for old, row in zip(OFFICIAL_BASELINE_ROWS[job], entries):
                 original, current = descriptor(old), descriptor(row)
                 old_labels = original['layouts'].get('labels', [])
@@ -294,7 +303,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
             self.assertEqual(closure(manifest, shlex.join(arguments), root),
                              closure(manifest, prefix + row.get(field, ''), root), row['output_name'])
             seen.add((row['output_name'], role))
-        self.assertEqual(len(seen), 24)  # Ten standalone + two commands per seven Qube profiles.
+        self.assertEqual(len(seen), 21)  # Seven standalone + two commands per seven Qube profiles.
 
 
 if __name__ == '__main__':

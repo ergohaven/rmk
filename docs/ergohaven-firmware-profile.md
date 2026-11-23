@@ -16,10 +16,12 @@ profiles share this software contract:
 - firmware version 0.3.0 and manufacturer `Ergohaven`
 
 Phenom Series is wired and has no batteries, so the Bluetooth and battery
-parts of the contract do not apply to it.
+parts of the retained manual RMK profile do not apply to it. Official Phenom,
+Phenom Mini and Phenom Micro firmware is QMK/Vial for now; RMK production
+builds/releases for that family are paused without removing board sources.
 
-All 17 official profiles speak Rynk with Ergohaven's commands (rmk feature
-`ergohaven_rynk`, `[host] rynk_enabled = true`): ten standalone profiles and
+All 14 official profiles speak Rynk with Ergohaven's commands (rmk feature
+`ergohaven_rynk`, `[host] rynk_enabled = true`): seven standalone profiles and
 seven Qube profiles. Separate RMK/Vial firmware variants are no longer built
 or published by the official matrix. Vial implementation, aliases, configs and
 core protocol tests remain available for manual builds; QMK/Vial is unaffected.

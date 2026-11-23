@@ -60,6 +60,12 @@ class WorkflowGraphTests(unittest.TestCase):
             payload = {job: {k: v for k, v in jobs[job].items() if k not in ('needs', 'if')}
                        for job in owners}
             if name == 'build.yml':
+                paused = json.loads((ROOT / '.github/scripts/fixtures/paused_phenom_profiles.json').read_text())
+                self.assertEqual({row['output_name'] for row in paused['rows']},
+                                 {'phenom', 'phenom_mini', 'phenom_micro'})
+                entries = payload['build']['strategy']['matrix']['include']
+                self.assertFalse(any(row['keyboard'] == 'phenom' for row in entries))
+                entries.extend(paused['rows'])
                 # Reverse ONLY geometry wiring and official Vial retirement; keep the old
                 # reviewed digest. Descriptor semantics and feature closures are
                 # independently checked by test_workflow_universal_symbols.py.

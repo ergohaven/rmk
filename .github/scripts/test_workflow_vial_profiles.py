@@ -55,11 +55,11 @@ class VialProfiles(unittest.TestCase):
                 widths = [1 if isinstance(label, str) else (len(label) - 2).bit_length() for label in labels[1:]]
                 self.assertEqual(1 << sum(widths), masks[row['keyboard']])
 
-    def test_official_matrix_is_rynk_only_and_keeps_every_existing_rynk_profile(self):
+    def test_official_matrix_is_rynk_only_with_phenom_temporarily_paused(self):
         jobs = yaml.safe_load((ROOT / '.github/workflows/build.yml').read_text())['jobs']
         expected = {
             'build': {'k03', 'k04_series_k04', 'k04_series_mini', 'k04_series_micro',
-                      'imperial44', 'op36', 'velvet', 'phenom', 'phenom_mini', 'phenom_micro'},
+                      'imperial44', 'op36', 'velvet'},
             'build-qube': {'op36_qube', 'k03_qube', 'velvet_qube', 'imperial44_qube',
                            'k04_qube_k04', 'k04_qube_mini', 'k04_qube_micro'},
         }

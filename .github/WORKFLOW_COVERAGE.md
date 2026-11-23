@@ -5,10 +5,14 @@
 Run **Build Ergohaven RMK Firmware** (`build.yml`) manually on the intended
 branch. Only the existing standalone and Qube matrices run: compile the
 matching physical halves (and Qube dongle), convert to UF2, upload the
-per-profile artifacts. The production inventory remains ten standalone and
+per-profile artifacts. The production inventory is seven standalone and
 seven Qube profiles, all RMK/Rynk. No host/native tests, migration executables,
 storage-reset utilities, simulator, example matrix or policy API lookup runs
 in an ordinary manual firmware build.
+
+Phenom, Phenom Mini and Phenom Micro temporarily ship QMK/Vial instead. Their
+RMK rows are excluded from both ordinary and release firmware builds. Sources,
+manual build configurations and descriptor/feature coverage are retained.
 
 The manual matrices do not depend on the contract-test planner. A failed
 lightweight configuration check therefore cannot silently turn an explicit

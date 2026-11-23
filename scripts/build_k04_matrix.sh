@@ -159,9 +159,7 @@ build_split op36
 build_split k03
 build_split imperial44
 build_split velvet
-build_phenom_profile phenom keyboard.toml vial_universal.json
-build_phenom_profile mini keyboard_mini.toml vial_mini_universal.json
-build_phenom_profile micro keyboard_micro.toml vial_micro_universal.json
+# Phenom RMK production builds are paused; retain the board sources and helper.
 build_classic_qube_profile op36 keyboard.toml keyboards/classic_qube/vial_universal.json
 build_classic_qube_profile k03 keyboard_k03.toml keyboards/classic_qube/vial_k03_universal.json
 build_classic_qube_profile velvet keyboard_velvet.toml keyboards/classic_qube/vial_velvet_universal.json

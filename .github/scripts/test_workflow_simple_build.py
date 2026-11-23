@@ -19,6 +19,24 @@ def workflow(name):
 
 
 class SimpleBuildTests(unittest.TestCase):
+    def test_phenom_pause_removes_only_the_three_official_rows(self):
+        fixture = json.loads((ROOT / '.github/scripts/fixtures/paused_phenom_profiles.json').read_text())
+        self.assertEqual(fixture['source_commit'], 'b73b77dd13eabde5c3aa202a8d386b8404f4dab0')
+        original = yaml.safe_load(subprocess.check_output(
+            ['git', 'show', fixture['source_commit'] + ':.github/workflows/build.yml'],
+            cwd=ROOT, text=True))
+        old_rows = original['jobs']['build']['strategy']['matrix']['include']
+        self.assertEqual(fixture['rows'], [row for row in old_rows if row['keyboard'] == 'phenom'])
+        current = workflow('build.yml')
+        self.assertEqual(current['jobs']['build']['strategy']['matrix']['include'],
+                         [row for row in old_rows if row['keyboard'] != 'phenom'])
+        restored = copy.deepcopy(current)
+        restored['jobs']['build']['strategy']['matrix']['include'].extend(fixture['rows'])
+        self.assertEqual(restored, original)
+        for row in fixture['rows']:
+            self.assertTrue((ROOT / 'keyboards' / row['keyboard'] / row['keyboard_toml']).is_file())
+            self.assertTrue((ROOT / 'keyboards' / row['keyboard'] / row['vial_json']).is_file())
+
     def test_manual_build_has_only_the_two_existing_keyboard_matrices(self):
         jobs = workflow('build.yml')['jobs']
         self.assertEqual(jobs['plan']['if'], "github.event_name != 'workflow_dispatch'")

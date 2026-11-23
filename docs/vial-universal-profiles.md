@@ -1,9 +1,13 @@
 # Universal Symbols ANSI/ISO profiles
 
-All 17 official RMK profiles use Rynk and expose the existing ANSI/ISO selector
-in Entropy's Universal Symbols live features: ten standalone profiles and seven
+All 14 official RMK profiles use Rynk and expose the existing ANSI/ISO selector
+in Entropy's Universal Symbols live features: seven standalone profiles and seven
 Qube profiles. The geometry selector does not replace hardware mappings or
 unrelated production features.
+
+Phenom, Phenom Mini and Phenom Micro use official QMK/Vial firmware for now.
+Their RMK production builds/releases are paused; their manual configurations
+and existing geometry/descriptor checks remain available.
 
 Separate Vial firmware artifacts are no longer built or published by the official
 firmware matrix, including the former K:03, K:04 Micro, Imperial44, OP36 and
@@ -41,7 +45,7 @@ alias, and ISO without the matching descriptor on the selectable-protocol boards
 `protocol_vial` selects Vial plus the current `host_lock` feature. The
 `vial_standalone` alias preserves K:04's nonprotocol `standalone` options when
 Cargo defaults are disabled. Qube aliases retain Rynk explicitly. CI retains
-every Rynk row and no separate Vial firmware rows. Core Vial protocol tests remain
+the active Rynk rows and no separate Vial firmware rows. Core Vial protocol tests remain
 enabled; manual availability does not imply an official Vial firmware release.
 Board build scripts forward their active feature aliases to the configuration
 macro through `RMK_BOARD_FEATURES`; this avoids mistaking manifest dependency
