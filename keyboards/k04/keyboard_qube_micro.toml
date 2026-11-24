@@ -134,7 +134,7 @@ Z           X           C            V           B     _     _           N      
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 keys = """
 Kc1            Kc2             Kc3               Kc4           Kc5          Kc6      Kc7          Kc8             Kc9         Kc0
 MT(Home,LGui)  MT(Insert,LAlt)  MT(Delete,LShift) MT(End,LCtrl) Enter        Escape   MT(Left,RCtrl) MT(Down,RShift) MT(Up,LAlt) MT(Right,RGui)
@@ -164,7 +164,7 @@ _           F9             F10             F11             F12  _       _       
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Pointing"
+name = "Mouse"
 keys = """
 _      _          _          _          _      _      _          _          _          _
 User29  MouseBtn3  MouseBtn2  MouseBtn1  User28  User28  MouseBtn1  MouseBtn2  MouseBtn3  User29

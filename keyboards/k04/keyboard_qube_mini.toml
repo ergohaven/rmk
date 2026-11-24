@@ -134,7 +134,7 @@ Grave   LGui  LCtrl MO(1) Space Enter MO(2) LAlt  LeftBracket RightBracket
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 keys = """
 _      Kc1      Kc2     Kc3     Kc4     Kc5          Kc6  Kc7  Kc8  Kc9  Kc0    _
 _      Home     Insert  Delete  End     Enter        _    Left Down Up   Right  _
@@ -164,7 +164,7 @@ _           _               _   _    _    _    _      _      _      _
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Pointing"
+name = "Mouse"
 keys = """
 _  _      _          _          _          _      _      _          _          _          _      _
 _  User29  MouseBtn3  MouseBtn2  MouseBtn1  User28  User28  MouseBtn1  MouseBtn2  MouseBtn3  User29  _

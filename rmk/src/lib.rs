@@ -229,5 +229,10 @@ pub async fn initialize_keymap_and_storage_with_vial<
         KeyMap::new(data, behavior_config, positional_config).await
     };
 
+    #[cfg(any(feature = "vial", feature = "ergohaven_rynk"))]
+    if let Some(callback) = device_settings.and_then(|settings| settings.on_keymap_loaded) {
+        callback(&keymap);
+    }
+
     (keymap, storage)
 }

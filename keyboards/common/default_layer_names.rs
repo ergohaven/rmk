@@ -4,47 +4,24 @@
 
 pub const LAYER_NAME_COUNT: usize = 16;
 
-pub const STANDARD_NO_MOUSE: [&str; LAYER_NAME_COUNT] = [
-    "Base",
-    "Navigation",
-    "Symbols",
-    "Adjust",
-    "4",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "10",
-    "11",
-    "12",
-    "13",
-    "14",
-    "15",
-];
+pub const STANDARD_NO_MOUSE: [&str; LAYER_NAME_COUNT] = {
+    let mut names = [""; LAYER_NAME_COUNT];
+    names[0] = "Base";
+    names[1] = "Num + Nav";
+    names[2] = "Symbols";
+    names[3] = "Adjust";
+    names
+};
 
-pub const STANDARD_WITH_MOUSE: [&str; LAYER_NAME_COUNT] = [
-    "Base",
-    "Navigation",
-    "Symbols",
-    "Adjust",
-    "Mouse",
-    "5",
-    "6",
-    "7",
-    "8",
-    "9",
-    "10",
-    "11",
-    "12",
-    "13",
-    "14",
-    "15",
-];
+pub const STANDARD_WITH_MOUSE: [&str; LAYER_NAME_COUNT] = {
+    let mut names = STANDARD_NO_MOUSE;
+    names[4] = "Mouse";
+    names
+};
 
 pub const PHENOM: [&str; LAYER_NAME_COUNT] = {
     let mut names = STANDARD_WITH_MOUSE;
-    names[1] = "Num + Nav";
+    names[3] = "";
     names
 };
 
@@ -73,6 +50,17 @@ pub fn is_legacy_placeholder(index: usize, bytes: &[u8]) -> bool {
         || (index == 0 && bytes.eq_ignore_ascii_case(b"Main"))
 }
 
+/// Recognize factory text only as part of a complete generated profile.
+/// Callers must check every layer before replacing any readable name.
+pub fn is_factory_name(index: usize, bytes: &[u8], default_name: &str) -> bool {
+    bytes.eq_ignore_ascii_case(default_name.as_bytes())
+        || is_legacy_placeholder(index, bytes)
+        || (index == 1 && default_name == "Num + Nav"
+            && (bytes.eq_ignore_ascii_case(b"Navigation") || bytes.eq_ignore_ascii_case(b"Nav")))
+        || (index == 4 && default_name == "Mouse" && bytes.eq_ignore_ascii_case(b"Pointing"))
+        || (index == 3 && default_name.is_empty() && bytes.eq_ignore_ascii_case(b"Adjust"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,8 +68,14 @@ mod tests {
     #[test]
     fn factory_names_fit_firmware_limit() {
         for profile in [STANDARD_NO_MOUSE, STANDARD_WITH_MOUSE, PHENOM] {
-            assert!(profile.iter().all(|name| !name.is_empty() && name.len() <= 12));
+            assert!(profile.iter().all(|name| name.len() <= 12));
         }
+        assert_eq!(&STANDARD_NO_MOUSE[..4], &["Base", "Num + Nav", "Symbols", "Adjust"]);
+        assert!(STANDARD_NO_MOUSE[4..].iter().all(|name| name.is_empty()));
+        assert_eq!(STANDARD_WITH_MOUSE[4], "Mouse");
+        assert!(STANDARD_WITH_MOUSE[5..].iter().all(|name| name.is_empty()));
+        assert!(PHENOM[3].is_empty());
+        assert_eq!(PHENOM[4], "Mouse");
     }
 
     #[test]

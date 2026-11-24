@@ -27,6 +27,16 @@ fn main() {
     println!("cargo:rustc-env=RMK_VIAL_DEVICE_SETTINGS_FN=crate::layer_names::vial_device_settings");
 
     let out = &PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    let layer_names_profile = match product_id {
+        0x0052 => "PHENOM",
+        0x0053 | 0x0054 => "STANDARD_WITH_MOUSE",
+        _ => unreachable!(),
+    };
+    fs::write(
+        out.join("layer_names_generated.rs"),
+        format!("const DEFAULT_LAYER_NAMES: [&str; 16] = default_layer_names::{layer_names_profile};\n"),
+    )
+    .unwrap();
     File::create(out.join("memory.x"))
         .unwrap()
         .write_all(include_bytes!("memory.x"))

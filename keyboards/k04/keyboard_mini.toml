@@ -61,7 +61,7 @@ Grave   LGui  LCtrl MO(1) Space Enter MO(2) LAlt  LeftBracket RightBracket
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 # Phenom Mini lower layer.
 keys = """
 _      Kc1      Kc2     Kc3     Kc4     Kc5          Kc6  Kc7  Kc8  Kc9  Kc0    _
@@ -94,7 +94,7 @@ _           _               _   _    _    _    _      _      _      _
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Pointing"
+name = "Mouse"
 # Phenom Mini pointing layer.
 keys = """
 _  _      _          _          _          _      _      _          _          _          _      _

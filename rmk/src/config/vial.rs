@@ -81,6 +81,8 @@ pub struct VialDeviceSettings<'a> {
     pub set_setting: fn(u16, &[u8]) -> bool,
     pub serialize: fn() -> VialDeviceSettingsData,
     pub deserialize: fn(&[u8]),
+    /// Finalize settings that depend on the restored keymap, not only their own record.
+    pub on_keymap_loaded: Option<fn(&crate::keymap::KeyMap<'_>)>,
 }
 
 /// Config for [vial](https://get.vial.today/).

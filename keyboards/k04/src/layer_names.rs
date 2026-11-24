@@ -262,6 +262,7 @@ pub const fn vial_device_settings() -> VialDeviceSettings<'static> {
         set_setting,
         serialize,
         deserialize,
+        on_keymap_loaded: Some(on_keymap_loaded),
     }
 }
 
@@ -278,7 +279,7 @@ pub fn copy_layer_name(layer: u8, out: &mut LayerNameString) -> bool {
     }
 
     let len = LAYER_NAME_LEN[index].load(Ordering::Acquire) as usize;
-    if len == 0 || len > LAYER_NAME_MAX {
+    if len > LAYER_NAME_MAX {
         return false;
     }
 
@@ -413,7 +414,7 @@ fn deserialize(bytes: &[u8]) {
             if migrate_placeholders {
                 migrate_legacy_placeholders();
             }
-            repair_layer_names();
+            repair_layer_names(None);
             LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
             publish_module_settings();
             return;
@@ -423,7 +424,7 @@ fn deserialize(bytes: &[u8]) {
     deserialize_module_settings(&[]);
     deserialize_fixed_layer_names(bytes);
     migrate_legacy_placeholders();
-    repair_layer_names();
+    repair_layer_names(None);
     LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
     publish_module_settings();
 }
@@ -502,10 +503,15 @@ fn layer_name_is_readable(bytes: &[u8]) -> bool {
     str::from_utf8(bytes).is_ok_and(|name| !name.chars().any(char::is_control))
 }
 
-fn repair_layer_names() {
+fn on_keymap_loaded(keymap: &rmk::keymap::KeyMap<'_>) {
+    repair_layer_names(Some(keymap));
+    LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+fn repair_layer_names(keymap: Option<&rmk::keymap::KeyMap<'_>>) {
     let mut bytes = [0u8; LAYER_NAME_MAX];
-    // Old hosts could save a complete unnamed/numeric profile in the current
-    // storage format too. Preserve intentional blanks/Main in a custom profile.
+    // Recognize the complete old factory profile in every supported format.
+    // Preserve readable custom names, including intentional blanks/Main.
     let mut generated_profile = true;
     for index in 0..LAYER_NAME_COUNT {
         let len = LAYER_NAME_LEN[index].load(Ordering::Acquire).min(LAYER_NAME_MAX as u8) as usize;
@@ -513,7 +519,11 @@ fn repair_layer_names() {
         for (offset, byte) in bytes.iter_mut().enumerate() {
             *byte = LAYER_NAME_BYTES[base + offset].load(Ordering::Relaxed);
         }
-        if !crate::default_layer_names::is_legacy_placeholder(index, &bytes[..len]) {
+        if !crate::default_layer_names::is_factory_name(
+            index,
+            &bytes[..len],
+            crate::DEFAULT_LAYER_NAMES[index],
+        ) {
             generated_profile = false;
             break;
         }
@@ -526,9 +536,10 @@ fn repair_layer_names() {
         }
         let name = &bytes[..len];
         let blank_or_main = name.is_empty() || (index == 0 && name.eq_ignore_ascii_case(b"Main"));
-        let generated = crate::default_layer_names::is_legacy_placeholder(index, name)
-            && (generated_profile || !blank_or_main);
-        if !layer_name_is_readable(name) || generated {
+        let generated = generated_profile
+            || (crate::default_layer_names::is_legacy_placeholder(index, name) && !blank_or_main);
+        let clear_unused = generated_profile && keymap.is_some_and(|map| !map.layer_has_assignments(index));
+        if !layer_name_is_readable(name) || (generated && (!default_name.is_empty() || clear_unused)) {
             store_raw_layer_name(index, default_name.as_bytes());
         }
     }
@@ -542,7 +553,7 @@ fn migrate_legacy_placeholders() {
         for (offset, byte) in bytes.iter_mut().enumerate() {
             *byte = LAYER_NAME_BYTES[base + offset].load(Ordering::Relaxed);
         }
-        if crate::default_layer_names::is_legacy_placeholder(index, &bytes[..len]) {
+        if !default_name.is_empty() && crate::default_layer_names::is_legacy_placeholder(index, &bytes[..len]) {
             store_raw_layer_name(index, default_name.as_bytes());
         }
     }

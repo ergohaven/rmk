@@ -34,7 +34,7 @@ source = (ROOT / 'keyboards/k04/src/layer_names.rs').read_text()
 source = source.replace('use rmk::macros::processor;\n', '')
 source = source.replace('use portable_atomic::{AtomicU8, Ordering};', 'use std::sync::atomic::{AtomicU8, Ordering};')
 source = re.sub(r'#\[processor\(subscribe = \[PeripheralSettingsRefreshEvent, ActionEvent\]\)\]', '', source)
-# Host shims only replace the event transport and fixed-capacity string dependency.
+# Host shims replace event transport, strings and the restored-keymap context.
 prefix = r'''
 #![allow(dead_code)]
 extern crate self as rmk;
@@ -51,6 +51,7 @@ mod config {
         pub set_setting: fn(u16, &[u8]) -> bool,
         pub serialize: fn() -> VialDeviceSettingsData,
         pub deserialize: fn(&[u8]),
+        pub on_keymap_loaded: Option<fn(&crate::keymap::KeyMap<'_>)>,
     }
     pub struct VialDeviceSettingsData { pub data: [u8; @MAX_LEN@], pub len: u8 }
     impl VialDeviceSettingsData { pub fn empty() -> Self { Self { data: [0;@MAX_LEN@], len: 0 } } }
@@ -73,17 +74,55 @@ impl FixedString {
     fn as_str(&self) -> &str { &self.0 }
     fn as_bytes(&self) -> &[u8] { self.0.as_bytes() }
 }
-mod default_layer_names {
-    pub const STANDARD_WITH_MOUSE: [&str;16] = ["Base";16];
-    pub fn is_legacy_placeholder(_: usize, _: &[u8]) -> bool { false }
+mod keymap {
+    pub struct KeyMap<'a> {
+        occupied: u16,
+        marker: core::marker::PhantomData<&'a ()>,
+    }
+    impl KeyMap<'_> {
+        pub fn new(occupied: u16) -> Self {
+            Self { occupied, marker: core::marker::PhantomData }
+        }
+        pub fn layer_has_assignments(&self, layer: usize) -> bool {
+            self.occupied & (1 << layer) != 0
+        }
+    }
 }
+#[path = "@DEFAULT_LAYER_NAMES_PATH@"]
+mod default_layer_names;
 const DEFAULT_LAYER_NAMES: [&str;16] = default_layer_names::STANDARD_WITH_MOUSE;
 '''
 prefix = prefix.replace('@MAX_LEN@', max_len.group(1)).replace('@BOARD_CONSTANTS@', board_constants)
+prefix = prefix.replace('@DEFAULT_LAYER_NAMES_PATH@', str(ROOT / 'keyboards/common/default_layer_names.rs'))
 helper = (ROOT / 'rmk/src/input_device/pointing_settings.rs').read_text().split('#[cfg(test)]')[0]
 helper = '\n'.join(line for line in helper.splitlines() if not line.startswith('//!'))
 prefix += '\nmod input_device { pub mod pointing_settings {\n' + helper + '\n} }\n'
 tests = r'''
+#[test]
+fn empty_names_wait_for_keymap_and_keep_populated_or_custom_layers() {
+    let api = layer_names::vial_device_settings();
+    (api.deserialize)(&[]);
+    for index in 5..16 {
+        assert!((api.set_setting)(200 + index, index.to_string().as_bytes()));
+    }
+    let old = (api.serialize)();
+    (api.deserialize)(&old.data[..old.len as usize]);
+    let read = |index| {
+        let mut bytes = [0u8; 16];
+        let len = (api.get_setting)(200 + index, &mut bytes).unwrap();
+        String::from_utf8(bytes[..len - 1].to_vec()).unwrap()
+    };
+    assert_eq!(read(5), "5", "must not clear names before restoring actions");
+    (api.on_keymap_loaded.unwrap())(&keymap::KeyMap::new(1 << 6));
+    assert_eq!(read(5), "");
+    assert_eq!(read(6), "6", "a populated user layer keeps its old name");
+    (api.deserialize)(&old.data[..old.len as usize]);
+    assert!((api.set_setting)(208, b"My layer"));
+    (api.on_keymap_loaded.unwrap())(&keymap::KeyMap::new(0));
+    assert_eq!(read(8), "My layer");
+    assert_eq!(read(5), "5", "custom profiles are not factory-wide renamed");
+}
+
 #[test]
 fn sticky_keys_change_live_settings_and_preserve_stored_values() {
     let api = layer_names::vial_device_settings();

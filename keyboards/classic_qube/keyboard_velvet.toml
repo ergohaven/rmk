@@ -139,7 +139,7 @@ LShift  Z     X     C     V     B     N     M     Comma  Dot  Quote  RShift
 """
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 keys = """
 _      Kc1      Kc2     Kc3     Kc4     Kc5          Kc6  Kc7  Kc8  Kc9  Kc0    _
 _      Home     Insert  Delete  End      Enter         _    Left Down Up   Right  _

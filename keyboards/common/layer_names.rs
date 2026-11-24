@@ -27,9 +27,32 @@ const SETTING_KEYS: [u16; LAYER_NAME_COUNT] = [
 const _: () = assert!(SERIALIZED_LEN <= 224);
 const _: () = assert!(SERIALIZED_LEN <= u8::MAX as usize);
 
-static LAYER_NAME_LEN: [AtomicU8; LAYER_NAME_COUNT] = [const { AtomicU8::new(0) }; LAYER_NAME_COUNT];
-static LAYER_NAME_BYTES: [AtomicU8; LAYER_NAME_COUNT * LAYER_NAME_MAX] =
-    [const { AtomicU8::new(0) }; LAYER_NAME_COUNT * LAYER_NAME_MAX];
+// A fresh store skips deserialize; publish the same defaults on the first GET.
+static LAYER_NAME_LEN: [AtomicU8; LAYER_NAME_COUNT] = {
+    let mut lengths = [const { AtomicU8::new(0) }; LAYER_NAME_COUNT];
+    let mut index = 0;
+    while index < LAYER_NAME_COUNT {
+        let len = crate::DEFAULT_LAYER_NAMES[index].len();
+        assert!(len <= LAYER_NAME_MAX);
+        lengths[index] = AtomicU8::new(len as u8);
+        index += 1;
+    }
+    lengths
+};
+static LAYER_NAME_BYTES: [AtomicU8; LAYER_NAME_COUNT * LAYER_NAME_MAX] = {
+    let mut bytes = [const { AtomicU8::new(0) }; LAYER_NAME_COUNT * LAYER_NAME_MAX];
+    let mut index = 0;
+    while index < LAYER_NAME_COUNT {
+        let name = crate::DEFAULT_LAYER_NAMES[index].as_bytes();
+        let mut offset = 0;
+        while offset < name.len() {
+            bytes[index * LAYER_NAME_MAX + offset] = AtomicU8::new(name[offset]);
+            offset += 1;
+        }
+        index += 1;
+    }
+    bytes
+};
 static LAYER_NAMES_VERSION: AtomicU8 = AtomicU8::new(0);
 
 pub const fn vial_device_settings() -> VialDeviceSettings<'static> {
@@ -39,6 +62,7 @@ pub const fn vial_device_settings() -> VialDeviceSettings<'static> {
         set_setting,
         serialize,
         deserialize,
+        on_keymap_loaded: Some(on_keymap_loaded),
     }
 }
 
@@ -55,7 +79,7 @@ pub fn copy_layer_name(layer: u8, out: &mut [u8; LAYER_NAME_MAX]) -> Option<usiz
     }
 
     let len = usize::from(LAYER_NAME_LEN[index].load(Ordering::Acquire));
-    if len == 0 || len > LAYER_NAME_MAX {
+    if len > LAYER_NAME_MAX {
         return None;
     }
 
@@ -129,7 +153,6 @@ pub(crate) fn deserialize(bytes: &[u8]) {
         return;
     }
 
-    let migrate_placeholders = bytes[1] == LEGACY_STORAGE_VERSION;
     let mut pos = STORAGE_HEADER_LEN;
     for index in 0..LAYER_NAME_COUNT {
         let len = usize::from(bytes[pos]).min(LAYER_NAME_MAX);
@@ -137,9 +160,7 @@ pub(crate) fn deserialize(bytes: &[u8]) {
         store_raw_layer_name(index, &bytes[pos..pos + len]);
         pos += LAYER_NAME_MAX;
     }
-    if migrate_placeholders {
-        migrate_legacy_placeholders();
-    }
+    migrate_factory_layer_names(None);
     LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -188,7 +209,12 @@ fn load_default_layer_names() {
     }
 }
 
-fn migrate_legacy_placeholders() {
+pub(crate) fn on_keymap_loaded(keymap: &rmk::keymap::KeyMap<'_>) {
+    migrate_factory_layer_names(Some(keymap));
+    LAYER_NAMES_VERSION.fetch_add(1, Ordering::Relaxed);
+}
+
+fn migrate_factory_layer_names(keymap: Option<&rmk::keymap::KeyMap<'_>>) {
     let mut bytes = [0u8; LAYER_NAME_MAX];
     for (index, default_name) in crate::DEFAULT_LAYER_NAMES.iter().enumerate() {
         let len = usize::from(LAYER_NAME_LEN[index].load(Ordering::Acquire)).min(LAYER_NAME_MAX);
@@ -196,9 +222,16 @@ fn migrate_legacy_placeholders() {
         for (offset, byte) in bytes.iter_mut().enumerate() {
             *byte = LAYER_NAME_BYTES[base + offset].load(Ordering::Relaxed);
         }
-        if crate::default_layer_names::is_legacy_placeholder(index, &bytes[..len]) {
-            store_raw_layer_name(index, default_name.as_bytes());
+        if !crate::default_layer_names::is_factory_name(index, &bytes[..len], default_name) {
+            return;
         }
+    }
+    for (index, default_name) in crate::DEFAULT_LAYER_NAMES.iter().enumerate() {
+        // Empty defaults are finalized only after restoring the user's actions.
+        if default_name.is_empty() && keymap.is_none_or(|map| map.layer_has_assignments(index)) {
+            continue;
+        }
+        store_raw_layer_name(index, default_name.as_bytes());
     }
 }
 

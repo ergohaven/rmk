@@ -268,6 +268,7 @@ mod tests {
         set_setting: board_set,
         serialize: VialDeviceSettingsData::empty,
         deserialize: |_| {},
+        on_keymap_loaded: None,
     };
 
     /// Serve `requests` on one session of a service configured with `definition`

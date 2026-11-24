@@ -126,7 +126,7 @@ LShift  Z     X     C     V     B     LeftBracket RightBracket N M Comma Dot Quo
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 keys = """
 _  Kc1   Kc2    Kc3     Kc4  Kc5          Kc6  Kc7  Kc8  Kc9  Kc0    _
 _  Home  Insert  Delete  End  Enter        _    Left Down Up   Right  _

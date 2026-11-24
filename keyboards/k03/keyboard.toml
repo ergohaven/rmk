@@ -53,7 +53,7 @@ LGui    LAlt  LCtrl MO(1) Space Enter MO(2) RCtrl LAlt RGui
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 keys = """
 F1             F2              F3    F4    F5     F6      F7  F8   F9   F10  F11  F12
 MediaPrevTrack MediaNextTrack  Home  Up    End    Insert  _   Kc7  Kc8  Kc9  _    CapsLock

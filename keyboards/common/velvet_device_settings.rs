@@ -35,6 +35,7 @@ pub const fn vial_device_settings() -> VialDeviceSettings<'static> {
         set_setting,
         serialize,
         deserialize,
+        on_keymap_loaded: Some(crate::layer_names::on_keymap_loaded),
     }
 }
 

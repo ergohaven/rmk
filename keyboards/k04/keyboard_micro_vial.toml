@@ -62,7 +62,7 @@ Z           X           C            V           B     _     _           N      
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 # Phenom Micro lower layer, trimmed to the K04 Micro physical layout.
 keys = """
 Kc1            Kc2             Kc3               Kc4           Kc5          Kc6      Kc7          Kc8             Kc9         Kc0
@@ -95,7 +95,7 @@ _           F9             F10             F11             F12  _       _       
 encoders = [["AudioVolUp","AudioVolDown"],["AudioVolUp","AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Pointing"
+name = "Mouse"
 # Phenom Micro pointing layer, trimmed to the K04 Micro physical layout.
 keys = """
 _      _          _          _          _      _      _          _          _          _

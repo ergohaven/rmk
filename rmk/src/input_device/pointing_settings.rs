@@ -88,6 +88,7 @@ mod tests {
             set_setting: set,
             serialize: || VialDeviceSettingsData::empty(),
             deserialize: |_| {},
+            on_keymap_loaded: None,
         }
     }
 

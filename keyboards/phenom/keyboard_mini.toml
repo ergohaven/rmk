@@ -45,7 +45,7 @@ LShift  Z     X     C     V     B       N      M      Comma  Dot   Slash      RS
 encoders = [["AudioVolUp", "AudioVolDown"], ["AudioVolUp", "AudioVolDown"]]
 
 [[keymap.layer]]
-name = "Lower"
+name = "Num + Nav"
 keys = """
 _       Kc1     Kc2     Kc3     Kc4     Kc5           Kc6  Kc7    Kc8       Kc9       Kc0    _
 _       Home    Insert  Delete  End     Enter         _    Left   Down      Up        Right  _
@@ -57,7 +57,7 @@ _       _       _       _       _       PrintScreen   _    _      _         _   
 encoders = [["_", "_"], ["_", "_"]]
 
 [[keymap.layer]]
-name = "Raise"
+name = "Symbols"
 # All shifted chars use SHIFTED() — RMK applies LShift automatically
 keys = """
 _  SHIFTED(Kc2)  SHIFTED(Comma)  Equal               SHIFTED(Dot)  Grave           SHIFTED(Kc6)  SHIFTED(Quote)        SHIFTED(Minus)  Quote                  _             _
@@ -80,7 +80,7 @@ _   _   _               _               _               _     _   _             
 encoders = [["MouseWheelUp", "MouseWheelDown"], ["MouseWheelUp", "MouseWheelDown"]]
 
 [[keymap.layer]]
-name = "Pointing"
+name = "Mouse"
 # User28 = Sniper, User29 = Scroll, User30 = Text (EH_SNP/EH_SCR/EH_TXT).
 keys = """
 _  _       _          _          _          _         _       _          _          _          _       _

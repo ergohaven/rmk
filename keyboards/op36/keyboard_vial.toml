@@ -49,7 +49,7 @@ Z           X           C            V           B     N     M           Comma  
 """
 
 [[keymap.layer]]
-name = "Nav"
+name = "Num + Nav"
 keys = """
 Kc1            Kc2             Kc3               Kc4           Kc5          Kc6      Kc7          Kc8             Kc9         Kc0
 MT(Home,LGui)  MT(Insert,LAlt)  MT(Delete,LShift) MT(End,LCtrl) Enter        Escape   MT(Left,RCtrl) MT(Down,RShift) MT(Up,LAlt) MT(Right,RGui)

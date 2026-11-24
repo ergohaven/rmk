@@ -562,6 +562,34 @@ impl<'a> KeyMap<'a> {
             .get_action_at(KeyboardEventSource::key_pos(col, row), layer)
     }
 
+    /// Whether this layer has its own actions, without resolving transparency.
+    /// Includes encoders and touch gestures so settings migrations retain user layers.
+    pub fn layer_has_assignments(&self, layer: usize) -> bool {
+        let inner = self.inner.borrow();
+        if layer >= inner.num_layer {
+            return false;
+        }
+        let assigned = |action: &KeyAction| !matches!(action, KeyAction::No | KeyAction::Transparent);
+        let size = inner.row * inner.col;
+        let start = layer * size;
+        if inner.layers[start..start + size].iter().any(assigned) {
+            return true;
+        }
+        if let Some(encoders) = inner.encoders.as_ref() {
+            let start = layer * inner.num_encoder;
+            if encoders[start..start + inner.num_encoder]
+                .iter()
+                .any(|encoder| assigned(&encoder.clockwise) || assigned(&encoder.counter_clockwise))
+            {
+                return true;
+            }
+        }
+        let start = layer * inner.num_touchpad;
+        inner.touchpads[start..start + inner.num_touchpad]
+            .iter()
+            .any(|touch| touch.actions.iter().any(assigned))
+    }
+
     /// Active layer index (after layer-toggle/momentary updates).
     pub fn active_layer(&self) -> u8 {
         self.inner.borrow().get_activated_layer()
