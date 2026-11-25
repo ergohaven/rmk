@@ -181,6 +181,10 @@ impl Runnable for Keyboard<'_> {
     /// Main keyboard processing task, it receives input devices result, processes keys.
     /// The report is sent using `send_report`.
     async fn run(&mut self) -> ! {
+        #[cfg(feature = "split")]
+        let mut pointing_key = None;
+        #[cfg(feature = "split")]
+        let mut pointing_key_due = Instant::now();
         loop {
             #[cfg(feature = "ergohaven_window_switching")]
             self.expire_window_switch().await;
@@ -194,9 +198,31 @@ impl Runnable for Keyboard<'_> {
             );
             #[cfg(not(feature = "ergohaven_window_switching"))]
             let next = self.keyboard_event_subscriber.next_message_pure();
+            #[cfg(feature = "split")]
+            let next = embassy_futures::select::select(next, async {
+                Timer::at(pointing_key_due).await;
+                match pointing_key {
+                    Some(key) => (key, false),
+                    None => (crate::channel::POINTING_KEY_TAPS.receive().await, true),
+                }
+            });
             let event = match deadline {
                 Some(deadline) => with_deadline(deadline, next).await.ok(),
                 None => Some(next.await),
+            };
+            #[cfg(feature = "split")]
+            let event = match event {
+                Some(embassy_futures::select::Either::First(event)) => Some(event),
+                Some(embassy_futures::select::Either::Second((key, pressed))) => {
+                    // Synthetic arrows belong in the keyboard report but must
+                    // not look like physical input to the pointing auto-layer.
+                    self.process_action_key(key, ModifierCombination::new(), KeyboardEvent::keycode(key, pressed))
+                        .await;
+                    pointing_key = pressed.then_some(key);
+                    pointing_key_due = Instant::now() + Duration::from_millis(5);
+                    continue;
+                }
+                None => None,
             };
             match event {
                 #[cfg(feature = "ergohaven_window_switching")]

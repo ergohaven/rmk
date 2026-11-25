@@ -20,7 +20,7 @@ use crate::event::{
     PointingSetCpiEvent, PointingTransformEvent, SleepStateEvent, SubscribableEvent, publish_event,
     publish_event_async,
 };
-use crate::hid::{KeyboardReport, MouseReport, Report};
+use crate::hid::{MouseReport, Report};
 use crate::keymap::KeyMap;
 
 pub const ALL_POINTING_DEVICES: u8 = 255;
@@ -1664,6 +1664,7 @@ fn qube_divided_motion(state: &mut QubePointingSideState, x: i16, y: i16, diviso
     )
 }
 
+#[cfg(feature = "split")]
 async fn qube_send_text_motion(state: &mut QubePointingSideState, x: i16, y: i16, divisor: i32) {
     let now = now_ms_u32();
     if state.text_last_motion_ms != 0 && now.wrapping_sub(state.text_last_motion_ms) > QUBE_TEXT_AXIS_IDLE_MS {
@@ -1697,7 +1698,10 @@ async fn qube_send_text_motion(state: &mut QubePointingSideState, x: i16, y: i16
     };
 
     if let Some(key) = key {
-        tap_key(key).await;
+        // The keyboard task owns both edges. Never block this processor on
+        // the keyboard task, which can be waiting for us to drain ActionEvents.
+        let _ = crate::channel::POINTING_KEY_TAPS.try_send(key);
+        Timer::after_millis(10).await;
     }
 }
 
@@ -2002,28 +2006,6 @@ impl<'a> PointingProcessor<'a> {
             }
         }
     }
-}
-
-/// Tap a key (press and release with a short delay) - used for Qube text mode
-async fn tap_key(keycode: HidKeyCode) {
-    // Press
-    send_hid_report(Report::KeyboardReport(KeyboardReport {
-        modifier: 0,
-        reserved: 0,
-        leds: 0,
-        keycodes: [keycode as u8, 0, 0, 0, 0, 0],
-    }))
-    .await;
-    Timer::after_millis(5).await;
-    // Release
-    send_hid_report(Report::KeyboardReport(KeyboardReport {
-        modifier: 0,
-        reserved: 0,
-        leds: 0,
-        keycodes: [0, 0, 0, 0, 0, 0],
-    }))
-    .await;
-    Timer::after_millis(5).await;
 }
 
 /// Pure function: given a (x, y) motion delta, decide whether caret mode
@@ -5314,6 +5296,85 @@ mod tests {
     }
 
     // === Integration tests for PointingProcessor ===
+
+    #[cfg(all(feature = "split", not(feature = "_no_usb")))]
+    #[test]
+    fn qube_text_scroll_preserves_held_keys_and_tracks_modifier_release() {
+        use embassy_futures::join::join;
+        use embassy_futures::select::select;
+        use embassy_time::with_timeout;
+        use rmk_types::connection::UsbState;
+
+        use crate::channel::USB_REPORT_CHANNEL;
+        use crate::keyboard::Keyboard;
+
+        block_on(async {
+            crate::state::set_usb_state(UsbState::Configured);
+            USB_REPORT_CHANNEL.clear();
+            let mut behavior = BehaviorConfig::default();
+            let positional = PositionalConfig::<1, 3>::default();
+            let mut data = KeymapData::<1, 3, 1>::new([[[k!(LShift), k!(A), k!(Right)]]]);
+            let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
+            let mut keyboard = Keyboard::new(&keymap);
+            let mut pointing = QubePointingModeProcessor::new(&keymap);
+            pointing.settings.mode[0] = QubePointingMode::Text;
+            let motion = PointingEvent {
+                device_id: 0,
+                axes: [
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::X,
+                        value: 32,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Y,
+                        value: 0,
+                    },
+                    AxisEvent {
+                        typ: AxisValType::Rel,
+                        axis: Axis::Z,
+                        value: 0,
+                    },
+                ],
+            };
+            select(
+                async {
+                    with_timeout(Duration::from_millis(100), async {
+                        publish_event_async(KeyboardEvent::key(0, 0, true)).await;
+                        expect_keyboard_report(2, &[]).await;
+                        publish_event_async(KeyboardEvent::key(0, 1, true)).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
+                        pointing.on_pointing_event(motion).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
+                        // An arrow tap must not release a held physical arrow.
+                        publish_event_async(KeyboardEvent::key(0, 2, true)).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                        pointing.on_pointing_event(motion).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                        publish_event_async(KeyboardEvent::key(0, 2, false)).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
+                        join(pointing.on_pointing_event(motion), async {
+                            expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                            publish_event_async(KeyboardEvent::key(0, 0, false)).await;
+                            expect_keyboard_report(0, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                            expect_keyboard_report(0, &[HidKeyCode::A]).await;
+                        })
+                        .await;
+                    })
+                    .await
+                    .expect("Text Scroll reports timed out");
+                },
+                keyboard.run(),
+            )
+            .await;
+        });
+    }
 
     #[cfg(not(feature = "_no_usb"))]
     async fn expect_keyboard_report(modifier: u8, keys: &[HidKeyCode]) {
