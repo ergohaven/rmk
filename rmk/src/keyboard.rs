@@ -182,8 +182,6 @@ impl Runnable for Keyboard<'_> {
     /// The report is sent using `send_report`.
     async fn run(&mut self) -> ! {
         #[cfg(feature = "split")]
-        let mut pointing_key = None;
-        #[cfg(feature = "split")]
         let mut pointing_key_due = Instant::now();
         loop {
             #[cfg(feature = "ergohaven_window_switching")]
@@ -199,13 +197,31 @@ impl Runnable for Keyboard<'_> {
             #[cfg(not(feature = "ergohaven_window_switching"))]
             let next = self.keyboard_event_subscriber.next_message_pure();
             #[cfg(feature = "split")]
-            let next = embassy_futures::select::select(next, async {
-                Timer::at(pointing_key_due).await;
-                match pointing_key {
-                    Some(key) => (key, false),
-                    None => (crate::channel::POINTING_KEY_TAPS.receive().await, true),
+            let pointing_key = self.pointing_key;
+            #[cfg(feature = "split")]
+            let next = async {
+                use embassy_futures::select::{Either, select};
+
+                let tap = async {
+                    if Instant::now() < pointing_key_due {
+                        Timer::at(pointing_key_due).await;
+                    }
+                    if pointing_key.is_some() {
+                        None
+                    } else {
+                        Some(crate::channel::POINTING_KEY_TAPS.receive().await)
+                    }
+                };
+                if pointing_key.is_some() {
+                    // Release a due arrow before emitting another key's report.
+                    match select(tap, next).await {
+                        Either::First(tap) => Either::Second(tap),
+                        Either::Second(event) => Either::First(event),
+                    }
+                } else {
+                    select(next, tap).await
                 }
-            });
+            };
             let event = match deadline {
                 Some(deadline) => with_deadline(deadline, next).await.ok(),
                 None => Some(next.await),
@@ -213,12 +229,11 @@ impl Runnable for Keyboard<'_> {
             #[cfg(feature = "split")]
             let event = match event {
                 Some(embassy_futures::select::Either::First(event)) => Some(event),
-                Some(embassy_futures::select::Either::Second((key, pressed))) => {
-                    // Synthetic arrows belong in the keyboard report but must
-                    // not look like physical input to the pointing auto-layer.
-                    self.process_action_key(key, ModifierCombination::new(), KeyboardEvent::keycode(key, pressed))
-                        .await;
-                    pointing_key = pressed.then_some(key);
+                Some(embassy_futures::select::Either::Second(key)) => {
+                    // Add the arrow to the report without changing typing state
+                    // or notifying the pointing auto-layer of a key action.
+                    self.pointing_key = key;
+                    self.send_keyboard_report_with_resolved_modifiers(false).await;
                     pointing_key_due = Instant::now() + Duration::from_millis(5);
                     continue;
                 }
@@ -287,6 +302,9 @@ pub struct Keyboard<'a> {
     /// Current registered keys, ordered by the press time
     registered: Vec<RegisteredKey, 16>,
 
+    #[cfg(feature = "split")]
+    pointing_key: Option<HidKeyCode>,
+
     /// Mouse state (report, acceleration, repeat counters, repeat deadlines)
     mouse: MouseState,
 
@@ -337,6 +355,8 @@ impl<'a> Keyboard<'a> {
             fork_keep_mask: ModifierCombination::default(),
             held_buffer: HeldBuffer::new(),
             registered: Vec::new(),
+            #[cfg(feature = "split")]
+            pointing_key: None,
             mouse: MouseState::new(),
             media_report: MediaKeyboardReport { usage_id: 0 },
             system_control_report: SystemControlReport { usage_id: 0 },
@@ -2156,11 +2176,21 @@ impl<'a> Keyboard<'a> {
     fn keyboard_report_keycodes(&self) -> [u8; 6] {
         let mut keycodes = [0u8; 6];
         let mut n = 0;
-        for k in self.registered.iter().filter(|k| k.keycode != HidKeyCode::No) {
-            let code = k.keycode as u8;
+        let keys = self
+            .registered
+            .iter()
+            .map(|k| k.keycode)
+            .filter(|&key| key != HidKeyCode::No);
+        #[cfg(feature = "split")]
+        let keys = keys.chain(self.pointing_key);
+        for key in keys {
+            let code = key as u8;
             if !keycodes[..n].contains(&code) {
                 keycodes[n] = code;
                 n += 1;
+                if n == keycodes.len() {
+                    break;
+                }
             }
         }
         keycodes
@@ -2605,6 +2635,28 @@ mod test {
 
     fn create_test_keyboard() -> Keyboard<'static> {
         create_test_keyboard_with_config(BehaviorConfig::default())
+    }
+
+    #[cfg(feature = "split")]
+    #[test]
+    fn text_scroll_does_not_displace_held_keys_in_a_full_report() {
+        let mut keyboard = create_test_keyboard();
+        let held = [
+            HidKeyCode::A,
+            HidKeyCode::B,
+            HidKeyCode::C,
+            HidKeyCode::D,
+            HidKeyCode::E,
+            HidKeyCode::F,
+        ];
+        for (col, key) in held.into_iter().enumerate() {
+            keyboard.register_key(key, ModifierCombination::new(), KeyboardEvent::key(0, col as u8, true));
+        }
+
+        keyboard.pointing_key = Some(HidKeyCode::Right);
+        assert_eq!(keyboard.keyboard_report_keycodes(), held.map(|key| key as u8));
+        keyboard.pointing_key = None;
+        assert_eq!(keyboard.keyboard_report_keycodes(), held.map(|key| key as u8));
     }
 
     #[cfg(feature = "ergohaven_layer_cycling")]

@@ -1675,24 +1675,21 @@ async fn qube_send_text_motion(state: &mut QubePointingSideState, x: i16, y: i16
     state.remainder_x = state.remainder_x.saturating_add(x as i32);
     state.remainder_y = state.remainder_y.saturating_add(y as i32);
 
-    let key = if state.remainder_x.abs() >= state.remainder_y.abs()
-        && state.remainder_x.abs() >= divisor.saturating_mul(QUBE_TEXT_THRESHOLD)
-    {
-        let key = if state.remainder_x > 0 {
+    let threshold = divisor.saturating_mul(QUBE_TEXT_THRESHOLD) as u32;
+    let x = state.remainder_x.unsigned_abs();
+    let y = state.remainder_y.unsigned_abs();
+    let key = if x >= y && x >= threshold {
+        Some(if state.remainder_x > 0 {
             HidKeyCode::Right
         } else {
             HidKeyCode::Left
-        };
-        state.reset_accum();
-        Some(key)
-    } else if state.remainder_y.abs() >= divisor.saturating_mul(QUBE_TEXT_THRESHOLD) {
-        let key = if state.remainder_y > 0 {
+        })
+    } else if y >= threshold {
+        Some(if state.remainder_y > 0 {
             HidKeyCode::Down
         } else {
             HidKeyCode::Up
-        };
-        state.reset_accum();
-        Some(key)
+        })
     } else {
         None
     };
@@ -1700,7 +1697,9 @@ async fn qube_send_text_motion(state: &mut QubePointingSideState, x: i16, y: i16
     if let Some(key) = key {
         // The keyboard task owns both edges. Never block this processor on
         // the keyboard task, which can be waiting for us to drain ActionEvents.
-        let _ = crate::channel::POINTING_KEY_TAPS.try_send(key);
+        if crate::channel::POINTING_KEY_TAPS.try_send(key).is_ok() {
+            state.reset_accum();
+        }
         Timer::after_millis(10).await;
     }
 }
@@ -5297,6 +5296,26 @@ mod tests {
 
     // === Integration tests for PointingProcessor ===
 
+    #[cfg(feature = "split")]
+    #[test]
+    fn qube_text_scroll_retains_motion_when_the_tap_queue_is_full() {
+        use crate::channel::POINTING_KEY_TAPS;
+
+        block_on(async {
+            POINTING_KEY_TAPS.clear();
+            let mut state = QubePointingSideState::new();
+            qube_send_text_motion(&mut state, 8, 0, 8).await;
+            qube_send_text_motion(&mut state, 8, 0, 8).await;
+            assert_eq!(POINTING_KEY_TAPS.try_receive(), Ok(HidKeyCode::Right));
+
+            // One count cannot move the caret on its own. It retries the
+            // accumulated motion that couldn't be submitted while full.
+            qube_send_text_motion(&mut state, 1, 0, 8).await;
+            assert_eq!(POINTING_KEY_TAPS.try_receive(), Ok(HidKeyCode::Right));
+            assert!(POINTING_KEY_TAPS.is_empty());
+        });
+    }
+
     #[cfg(all(feature = "split", not(feature = "_no_usb")))]
     #[test]
     fn qube_text_scroll_preserves_held_keys_and_tracks_modifier_release() {
@@ -5305,15 +5324,16 @@ mod tests {
         use embassy_time::with_timeout;
         use rmk_types::connection::UsbState;
 
-        use crate::channel::USB_REPORT_CHANNEL;
+        use crate::channel::{POINTING_KEY_TAPS, USB_REPORT_CHANNEL};
         use crate::keyboard::Keyboard;
 
         block_on(async {
             crate::state::set_usb_state(UsbState::Configured);
             USB_REPORT_CHANNEL.clear();
+            POINTING_KEY_TAPS.clear();
             let mut behavior = BehaviorConfig::default();
-            let positional = PositionalConfig::<1, 3>::default();
-            let mut data = KeymapData::<1, 3, 1>::new([[[k!(LShift), k!(A), k!(Right)]]]);
+            let positional = PositionalConfig::<1, 4>::default();
+            let mut data = KeymapData::<1, 4, 1>::new([[[k!(LShift), k!(A), k!(Right), k!(Again)]]]);
             let keymap = KeyMap::new(&mut data, &mut behavior, &positional).await;
             let mut keyboard = Keyboard::new(&keymap);
             let mut pointing = QubePointingModeProcessor::new(&keymap);
@@ -5350,6 +5370,16 @@ mod tests {
                         expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
                         expect_keyboard_report(2, &[HidKeyCode::A]).await;
 
+                        // Scrolling does not replace the last typed key.
+                        publish_event_async(KeyboardEvent::key(0, 1, false)).await;
+                        expect_keyboard_report(2, &[]).await;
+                        publish_event_async(KeyboardEvent::key(0, 3, true)).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A]).await;
+                        publish_event_async(KeyboardEvent::key(0, 3, false)).await;
+                        expect_keyboard_report(2, &[]).await;
+                        publish_event_async(KeyboardEvent::key(0, 1, true)).await;
+                        expect_keyboard_report(2, &[HidKeyCode::A]).await;
+
                         // An arrow tap must not release a held physical arrow.
                         publish_event_async(KeyboardEvent::key(0, 2, true)).await;
                         expect_keyboard_report(2, &[HidKeyCode::A, HidKeyCode::Right]).await;
@@ -5364,6 +5394,18 @@ mod tests {
                             publish_event_async(KeyboardEvent::key(0, 0, false)).await;
                             expect_keyboard_report(0, &[HidKeyCode::A, HidKeyCode::Right]).await;
                             expect_keyboard_report(0, &[HidKeyCode::A]).await;
+                        })
+                        .await;
+
+                        // A new key pressed once the tap is due to end must
+                        // not share a report with the expired synthetic arrow.
+                        join(pointing.on_pointing_event(motion), async {
+                            expect_keyboard_report(0, &[HidKeyCode::A, HidKeyCode::Right]).await;
+                            Timer::after_millis(1).await;
+                            embassy_time::MockDriver::get().advance(Duration::from_millis(5));
+                            publish_event_async(KeyboardEvent::key(0, 0, true)).await;
+                            expect_keyboard_report(0, &[HidKeyCode::A]).await;
+                            expect_keyboard_report(2, &[HidKeyCode::A]).await;
                         })
                         .await;
                     })
