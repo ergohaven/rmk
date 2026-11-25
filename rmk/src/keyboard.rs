@@ -50,6 +50,10 @@ pub(crate) mod steno;
 use crate::keymap::HOLD_BUFFER_SIZE;
 use crate::magic::MagicAction;
 
+const MACOS_LAYOUT_CONTROL_LEAD_MS: u64 = 20;
+const MACOS_LAYOUT_CHORD_HOLD_MS: u64 = 20;
+const MACOS_LAYOUT_SPACE_RELEASE_MS: u64 = 10;
+
 // Timestamp of the last key action, the value is the number of seconds since the boot
 #[cfg(feature = "_ble")]
 pub(crate) static LAST_KEY_TIMESTAMP: Signal<crate::RawMutex, u32> = Signal::new();
@@ -1835,32 +1839,60 @@ impl<'a> Keyboard<'a> {
             return;
         }
 
+        // Ergohaven builds use this sequence for the emitted chord in either Universal platform mode.
+        let control_space =
+            cfg!(feature = "universal_symbols") && key == HidKeyCode::Space && mods == ModifierCombination::LCTRL;
         let before = self.resolve_modifiers(event.pressed);
+        let mut paced_press = false;
         if event.pressed {
             let held = self.keyboard_report_keycodes();
             self.register_key(key, mods, event);
             let after = self.resolve_modifiers(true);
             if mods.into_bits() != 0 && after != before {
                 // Establish shortcut modifiers before macOS dispatches the key-down.
-                self.send_report(Report::KeyboardReport(KeyboardReport {
-                    modifier: after.into_bits(),
-                    reserved: 0,
-                    leds: LOCK_LED_STATES.load(core::sync::atomic::Ordering::Relaxed),
-                    keycodes: held,
-                }))
-                .await;
-                yield_now().await;
+                self.send_keyboard_report_with_keys(after, held).await;
+                if control_space
+                    && after == mods
+                    && !held.contains(&(key as u8))
+                    && let Some(registered) = self.registered.last_mut().filter(|k| k.keycode == key)
+                {
+                    registered.paced_layout_switch = true;
+                    paced_press = true;
+                    Timer::after_millis(MACOS_LAYOUT_CONTROL_LEAD_MS).await;
+                }
             }
         } else {
+            let paced_keys = if control_space && before == mods {
+                let released = RegisteredKey::new(event.source, key, mods);
+                self.registered
+                    .iter()
+                    .any(|k| k.paced_layout_switch && k.matches(&released))
+                    .then(|| self.keyboard_report_keycodes())
+            } else {
+                None
+            };
             self.unregister_key(key, mods, event);
             let after = self.resolve_modifiers(false);
             if mods.into_bits() != 0 && before != after {
-                // Release the letter while its shortcut modifiers are still held.
-                self.send_keyboard_report(before).await;
+                if let Some(held) = paced_keys
+                    && after.into_bits() == 0
+                    && !self.keyboard_report_keycodes().contains(&(key as u8))
+                {
+                    // Release synthetic Ctrl first while the host still sees Space down.
+                    self.send_keyboard_report_with_keys(after, held).await;
+                    Timer::after_millis(MACOS_LAYOUT_SPACE_RELEASE_MS).await;
+                } else {
+                    // Release the key while its shortcut modifiers are still held.
+                    self.send_keyboard_report(before).await;
+                }
             }
         }
 
         self.send_keyboard_report_with_resolved_modifiers(event.pressed).await;
+        if paced_press {
+            // A queued key-up must not shorten the chord on a quick tap.
+            Timer::after_millis(MACOS_LAYOUT_CHORD_HOLD_MS).await;
+        }
     }
 
     // Process action special keys
@@ -2146,8 +2178,12 @@ impl<'a> Keyboard<'a> {
     /// each usage as up or down, so duplicates are collapsed to the first slot
     /// that holds them. This keeps the shared usage down until the last holder
     /// releases it.
-    async fn send_keyboard_report(&mut self, modifiers: ModifierCombination) {
-        let keycodes = self.keyboard_report_keycodes();
+    async fn send_keyboard_report(&self, modifiers: ModifierCombination) {
+        self.send_keyboard_report_with_keys(modifiers, self.keyboard_report_keycodes())
+            .await;
+    }
+
+    async fn send_keyboard_report_with_keys(&self, modifiers: ModifierCombination, keycodes: [u8; 6]) {
         info!(
             "Sending keyboard report, modifiers: {:?}, keycodes: {:?}",
             modifiers, keycodes
@@ -2297,18 +2333,14 @@ impl<'a> Keyboard<'a> {
         if cfg!(any(feature = "vial", feature = "ergohaven_rynk"))
             && platform == crate::universal_symbols::Platform::Mac
         {
-            // TEST5 diagnostic: reduce only Ctrl lead from 134 to 20 ms.
-            // Keep TEST4's report order, Space hold and release gap unchanged.
             // Ctrl releases first while Space remains held.
             self.send_universal_symbols_report(modifier, released_keys).await;
-            Timer::after_millis(20).await;
+            Timer::after_millis(MACOS_LAYOUT_CONTROL_LEAD_MS).await;
             self.send_universal_symbols_report(modifier, pressed_keys).await;
-            // TEST6 diagnostic: joint Ctrl+Space hold 134 -> 20 ms only.
-            Timer::after_millis(20).await;
+            Timer::after_millis(MACOS_LAYOUT_CHORD_HOLD_MS).await;
             self.send_universal_symbols_report(ModifierCombination::new(), pressed_keys)
                 .await;
-            // TEST7 diagnostic: Ctrl-to-Space release gap 42 -> 10 ms only.
-            Timer::after_millis(10).await;
+            Timer::after_millis(MACOS_LAYOUT_SPACE_RELEASE_MS).await;
             self.send_universal_symbols_report(ModifierCombination::new(), released_keys)
                 .await;
         } else {
@@ -2403,6 +2435,7 @@ impl<'a> Keyboard<'a> {
                     continue;
                 }
                 k.mods = ModifierCombination::new();
+                k.paced_layout_switch = false;
             }
             let _ = self.registered.push(key);
             if key.keycode == HidKeyCode::No {
@@ -2454,6 +2487,8 @@ struct RegisteredKey {
     keycode: HidKeyCode,
     /// A modifier action's modifiers, or a `KeyWithModifier` key's.
     mods: ModifierCombination,
+    /// This press introduced both LCtrl and Space with the macOS layout-switch pacing.
+    paced_layout_switch: bool,
     /// Window-owned Tab (and reverse Shift), released together on cancellation.
     #[cfg(feature = "ergohaven_window_switching")]
     window_switch_key: bool,
@@ -2466,6 +2501,7 @@ impl RegisteredKey {
             source,
             keycode: if key.is_modifier() { HidKeyCode::No } else { key },
             mods: mods | key.to_hid_modifiers(),
+            paced_layout_switch: false,
             #[cfg(feature = "ergohaven_window_switching")]
             window_switch_key: false,
         }
