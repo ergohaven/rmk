@@ -72,3 +72,4 @@ pub const AUTO_MODULES: bool = true;
 
 /// Wired Phenom keeps a selected touchpad responsive after normal input idle.
 pub const TOUCHPAD_POWER_SAVING: bool = false;
+pub const K04_EXTENDED_SETTINGS: bool = false;

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "keyboards/k04/src/layer_names.rs").read_text()
 # The factory axis defaults the codec reads through `crate::board`.
 board_constants = "\n".join(
-    line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines() if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES"))
+    line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines() if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES", "pub const K04_"))
 )
 assert board_constants, "keyboards/k04/src/board.rs lost its factory defaults"
 
@@ -41,7 +41,7 @@ for profile in ("", "_mini", "_micro"):
         definition = json.loads(path.read_text())
         settings = list(settings_with_qsid(definition, 324))
         assert len(settings) == 1, path
-        assert settings[0]["variants"] == [f"{ms} ms" for ms in values], path
+        assert settings[0]["variants"] == [f"{ms} ms" for ms in values + [1750, 2000, 2250, 2500, 2750, 3000]], path
 
 
 def between(start: str, end: str) -> str:
@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix="k04-settings-migration-") as directory:
     source_file = Path(directory) / "migration.rs"
     rustc = shutil.which("rustc") or str(Path.home() / ".cargo/bin/rustc")
     for profile, features in (("standalone", ["--cfg", 'feature="standalone"']), ("phenom", ["--cfg", 'feature="standalone"']), ("qube", [])):
-        source_file.write_text(harness.replace("pub const AUTO_MODULES: bool = false;", "pub const AUTO_MODULES: bool = true;") if profile == "phenom" else harness)
+        source_file.write_text(harness.replace("pub const AUTO_MODULES: bool = false;", "pub const AUTO_MODULES: bool = true;").replace("pub const K04_EXTENDED_SETTINGS: bool = true;", "pub const K04_EXTENDED_SETTINGS: bool = false;") if profile == "phenom" else harness)
         test_binary = Path(directory) / f"migration-test-{profile}"
         subprocess.run([rustc, "--edition=2021", *features, "--test", str(source_file), "-o", str(test_binary)], check=True)
         subprocess.run([str(test_binary)], check=True)

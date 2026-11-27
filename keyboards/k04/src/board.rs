@@ -81,3 +81,4 @@ pub const DEFAULT_LED_TIMEOUT_SEC: u8 = 1;
 
 /// Preserve adaptive sensor and host polling for battery-powered K:04.
 pub const TOUCHPAD_POWER_SAVING: bool = true;
+pub const K04_EXTENDED_SETTINGS: bool = true;

@@ -311,6 +311,11 @@ fn module_selections() -> [ModuleSelection; 2] {
 }
 
 fn apply_module_selection_runtime() {
+    if crate::board::K04_EXTENDED_SETTINGS {
+        // Keep legacy stored interval indices readable, but never throttle K:04 encoders.
+        rmk::input_device::rotary_encoder::set_encoder_interval_ms(0, 0);
+        rmk::input_device::rotary_encoder::set_encoder_interval_ms(1, 0);
+    }
     let selections = module_selections();
     MODULE_SELECTIONS.sender().send_if_modified(|current| {
         if current.as_ref() == Some(&selections) {

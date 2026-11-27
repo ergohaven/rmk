@@ -871,6 +871,7 @@ struct QubePointingSettings {
     auto_flags: u8,
     axis_flags: u8,
     auto_layer_timeout_index: u8,
+    k04_extended: bool,
     /// Ball travel that arms the auto layer, 0..=100 over 0..=255 sensor
     /// counts; 0 switches on the first count as before.
     auto_layer_threshold: u8,
@@ -890,6 +891,7 @@ impl QubePointingSettings {
             auto_flags: 1,
             axis_flags: 0,
             auto_layer_timeout_index: QUBE_DEFAULT_AUTO_LAYER_TIMEOUT_INDEX,
+            k04_extended: false,
             auto_layer_threshold: 0,
         }
     }
@@ -921,7 +923,11 @@ impl QubePointingSettings {
         self.flags = data[11];
         self.auto_flags = data[12];
         self.axis_flags = data[26] & 0x0f;
-        self.auto_layer_timeout_index = (data[26] >> 4).min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX);
+        self.k04_extended = data[25] & 0x80 != 0;
+        self.auto_layer_timeout_index = if self.k04_extended {
+            ((data[26] >> 4) | ((data[25] & 0x40) >> 2))
+                .min(if cfg!(feature = "k04_standalone_timeout_14") { 19 } else { 11 })
+        } else { (data[26] >> 4).min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX) };
     }
 
     fn orientation(&self, source: QubePointingSource) -> u8 {
@@ -954,6 +960,12 @@ impl QubePointingSettings {
     }
 
     fn auto_layer_timeout_ms(&self) -> u32 {
+        if self.k04_extended {
+            let values: &[u32] = if cfg!(feature = "k04_standalone_timeout_14") {
+                &[50,100,150,200,250,300,350,400,450,500,750,1000,1250,1500,1750,2000,2250,2500,2750,3000]
+            } else { &[250,500,750,1000,1250,1500,1750,2000,2250,2500,2750,3000] };
+            return values[usize::from(self.auto_layer_timeout_index).min(values.len() - 1)];
+        }
         QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE
             [usize::from(self.auto_layer_timeout_index.min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX))]
     }
@@ -1254,6 +1266,9 @@ impl<'a> QubePointingModeProcessor<'a> {
 
         let pressed = event.keyboard_event.pressed;
         match id {
+            60..=62 if self.settings.k04_extended => self.handle_mode_key(
+                match id { 60 => [true, false], 61 => [true, true], _ => [false, true] },
+                QubePointingMode::Normal, pressed),
             QUBE_USER_SNIPER => self.handle_mode_key([true, true], QubePointingMode::Sniper, pressed),
             QUBE_USER_SCROLL => self.handle_mode_key([true, true], QubePointingMode::Scroll, pressed),
             QUBE_USER_TEXT => self.handle_mode_key([true, true], QubePointingMode::Text, pressed),
@@ -1462,6 +1477,22 @@ impl<'a> QubePointingModeProcessor<'a> {
     }
 
     fn handle_mode_key(&mut self, sides: [bool; 2], mode: QubePointingMode, pressed: bool) {
+        if mode == QubePointingMode::Normal {
+            if pressed {
+                for (side, enabled) in sides.into_iter().enumerate() {
+                    if enabled {
+                        // An explicit Normal selection overrides even a saved Scroll/Text base.
+                        // Replace held state too: a stale mode-key release must not undo it.
+                        self.sides[side].mode_key.held = Some(QubePointingMode::Normal);
+                        self.sides[side].mode_key.latched = None;
+                        self.sides[side].reset_accum();
+                        self.sides[side].text_last_motion_ms = 0;
+                    }
+                }
+                self.reevaluate_auto_layer();
+            }
+            return;
+        }
         let scope = if sides == [true, true] {
             QubeModeKeyScope::Both
         } else {

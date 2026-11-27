@@ -32,17 +32,23 @@ const BASE_SETTING_KEYS: [u16; 84] = [
     320, 321, 322, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335,
 ];
 
-const SETTING_KEYS: [u16; 84 + if cfg!(feature = "qube") { 3 } else { 0 }] = {
-    let mut keys = [0; 84 + if cfg!(feature = "qube") { 3 } else { 0 }];
+const EXPOSED_BASE_SETTINGS: usize = if crate::board::K04_EXTENDED_SETTINGS { 82 } else { 84 };
+const SETTING_KEYS: [u16; EXPOSED_BASE_SETTINGS + if cfg!(feature = "qube") { 3 } else { 0 }] = {
+    let mut keys = [0; EXPOSED_BASE_SETTINGS + if cfg!(feature = "qube") { 3 } else { 0 }];
     let mut i = 0;
+    let mut out = 0;
     while i < BASE_SETTING_KEYS.len() {
-        keys[i] = BASE_SETTING_KEYS[i];
+        let key = BASE_SETTING_KEYS[i];
+        if !(crate::board::K04_EXTENDED_SETTINGS && (key == 325 || key == 326)) {
+            keys[out] = key;
+            out += 1;
+        }
         i += 1;
     }
     if cfg!(feature = "qube") {
-        keys[84] = 336;
-        keys[85] = 337;
-        keys[86] = 338;
+        keys[EXPOSED_BASE_SETTINGS] = 336;
+        keys[EXPOSED_BASE_SETTINGS + 1] = 337;
+        keys[EXPOSED_BASE_SETTINGS + 2] = 338;
     }
     keys
 };
@@ -62,7 +68,9 @@ fn set_display_setting(qsid: u16, value: u8) {
 
 const MODULE_SETTINGS_VERSION: u8 = if cfg!(feature = "standalone") { 10 } else { 9 };
 const LEGACY_TIMEOUT_SETTINGS_VERSION: u8 = 9;
-const AUTO_LAYER_TIMEOUT_MAX_INDEX: u8 = if cfg!(feature = "standalone") { 13 } else { 5 };
+const AUTO_LAYER_TIMEOUT_MAX_INDEX: u8 = if crate::board::K04_EXTENDED_SETTINGS {
+    if cfg!(feature = "standalone") { 19 } else { 11 }
+} else if cfg!(feature = "standalone") { 13 } else { 5 };
 
 // v9 saved the six original 250..=1500 ms presets as indices 0..=5.
 // Keep their effective durations when adding shorter presets in v10.
@@ -730,7 +738,10 @@ fn module_settings_sync_packet() -> [u8; MODULE_SETTINGS_SYNC_LEN] {
         pack_color(&mut data, 15, layer, module_layer_color_index(layer));
         layer += 1;
     }
-    data[25] = module_byte(IDX_MODULE_SELECT) & 0x3f;
+    data[25] = (module_byte(IDX_MODULE_SELECT) & 0x3f)
+        | if crate::board::K04_EXTENDED_SETTINGS {
+            0x80 | ((module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX) & 0x10) << 2)
+        } else { 0 };
     data[26] = (module_byte(IDX_AXIS_FLAGS) & 0x0f)
         | ((module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX) & 0x0f) << 4);
     data
@@ -828,9 +839,13 @@ fn serialize_module_settings() -> [u8; MODULE_SETTINGS_STORAGE_LEN] {
     // Twenty-one 5-bit colors use only bit 0 of byte 28. Reserve bits 6/7
     // for Auto, leaving existing settings and layer-name offsets unchanged.
     data[28] |= (module_byte(IDX_MODULE_SELECT) & 0x30) << 2;
+    if crate::board::K04_EXTENDED_SETTINGS {
+        // Bit 1 was zero in all legacy serializers; preserve color bit 0 and Auto bits 6/7.
+        data[28] |= (module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX) & 0x10) >> 3;
+    }
     data[29] = (module_byte(IDX_RESERVED_HOST_DISCONNECT_TIMEOUT) & 0x0f)
         | ((module_byte(IDX_LEFT_ENCODER_INTERVAL).min(9) & 0x0f) << 4);
-    data[30] = module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX)
+    data[30] = (module_byte(IDX_AUTO_LAYER_TIMEOUT).min(AUTO_LAYER_TIMEOUT_MAX_INDEX) & 0x0f)
         | ((module_byte(IDX_RIGHT_ENCODER_INTERVAL).min(9) & 0x0f) << 4);
     data[31] = (module_byte(IDX_MODULE_SELECT) & 0x0f) | ((module_byte(IDX_AXIS_FLAGS) & 0x0f) << 4);
     data[32] = (module_byte(IDX_LEFT_ENCODER_STEPS).min(7) & 0x0f)
@@ -888,7 +903,8 @@ fn deserialize_module_settings(data: &[u8]) {
     let auto_layer_timeout_index = if cfg!(feature = "standalone") && data[0] == LEGACY_TIMEOUT_SETTINGS_VERSION {
         migrate_legacy_timeout_index(data[30] & 0x0f)
     } else {
-        (data[30] & 0x0f).min(AUTO_LAYER_TIMEOUT_MAX_INDEX)
+        ((data[30] & 0x0f) | if crate::board::K04_EXTENDED_SETTINGS { (data[28] & 2) << 3 } else { 0 })
+            .min(AUTO_LAYER_TIMEOUT_MAX_INDEX)
     };
     MODULE_SETTINGS[IDX_AUTO_LAYER_TIMEOUT].store(auto_layer_timeout_index, Ordering::Relaxed);
     MODULE_SETTINGS[IDX_RIGHT_ENCODER_INTERVAL].store((data[30] >> 4).min(9), Ordering::Relaxed);
@@ -1155,7 +1171,7 @@ mod qube_legacy_timeout_tests {
     #[test]
     fn qube_keeps_six_v9_timeout_indices() {
         assert_eq!(MODULE_SETTINGS_VERSION, 9);
-        assert_eq!(AUTO_LAYER_TIMEOUT_MAX_INDEX, 5);
+        assert_eq!(AUTO_LAYER_TIMEOUT_MAX_INDEX, if crate::board::K04_EXTENDED_SETTINGS { 11 } else { 5 });
         reset_module_settings();
         assert_eq!(module_byte(IDX_AUTO_LAYER_TIMEOUT), 1); // 500 ms
 

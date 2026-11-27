@@ -77,14 +77,16 @@
     {"name": "LG_WORD", "shortName": "RuEn word", "title": "Temporarily use English until Space, Enter, Escape or Minus; Shift enables Caps Word"},
     {"name": "LG_MOD", "shortName": "RuEn toggle/hold", "title": "Toggle language on press; a hold at least as long as the tapping term toggles again on release"},
     {"name": "LG_STORE", "shortName": "RuEn store", "title": "Store the current language for a macro and pause host language synchronization"},
-    {"name": "LG_REVERT", "shortName": "RuEn revert", "title": "Restore the stored language; resume host synchronization after 500 ms"}
+    {"name": "LG_REVERT", "shortName": "RuEn revert", "title": "Restore the stored language; resume host synchronization after 500 ms"},
+    {"name": "EH_L_NORMAL", "shortName": "Left\nNormal", "title": "Set left pointing device to normal mode"},
+    {"name": "EH_NORMAL", "shortName": "Normal\nmode", "title": "Set both pointing devices to normal mode"},
+    {"name": "EH_R_NORMAL", "shortName": "Right\nNormal", "title": "Set right pointing device to normal mode"}
     ],
     "settings": [
         {
             "name": "Left modules",
             "fields": [
                 { "type": "select", "title": "Module", "qsid": 149, "variants": ["None", "Encoder", "Trackball", "Touchpad"] },
-                { "type": "select", "title": "Encoder interval", "qsid": 325, "variants": ["0 ms", "5 ms", "10 ms", "15 ms", "20 ms", "30 ms", "40 ms", "60 ms", "80 ms", "100 ms"] },
                 { "type": "select", "title": "Encoder steps", "qsid": 332, "variants": ["1", "2", "3", "4", "5", "6", "7", "8"] },
                 { "type": "select", "title": "Mode", "qsid": 134, "variants": ["Normal", "Sniper", "Scroll", "Text"] },
                 { "type": "select", "title": "Ball axis", "qsid": 130, "variants": ["0°", "90°", "180°", "270°"] },
@@ -107,7 +109,6 @@
             "name": "Right modules",
             "fields": [
                 { "type": "select", "title": "Module", "qsid": 150, "variants": ["None", "Encoder", "Trackball", "Touchpad"] },
-                { "type": "select", "title": "Encoder interval", "qsid": 326, "variants": ["0 ms", "5 ms", "10 ms", "15 ms", "20 ms", "30 ms", "40 ms", "60 ms", "80 ms", "100 ms"] },
                 { "type": "select", "title": "Encoder steps", "qsid": 333, "variants": ["1", "2", "3", "4", "5", "6", "7", "8"] },
                 { "type": "select", "title": "Mode", "qsid": 135, "variants": ["Normal", "Sniper", "Scroll", "Text"] },
                 { "type": "select", "title": "Ball axis", "qsid": 131, "variants": ["0°", "90°", "180°", "270°"] },
@@ -134,7 +135,7 @@
                 { "type": "boolean", "title": "Auto layer in Sniper", "qsid": 144, "bit": 0 },
                 { "type": "boolean", "title": "Auto layer in Scroll", "qsid": 145, "bit": 0 },
                 { "type": "boolean", "title": "Auto layer in Text", "qsid": 146, "bit": 0 },
-                { "type": "select", "title": "Auto layer timeout", "qsid": 324, "variants": ["50 ms", "100 ms", "150 ms", "200 ms", "250 ms", "300 ms", "350 ms", "400 ms", "450 ms", "500 ms", "750 ms", "1000 ms", "1250 ms", "1500 ms"] },
+                { "type": "select", "title": "Auto layer timeout", "qsid": 324, "variants": ["50 ms", "100 ms", "150 ms", "200 ms", "250 ms", "300 ms", "350 ms", "400 ms", "450 ms", "500 ms", "750 ms", "1000 ms", "1250 ms", "1500 ms", "1750 ms", "2000 ms", "2250 ms", "2500 ms", "2750 ms", "3000 ms"] },
                 { "type": "integer", "title": "Auto layer threshold", "qsid": 334, "min": 0, "max": 100, "width": 1 },
                 { "type": "boolean", "title": "Auto layer deactivate on key", "qsid": 335, "bit": 0 }
             ]
