@@ -11,9 +11,9 @@
     },
     "firmware": {
         "name": "RMK",
-        "version": "0.3.0"
+        "version": "0.4"
     },
-    "firmwareVersion": "0.3.0",
+    "firmwareVersion": "0.4",
     "lighting": "none",
     "matrix": {
         "rows": 8,

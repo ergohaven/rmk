@@ -5,9 +5,9 @@
     "productId": "0x0036",
     "firmware": {
         "name": "RMK",
-        "version": "0.3.0"
+        "version": "0.4"
     },
-    "firmwareVersion": "0.3.0",
+    "firmwareVersion": "0.4",
     "entropy": {
         "firmwareUpdate": { "asset": "op36-qube" },
         "liveFeatures": ["time", "media"],

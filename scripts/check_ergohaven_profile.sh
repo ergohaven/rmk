@@ -650,25 +650,28 @@ mapfile -t build_scripts < <(
 )
 for file in "${build_scripts[@]}"; do
     if [[ "$file" == "keyboards/k04/build.rs" ]]; then
-        rg -q 'const STANDALONE_RELEASE_VERSION: &str = "0\.3\.0";' "$file" \
-            || fail "$file: K:04 Standalone release version must be 0.3.0"
-        rg -q 'const STANDALONE_FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
-            || fail "$file: K:04 Standalone numeric firmware version must be 0.3.0"
-        rg -q 'const STANDALONE_FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
-            || fail "$file: K:04 Standalone BCD firmware version must be 0x0300"
-        rg -q 'const QUBE_FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
-            || fail "$file: K:04 Qube firmware version must be 0.3.0"
-        rg -q 'const QUBE_FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
-            || fail "$file: K:04 Qube BCD firmware version must be 0x0300"
-    elif [[ "$file" == "keyboards/k03/build.rs" || "$file" == "keyboards/imperial44/build.rs" ]]; then
-        rg -q 'const FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
-            || fail "$file: firmware version must be 0.3.0"
-        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
-            || fail "$file: BCD firmware version must be 0x0300"
+        rg -q 'const STANDALONE_RELEASE_VERSION: &str = "0\.4";' "$file" \
+            || fail "$file: K:04 Standalone release version must be 0.4"
+        rg -q 'const STANDALONE_FIRMWARE_VERSION: &str = "0\.4\.0";' "$file" \
+            || fail "$file: K:04 Standalone numeric firmware version must be 0.4.0"
+        rg -q 'const STANDALONE_FIRMWARE_VERSION_BCD: &str = "0x0400";' "$file" \
+            || fail "$file: K:04 Standalone BCD firmware version must be 0x0400"
+        rg -q 'const QUBE_FIRMWARE_VERSION: &str = "0\.4\.0";' "$file" \
+            || fail "$file: K:04 Qube firmware version must be 0.4.0"
+        rg -q 'const QUBE_FIRMWARE_VERSION_BCD: &str = "0x0400";' "$file" \
+            || fail "$file: K:04 Qube BCD firmware version must be 0x0400"
+        rg -q 'const QUBE_RELEASE_VERSION: &str = "0\.4";' "$file" \
+            || fail "$file: K:04 Qube release version must be 0.4"
+    elif [[ "$file" == "keyboards/k03/build.rs" || "$file" == "keyboards/imperial44/build.rs" || \
+            "$file" == "keyboards/op36/build.rs" || "$file" == "keyboards/velvet/build.rs" ]]; then
+        rg -q 'const FIRMWARE_VERSION: &str = "0\.4\.0";' "$file" \
+            || fail "$file: firmware version must be 0.4.0"
+        rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0400";' "$file" \
+            || fail "$file: BCD firmware version must be 0x0400"
     elif [[ "$file" == "keyboards/classic_qube/build.rs" ]]; then
         rg -Fq 'let encoder_profile = matches!(product_id, 0x0044 | 0x0070);' "$file" \
             || fail "$file: K03 and Imperial44 Qube must select the encoder profile"
-        python3 - "$file" <<'PY' || fail "$file: both Qube version branches must be 0.3.0/0x0300"
+        python3 - "$file" <<'PY' || fail "$file: both Qube version branches must be 0.4.0/0x0400"
 import pathlib
 import re
 import sys
@@ -680,7 +683,7 @@ branches = re.search(
 )
 assert branches, "missing classic Qube version selector"
 for branch in branches.groups():
-    assert '("0.3.0", "0x0300")' in branch, "stale classic Qube version branch"
+    assert '("0.4.0", "0x0400")' in branch, "stale classic Qube version branch"
 PY
         rg -Fq 'cargo:rustc-env=RMK_FIRMWARE_VERSION={version}' "$file" \
             || fail "$file: selected firmware version is not exported"
@@ -688,9 +691,9 @@ PY
             || fail "$file: selected BCD firmware version is not exported"
     else
         rg -q 'const FIRMWARE_VERSION: &str = "0\.3\.0";' "$file" \
-            || fail "$file: firmware version must be 0.3.0"
+            || fail "$file: paused Phenom firmware version must remain 0.3.0"
         rg -q 'const FIRMWARE_VERSION_BCD: &str = "0x0300";' "$file" \
-            || fail "$file: BCD firmware version must be 0x0300"
+            || fail "$file: paused Phenom BCD firmware version must remain 0x0300"
     fi
 done
 
@@ -701,16 +704,9 @@ mapfile -t vial_definitions < <(
         done
 )
 for file in "${vial_definitions[@]}"; do
-    expected_version="0.3.0"
-    case "$file" in
-        keyboards/k03/vial.json|keyboards/imperial44/vial.json)
-            expected_version="0.3.0"
-            ;;
-        keyboards/k04/vial.json|keyboards/k04/vial_mini.json|keyboards/k04/vial_micro.json|\
-        keyboards/k04/vial_qube.json|keyboards/k04/vial_qube_mini.json|keyboards/k04/vial_qube_micro.json)
-            expected_version="0.3.0"
-            ;;
-    esac
+    expected_version="0.4"
+    # Phenom RMK distribution is paused; preserve its manual-build identity.
+    [[ "$file" == keyboards/phenom/* ]] && expected_version="0.3.0"
     jq -e '.manufacturer == "Ergohaven"' "$file" >/dev/null \
         || fail "$file: manufacturer must be Ergohaven"
     jq -e --arg version "$expected_version" '
@@ -769,17 +765,28 @@ for file in "${vial_definitions[@]}"; do
         || fail "$file: split devices must advertise entropy.batteryHalves"
 done
 
-# Phenom serves the K:04 Standalone module and LED settings, so entropy must get
-# the same tabs, with an appended Auto module choice. It has no Bluetooth or battery to configure.
-k04_module_tabs="$(jq -cS '[.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")] | (.. | objects | select(.qsid == 149 or .qsid == 150) | .variants) += ["Auto"]' keyboards/k04/vial.json)"
+# Phenom always detects hardware; QSID 149/150 only choose the settings editor.
+# Keep transport indices (None=0) but exclude None via min=1, with no Auto choice.
+# Its shared tabs retain encoder intervals and the non-extended timeout presets.
+k04_module_tabs="$(jq -cS '
+    [.settings[] | select(.name == "Left modules" or .name == "Right modules" or .name == "Auto layer" or .name == "LEDs settings")]
+    | (.[].fields) |= map(
+        if .qsid == 149 or .qsid == 150 then
+            (.min = 1),
+            {type: "select", title: "Encoder interval", qsid: (.qsid + 176),
+             variants: ["0 ms", "5 ms", "10 ms", "15 ms", "20 ms", "30 ms", "40 ms", "60 ms", "80 ms", "100 ms"]}
+        elif .qsid == 324 then
+            .variants = ["50 ms", "100 ms", "150 ms", "200 ms", "250 ms", "300 ms", "350 ms", "400 ms", "450 ms", "500 ms", "750 ms", "1000 ms", "1250 ms", "1500 ms"]
+        else . end)
+' keyboards/k04/vial.json)"
 # Universal descriptors prepend a layout selector, so setting references advance by one.
 phenom_universal_module_tabs="$(jq -cS '(.. | objects | select(has("layoutOption")) | .layoutOption) += 1' <<<"$k04_module_tabs")"
 for file in keyboards/phenom/vial{,_mini,_micro}.json; do
     [[ "$(jq -cS '.settings' "$file")" == "$k04_module_tabs" ]] \
-        || fail "$file: settings must be the K:04 Standalone module and LED tabs with Auto module selection"
+        || fail "$file: settings must retain the shared tabs and bounded Phenom module editor categories"
     universal_file="${file%.json}_universal.json"
     [[ "$(jq -cS '.settings' "$universal_file")" == "$phenom_universal_module_tabs" ]] \
-        || fail "$universal_file: universal settings must retain Auto module selection and reindexed layout references"
+        || fail "$universal_file: universal settings must retain bounded editor categories and reindexed layout references"
 done
 
 python3 - <<'PY_WINDOW' || fail "Phenom window helpers must retain user slots 54 and 55"
@@ -831,22 +838,39 @@ source = open(sys.argv[1], encoding="utf-8").read()
 
 def rust_array(name):
     match = re.search(
-        rf"pub const {name}:.*?=\s*\[(.*?)\];",
+        rf"pub const {name}:\s*\[&str; LAYER_NAME_COUNT\]\s*=\s*\{{(.*?)\}};",
         source,
         flags=re.DOTALL,
     )
     if not match:
         raise SystemExit(f"missing {name}")
-    return ast.literal_eval("[" + match.group(1) + "]")
+    # Interpret only the factory owner's repeat/inherit, indexed writes and return.
+    # Unknown Rust statements fail closed rather than being silently ignored.
+    seed = re.match(r'\s*let mut names = (\["";\s*LAYER_NAME_COUNT\]|[A-Z_]+);', match.group(1))
+    assert seed, (name, "unsupported initializer")
+    names = [""] * 16 if seed.group(1).startswith("[") else rust_array(seed.group(1))
+    statements = [statement.strip() for statement in match.group(1)[seed.end():].split(";")]
+    assert statements[-1] == "names", (name, "missing return")
+    for statement in statements[:-1]:
+        write = re.fullmatch(r'names\[(\d+)\]\s*=\s*("[^"\\]*")', statement)
+        assert write, (name, "unsupported statement", statement)
+        names[int(write.group(1))] = ast.literal_eval(write.group(2))
+    return names
 
-numeric_tail = [str(index) for index in range(5, 16)]
+assert re.search(r"pub const LAYER_NAME_COUNT: usize = 16;", source)
 assert rust_array("STANDARD_NO_MOUSE") == [
-    "Base", "Navigation", "Symbols", "Adjust", "4", *numeric_tail
+    "Base", "Num + Nav", "Symbols", "Adjust", *([""] * 12)
 ]
 assert rust_array("STANDARD_WITH_MOUSE") == [
-    "Base", "Navigation", "Symbols", "Adjust", "Mouse", *numeric_tail
+    "Base", "Num + Nav", "Symbols", "Adjust", "Mouse", *([""] * 11)
+]
+assert rust_array("PHENOM") == [
+    "Base", "Num + Nav", "Symbols", "", "Mouse", *([""] * 11)
 ]
 PY
+
+python3 -B scripts/test_profile_validator_guards.py \
+    || fail "profile validator must reject settings and factory-name drift"
 
 standard_no_mouse_roots=(
     keyboards/imperial44/src/central.rs

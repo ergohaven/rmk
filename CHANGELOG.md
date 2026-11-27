@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.4
+
+More language and remapping actions, clearer pointing controls and everyday typing fixes.
+
+- Universal Symbols ANSI/ISO selection across the current keyboard range, with dedicated Ж, Э and Ё actions.
+- Shared EN/RU helpers: one English word, tap/hold language switching and language store/revert around macros; delayed return from English punctuation fallback.
+- LNEXT/LPREV layer cycling, skipping unassigned destinations.
+- Persistent Magic remapping, including Ctrl/Cmd swap, restore and toggle.
+- K:04-family automatic mouse-layer timeouts up to 3000 ms and left/right/both Normal-mode actions.
+- Fixed single-key Ctrl+Space input switching on macOS and premature save-completion reporting.
+- Consistent factory layer names, unnamed unused layers and factory Left Alt, preserving custom names and saved assignments.
+
+Export your layout, update Entropy and flash all matching parts. Factory layout
+changes do not replace saved keymaps. Official downloads are RMK/Rynk only;
+manual Vial configurations remain available. Phenom RMK downloads are paused;
+Phenom, Phenom Mini and Phenom Micro use official QMK/Vial firmware instead.
+
+Thanks to @IgorArkhipov and @D19ital.
+
+[Full changelog](https://github.com/ergohaven/rmk/compare/v0.3.0...v0.4)
+
 ## v0.3.0 (local release candidate)
 
 Default firmware moves from Vial to Rynk with Ergohaven wire revision 2 and

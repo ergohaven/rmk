@@ -4,6 +4,7 @@ import hashlib
 import itertools
 import json
 import pathlib
+import re
 import shlex
 import subprocess
 import tomllib
@@ -17,11 +18,28 @@ PROFILE_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_profil
 PHENOM_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/phenom_accepted_descriptors.json').read_text())
 K04_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/k04_followon_descriptors.json').read_text())
 PAUSED_PHENOM = json.loads((ROOT / '.github/scripts/fixtures/paused_phenom_profiles.json').read_text())
+RELEASE = json.loads((ROOT / '.github/scripts/fixtures/release_identity.json').read_text())
 GEOMETRY = ['Universal Symbols geometry', 'ANSI', 'ISO']
 ISO_FEATURES = {'universal_symbols_iso', 'universal_symbols_iso_bit0', 'universal_symbols_iso_bit1'}
 # Keep the immutable 22-profile fixture for manual Vial and historical proofs.
 OFFICIAL_BASELINE_ROWS = {job: [row for row in entries if not row['output_name'].endswith('_vial')]
                           for job, entries in BASELINE['rows'].items()}
+
+
+def before_release_identity(path, payload=None):
+    """Reverse only the two public version fields; keep historical guards intact."""
+    current = (ROOT / path).read_bytes() if payload is None else payload
+    if path not in RELEASE['descriptor_hashes']:
+        return current
+    assert hashlib.sha256(current).hexdigest() == RELEASE['descriptor_hashes'][path], path
+    definition = json.loads(current)
+    assert definition['firmware']['version'] == definition['firmwareVersion'] == RELEASE['public_version'], path
+    previous, count = re.subn(
+        rb'("(?:version|firmwareVersion)"\s*:\s*")' + re.escape(RELEASE['public_version'].encode()) + rb'(")',
+        lambda match: match[1] + RELEASE['previous_public_version'].encode() + match[2], current)
+    assert count == 2, path
+    assert hashlib.sha256(previous).hexdigest() == RELEASE['previous_descriptor_hashes'][path], path
+    return previous
 
 
 def rows():
@@ -85,6 +103,30 @@ def visible(key, values):
 
 
 class WorkflowUniversalSymbolsTests(unittest.TestCase):
+    def test_release_identity_has_complete_active_descriptor_inventory(self):
+        selected = {f"keyboards/{row['keyboard']}/{row['vial_json']}"
+                    for entries in rows().values() for row in entries}
+        expected = selected | {path.replace('_universal.json', '.json') for path in selected}
+        self.assertEqual(len(expected), 28)
+        self.assertEqual(set(RELEASE['descriptor_hashes']), expected)
+        self.assertEqual(set(RELEASE['previous_descriptor_hashes']), expected)
+        self.assertEqual(RELEASE['source_base'], '357f60c28cefdf27c682d3c22b9034cfa2799ada')
+        self.assertEqual((RELEASE['public_version'], RELEASE['internal_version'], RELEASE['usb_bcd']),
+                         ('0.4', '0.4.0', '0x0400'))
+        for path in sorted(expected):
+            with self.subTest(path=path):
+                original = subprocess.check_output(['git', 'show', RELEASE['source_base'] + ':' + path], cwd=ROOT)
+                self.assertEqual(before_release_identity(path), original)
+
+    def test_release_identity_rejects_version_and_non_version_mutations(self):
+        for path in RELEASE['descriptor_hashes']:
+            current = (ROOT / path).read_bytes()
+            for mutant in (current.replace(b'"0.4"', b'"0.5"', 1),
+                           current.replace(b'"layouts"', b'"changed_layouts"', 1)):
+                self.assertNotEqual(mutant, current)
+                with self.subTest(path=path), self.assertRaises(AssertionError):
+                    before_release_identity(path, mutant)
+
     def test_complete_inventory_and_unchanged_non_geometry_matrix(self):
         current = rows()
         self.assertEqual(sum(map(len, current.values())), 14)
@@ -170,7 +212,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                     digest = K04_BASELINE['descriptor_hashes'].get(path,
                         PHENOM_BASELINE['descriptor_hashes'].get(
                             path, PROFILE_BASELINE['descriptor_hashes'].get(path, BASELINE['descriptors'][path])))
-                    self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), digest)
+                    self.assertEqual(hashlib.sha256(before_release_identity(path)).hexdigest(), digest)
                     original = json.loads(original_bytes)
                     current = descriptor(row)
                     self.assertEqual(current['layouts'].get('labels', [None])[0], GEOMETRY)
@@ -267,7 +309,7 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                 accepted = subprocess.check_output(
                     ['git', 'show', K04_BASELINE['source_commit'] + ':' + path], cwd=ROOT)
                 self.assertEqual(hashlib.sha256(accepted).hexdigest(), digest)
-                self.assertEqual((ROOT / path).read_bytes(), accepted)
+                self.assertEqual(before_release_identity(path), accepted)
                 old = json.loads(subprocess.check_output(
                     ['git', 'show', K04_BASELINE['base_commit'] + ':' + path], cwd=ROOT))
                 expected = copy.deepcopy(old)

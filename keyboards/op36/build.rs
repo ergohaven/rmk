@@ -24,8 +24,8 @@ fn main() {
         !vial || std::env::var_os("CARGO_FEATURE_VIAL_STANDALONE").is_some(),
         "Vial requires vial_standalone to preserve standalone build options"
     );
-    const FIRMWARE_VERSION: &str = "0.3.0";
-    const FIRMWARE_VERSION_BCD: &str = "0x0300";
+    const FIRMWARE_VERSION: &str = "0.4.0";
+    const FIRMWARE_VERSION_BCD: &str = "0x0400";
 
     println!("cargo:rerun-if-changed=vial.json");
     println!("cargo:rerun-if-changed=keyboard.toml");
