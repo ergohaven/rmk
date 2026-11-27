@@ -925,9 +925,14 @@ impl QubePointingSettings {
         self.axis_flags = data[26] & 0x0f;
         self.k04_extended = data[25] & 0x80 != 0;
         self.auto_layer_timeout_index = if self.k04_extended {
-            ((data[26] >> 4) | ((data[25] & 0x40) >> 2))
-                .min(if cfg!(feature = "k04_standalone_timeout_14") { 19 } else { 11 })
-        } else { (data[26] >> 4).min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX) };
+            ((data[26] >> 4) | ((data[25] & 0x40) >> 2)).min(if cfg!(feature = "k04_standalone_timeout_14") {
+                19
+            } else {
+                11
+            })
+        } else {
+            (data[26] >> 4).min(QUBE_AUTO_LAYER_TIMEOUT_MAX_INDEX)
+        };
     }
 
     fn orientation(&self, source: QubePointingSource) -> u8 {
@@ -962,8 +967,13 @@ impl QubePointingSettings {
     fn auto_layer_timeout_ms(&self) -> u32 {
         if self.k04_extended {
             let values: &[u32] = if cfg!(feature = "k04_standalone_timeout_14") {
-                &[50,100,150,200,250,300,350,400,450,500,750,1000,1250,1500,1750,2000,2250,2500,2750,3000]
-            } else { &[250,500,750,1000,1250,1500,1750,2000,2250,2500,2750,3000] };
+                &[
+                    50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500,
+                    2750, 3000,
+                ]
+            } else {
+                &[250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000]
+            };
             return values[usize::from(self.auto_layer_timeout_index).min(values.len() - 1)];
         }
         QUBE_AUTO_LAYER_TIMEOUT_MS_TABLE
@@ -1267,8 +1277,14 @@ impl<'a> QubePointingModeProcessor<'a> {
         let pressed = event.keyboard_event.pressed;
         match id {
             60..=62 if self.settings.k04_extended => self.handle_mode_key(
-                match id { 60 => [true, false], 61 => [true, true], _ => [false, true] },
-                QubePointingMode::Normal, pressed),
+                match id {
+                    60 => [true, false],
+                    61 => [true, true],
+                    _ => [false, true],
+                },
+                QubePointingMode::Normal,
+                pressed,
+            ),
             QUBE_USER_SNIPER => self.handle_mode_key([true, true], QubePointingMode::Sniper, pressed),
             QUBE_USER_SCROLL => self.handle_mode_key([true, true], QubePointingMode::Scroll, pressed),
             QUBE_USER_TEXT => self.handle_mode_key([true, true], QubePointingMode::Text, pressed),
