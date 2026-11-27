@@ -98,7 +98,7 @@ mod tests {
                     None => hardware.battery = battery,
                 }
                 let (init, devices, processors) = match side {
-                    None => expand_input_device_config(&hardware, 0),
+                    None => expand_input_device_config(&hardware, Some(0)),
                     Some(id) => expand_peripheral_input_device_config(id, &hardware),
                 };
                 let device_names: Vec<_> = devices.iter().map(ToString::to_string).collect();

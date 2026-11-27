@@ -1,7 +1,8 @@
 #![no_main]
 #![no_std]
 
-// This binary always belongs to the physical left half, independent of USB role.
-const IS_RIGHT: bool = false;
+// One UF2 for both halves: the physical hand is read from GP29 at boot and
+// the firmware adapts at run time. See firmware.rs.
 include!("firmware.rs");
-phenom!();
+
+phenom!(runtime_hand = true);

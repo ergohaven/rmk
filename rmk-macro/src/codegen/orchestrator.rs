@@ -31,12 +31,13 @@ use super::watchdog::expand_watchdog_init;
 
 /// Parse keyboard mod and generate a valid RMK main function with all needed code
 pub(crate) fn parse_keyboard_mod(item_mod: syn::ItemMod) -> TokenStream2 {
-    parse_keyboard_mod_for_side(item_mod, None)
+    parse_keyboard_mod_for_side(item_mod, None, false)
 }
 
 pub(crate) fn parse_keyboard_mod_for_side(
     item_mod: syn::ItemMod,
     peripheral: Option<usize>,
+    runtime_hand: bool,
 ) -> TokenStream2 {
     // Reject invalid `#[Overwritten(...)]` attributes up front instead of
     // silently falling back to the generated defaults (#966)
@@ -64,9 +65,27 @@ pub(crate) fn parse_keyboard_mod_for_side(
         .layout()
         .expect("failed to resolve layout config");
 
+    if runtime_hand && peripheral.is_some() {
+        return syn::Error::new_spanned(
+            &item_mod,
+            "runtime_hand must not be combined with a peripheral side",
+        )
+        .to_compile_error();
+    }
+
     let resolved_hardware = match peripheral {
-        Some(id) => keyboard_config.hardware_for_split_peripheral(id),
-        None => keyboard_config.hardware().map(|hardware| (hardware, 0)),
+        Some(id) => keyboard_config
+            .hardware_for_split_peripheral(id)
+            .map(|(hardware, offset)| (hardware, Some(offset))),
+        None => keyboard_config.hardware().map(|hardware| {
+            (
+                hardware,
+                // A runtime hand build emits the encoder id as a runtime
+                // expression (`crate::runtime_encoder_id()`), like the
+                // physical-hand pin latch in the generated entry.
+                if runtime_hand { None } else { Some(0) },
+            )
+        }),
     };
     let (hardware, encoder_offset) = match resolved_hardware {
         Ok(resolved) => resolved,
@@ -268,7 +287,7 @@ fn expand_main(
     layout: &Layout,
     item_mod: syn::ItemMod,
     rmk_features: &Option<Vec<String>>,
-    encoder_offset: usize,
+    encoder_offset: Option<usize>,
 ) -> TokenStream2 {
     // Expand components of main function
     let imports = expand_custom_imports(&item_mod);

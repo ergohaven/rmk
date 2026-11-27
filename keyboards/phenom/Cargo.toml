@@ -20,12 +20,6 @@ path = "src/central.rs"
 test = false
 bench = false
 
-[[bin]]
-name = "peripheral"
-path = "src/peripheral.rs"
-test = false
-bench = false
-
 [features]
 default = ["standalone", "production_v22"]
 # Names shared with keyboards/k04, whose module sources test them: the K:04
