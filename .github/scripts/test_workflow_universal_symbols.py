@@ -15,6 +15,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_geometry_baseline.json').read_text())
 PROFILE_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/universal_profile_baseline.json').read_text())
 PHENOM_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/phenom_accepted_descriptors.json').read_text())
+K04_BASELINE = json.loads((ROOT / '.github/scripts/fixtures/k04_followon_descriptors.json').read_text())
 PAUSED_PHENOM = json.loads((ROOT / '.github/scripts/fixtures/paused_phenom_profiles.json').read_text())
 GEOMETRY = ['Universal Symbols geometry', 'ANSI', 'ISO']
 ISO_FEATURES = {'universal_symbols_iso', 'universal_symbols_iso_bit0', 'universal_symbols_iso_bit1'}
@@ -166,8 +167,9 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
                     original_bytes = (ROOT / path).read_bytes()
                     # Reviewed product metadata evolves; the immutable geometry
                     # reference remains available and all current bytes stay pinned.
-                    digest = PHENOM_BASELINE['descriptor_hashes'].get(
-                        path, PROFILE_BASELINE['descriptor_hashes'].get(path, BASELINE['descriptors'][path]))
+                    digest = K04_BASELINE['descriptor_hashes'].get(path,
+                        PHENOM_BASELINE['descriptor_hashes'].get(
+                            path, PROFILE_BASELINE['descriptor_hashes'].get(path, BASELINE['descriptors'][path])))
                     self.assertEqual(hashlib.sha256(original_bytes).hexdigest(), digest)
                     original = json.loads(original_bytes)
                     current = descriptor(row)
@@ -254,6 +256,47 @@ class WorkflowUniversalSymbolsTests(unittest.TestCase):
         for path, digest in PHENOM_BASELINE['descriptor_hashes'].items():
             accepted = subprocess.check_output(['git', 'show', PHENOM_BASELINE['source_commit'] + ':' + path], cwd=ROOT)
             self.assertEqual(hashlib.sha256(accepted).hexdigest(), digest, path)
+
+    def test_k04_followon_successor_is_exact_approved_descriptor_delta(self):
+        expected_paths = {str(path.relative_to(ROOT)) for path in
+                          (ROOT / 'keyboards/k04').glob('vial*.json')}
+        self.assertEqual(len(expected_paths), 12)
+        self.assertEqual(set(K04_BASELINE['descriptor_hashes']), expected_paths)
+        for path, digest in K04_BASELINE['descriptor_hashes'].items():
+            with self.subTest(path=path):
+                accepted = subprocess.check_output(
+                    ['git', 'show', K04_BASELINE['source_commit'] + ':' + path], cwd=ROOT)
+                self.assertEqual(hashlib.sha256(accepted).hexdigest(), digest)
+                self.assertEqual((ROOT / path).read_bytes(), accepted)
+                old = json.loads(subprocess.check_output(
+                    ['git', 'show', K04_BASELINE['base_commit'] + ':' + path], cwd=ROOT))
+                expected = copy.deepcopy(old)
+                self.assertEqual(len(old['customKeycodes']), 60)
+                expected['customKeycodes'].extend([
+                    {'name': 'EH_L_NORMAL', 'shortName': 'Left\nNormal',
+                     'title': 'Set left pointing device to normal mode'},
+                    {'name': 'EH_NORMAL', 'shortName': 'Normal\nmode',
+                     'title': 'Set both pointing devices to normal mode'},
+                    {'name': 'EH_R_NORMAL', 'shortName': 'Right\nNormal',
+                     'title': 'Set right pointing device to normal mode'},
+                ])
+                removed = []
+                timeouts = []
+                for group in expected['settings']:
+                    removed.extend(field['qsid'] for field in group['fields']
+                                   if field['qsid'] in (325, 326))
+                    group['fields'] = [field for field in group['fields']
+                                       if field['qsid'] not in (325, 326)]
+                    for field in group['fields']:
+                        if field['qsid'] == 324:
+                            timeouts.append(field)
+                            self.assertEqual(len(field['variants']), 6 if 'qube' in path else 14)
+                            field['variants'].extend(f'{ms} ms' for ms in range(1750, 3001, 250))
+                self.assertEqual(removed, [325, 326])
+                self.assertEqual(len(timeouts), 1)
+                # Entire parsed payload: layouts/options, legacy custom indices,
+                # steps, threshold and every unrelated field remain unchanged.
+                self.assertEqual(json.loads(accepted), expected)
 
     def test_protocol_guards_remain_but_do_not_reject_rynk_geometry(self):
         for model in ('k03', 'op36', 'imperial44', 'velvet', 'k04'):

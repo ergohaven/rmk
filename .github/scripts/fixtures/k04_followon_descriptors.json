@@ -1,0 +1,18 @@
+{
+  "source_commit": "4ec92a5466a6da5a70b8dead36aea1f9c53c9e64",
+  "base_commit": "9e2aef92f30efad8cef31c6847e65728e178f004",
+  "descriptor_hashes": {
+    "keyboards/k04/vial.json": "6e2a243487e20b6cf613810cf1eda6e6bbb6f7b3889878188355c019d84d639d",
+    "keyboards/k04/vial_micro.json": "1ec8b5b1fba2420ac388dba1727b0dbd07ece137d75e1c0e738c46a6c6644877",
+    "keyboards/k04/vial_micro_universal.json": "b2a35720434d9f1892654854768c7e8d718e83f76749373920ac5a4d8e4c37a6",
+    "keyboards/k04/vial_mini.json": "086ae9a78fee170bf67a2d3fdf95e1a58a264c081e2689df77064742b420a8b1",
+    "keyboards/k04/vial_mini_universal.json": "1e041e20ef271109efff2ccd283834536c42262287087bb94d0227e4e99fdbad",
+    "keyboards/k04/vial_qube.json": "f34aafee79ae63faa58fe4e652479df0db372a939f24ccf2e53e8dad3b869485",
+    "keyboards/k04/vial_qube_micro.json": "ec4737512badcdf6d6036ff8e7ba58d20c2c7278279b77af19ef66aaab8c10b8",
+    "keyboards/k04/vial_qube_micro_universal.json": "a9990308da25383b6dc9f1371fb9dbb52da8c2c5b0ed6ea0884d86f5e6ea361a",
+    "keyboards/k04/vial_qube_mini.json": "33e0ae3fbc33682daf6136e56e460d93d965dd7bf5c1c2cac6df5a52fd0f7c20",
+    "keyboards/k04/vial_qube_mini_universal.json": "caae2650c566789c9976662ff39fad3643f0fdcfcf2aaaccb27c51676e784bde",
+    "keyboards/k04/vial_qube_universal.json": "a4e04df7658a739b76b9c835af03a116381ab946706de23ecc5c594d6f2f53ba",
+    "keyboards/k04/vial_universal.json": "1d115ddd7d01fb0dae924063fa8b1fed96e7149ec204bd57e0f2bf808a9f5efc"
+  }
+}
