@@ -53,12 +53,22 @@ class FactoryUnlockTests(unittest.TestCase):
         # renames or accidental extra profiles may bypass factory D/F validation.
         expected_profiles = {
             "k03", "k04_series_k04", "k04_series_mini", "k04_series_micro",
-            "imperial44", "op36", "velvet", "phenom", "phenom_mini", "phenom_micro",
+            "imperial44", "op36", "velvet",
             "op36_qube", "k03_qube", "velvet_qube", "imperial44_qube",
             "k04_qube_k04", "k04_qube_mini", "k04_qube_micro",
         }
         self.assertEqual({profile["output_name"] for profile in profiles}, expected_profiles)
         self.assertEqual(len(profiles), len(expected_profiles))
+        # Distribution is paused, not hardware/protocol support. Keep all three
+        # retained manual Phenom configurations under the same unlock checks.
+        profiles += [
+            {"keyboard": "phenom", "keyboard_toml": filename, "output_name": name}
+            for filename, name in (
+                ("keyboard.toml", "phenom"),
+                ("keyboard_mini.toml", "phenom_mini"),
+                ("keyboard_micro.toml", "phenom_micro"),
+            )
+        ]
         for profile in profiles:
             path = ROOT / "keyboards" / profile["keyboard"] / profile["keyboard_toml"]
             with self.subTest(profile=profile["output_name"], path=str(path.relative_to(ROOT))):
