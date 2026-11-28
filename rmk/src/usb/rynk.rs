@@ -14,6 +14,15 @@ impl HostSession for crate::host::rynk::RynkService<'_> {
     }
 }
 
+#[cfg(all(feature = "ergohaven_rynk", feature = "split"))]
+impl HostSession for crate::host::rynk::maintenance::PeripheralRynkService {
+    async fn serve<R: Read, W: Write>(&self, rx: &mut R, tx: &mut W) {
+        // Enumeration may have signalled before this new session started.
+        super::PERIPHERAL_USB_RESET.reset();
+        embassy_futures::select::select(super::PERIPHERAL_USB_RESET.wait(), self.run_session(rx, tx)).await;
+    }
+}
+
 #[cfg(feature = "dongle")]
 impl HostSession for crate::dongle::DongleRouter {
     async fn serve<R: Read, W: Write>(&self, rx: &mut R, tx: &mut W) {

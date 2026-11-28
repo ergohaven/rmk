@@ -149,6 +149,27 @@ fn validate_matrix_dims(matrix: &MatrixConfig, rows: usize, cols: usize, ctx: &s
 /// fields must be consistent with `split.connection`, and every board's region
 /// of the unified matrix must fit `[layout]` without overlapping another board.
 fn validate_split_config(split: &SplitConfig, layout: Option<&LayoutTomlConfig>) -> Result<(), String> {
+    if split.central.usb_maintenance_unlock_keys.is_some() {
+        return Err("usb_maintenance_unlock_keys is only valid on split peripherals".into());
+    }
+    for (id, board) in split.peripheral.iter().enumerate() {
+        if let Some(keys) = &board.usb_maintenance_unlock_keys
+            && (id > u8::MAX as usize
+                || keys.is_empty()
+                || keys.len() > crate::protocol_limits::MAX_UNLOCK_KEYS_SIZE
+                || board
+                    .rows
+                    .checked_mul(board.cols.div_ceil(8))
+                    .is_none_or(|bytes| bytes > 30)
+                || keys.iter().enumerate().any(|(i, [r, c])| {
+                    *r as usize >= board.rows || *c as usize >= board.cols || keys[..i].contains(&[*r, *c])
+                }))
+        {
+            return Err(format!(
+                "peripheral #{id}: USB maintenance needs a nonempty, distinct local unlock challenge within a matrix of at most 30 bytes"
+            ));
+        }
+    }
     let boards = || {
         std::iter::once((&split.central, "[split.central]".to_string())).chain(
             split
@@ -344,6 +365,52 @@ mod tests {
             central: board(2, 2, 0, 0),
             peripheral: vec![board(2, 1, 2, 2)],
         }
+    }
+
+    #[test]
+    fn peripheral_usb_maintenance_is_explicitly_configurable() {
+        let split: SplitConfig = toml::from_str(
+            r#"
+connection = "ble"
+[central]
+rows = 0
+cols = 0
+row_offset = 0
+col_offset = 0
+matrix = { matrix_type = "normal", row_pins = [], col_pins = [] }
+[[peripheral]]
+rows = 2
+cols = 2
+row_offset = 0
+col_offset = 0
+matrix = { matrix_type = "normal", row_pins = ["r0", "r1"], col_pins = ["c0", "c1"] }
+usb_maintenance_unlock_keys = [[0, 0], [1, 1]]
+"#,
+        )
+        .expect("an explicit local challenge enables peripheral USB maintenance");
+        assert!(validate_split_config(&split, None).is_ok());
+    }
+
+    #[test]
+    fn maintenance_challenges_reject_empty_duplicate_and_nonlocal_keys() {
+        for keys in [vec![], vec![[0, 0], [0, 0]], vec![[2, 0]], vec![[0, 1]]] {
+            let mut split = ble_split();
+            split.peripheral[0].usb_maintenance_unlock_keys = Some(keys);
+            assert!(validate_split_config(&split, None).is_err());
+        }
+        let mut split = ble_split();
+        split.peripheral[0].usb_maintenance_unlock_keys = Some(vec![[0, 0], [1, 0]]);
+        assert!(validate_split_config(&split, Some(&layout_4x3())).is_ok());
+        split.central.usb_maintenance_unlock_keys = Some(vec![[0, 0]]);
+        assert!(validate_split_config(&split, None).is_err());
+    }
+
+    #[test]
+    fn maintenance_challenge_rejects_too_many_distinct_in_bounds_keys() {
+        let mut split = ble_split();
+        split.peripheral[0] = board(1, 5, 2, 0);
+        split.peripheral[0].usb_maintenance_unlock_keys = Some((0..5).map(|col| [0, col]).collect());
+        assert!(validate_split_config(&split, None).is_err());
     }
 
     fn layout_4x3() -> LayoutTomlConfig {

@@ -64,6 +64,7 @@ matrix_type = "direct_pin"
 direct_pins = []
 
 [[split.peripheral]]
+usb_maintenance_unlock_keys = [[2, 2], [2, 1]]
 rows = 5
 cols = 6
 row_offset = 0
@@ -96,6 +97,7 @@ resolution = 2
 internal_pullup = true
 
 [[split.peripheral]]
+usb_maintenance_unlock_keys = [[2, 1], [2, 2]]
 rows = 5
 cols = 6
 row_offset = 5

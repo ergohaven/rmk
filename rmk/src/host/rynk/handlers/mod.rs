@@ -14,7 +14,7 @@ mod layout;
 mod macros;
 mod morse;
 mod status;
-mod system;
+pub(super) mod system;
 
 fn validate_magic_binding(binding: KeyAction) -> Result<(), RynkError> {
     crate::magic::key_action_is_supported(binding)

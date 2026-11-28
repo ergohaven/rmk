@@ -101,7 +101,7 @@ fn device_settings_tokens() -> proc_macro2::TokenStream {
 }
 
 /// `RMK_FIRMWARE_VERSION` packed as `major << 16 | minor << 8 | patch`.
-fn configured_firmware_version() -> u32 {
+pub(crate) fn configured_firmware_version() -> u32 {
     std::env::var("RMK_FIRMWARE_VERSION")
         .ok()
         .map(|value| {

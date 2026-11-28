@@ -143,6 +143,8 @@ resolution = 4
 internal_pullup = true
 
 [[split.peripheral]]
+# Local factory home-row keys; hold while Entropy polls to unlock USB maintenance.
+usb_maintenance_unlock_keys = [[1, 1], [1, 2]]
 rows = 4
 cols = 6
 row_offset = 4
