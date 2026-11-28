@@ -8,6 +8,8 @@ use embassy_sync::signal::Signal;
 pub use embassy_sync::{blocking_mutex, channel, pubsub, zerocopy_channel};
 use embassy_time::Instant;
 use rmk_types::connection::ConnectionType;
+#[cfg(feature = "split")]
+use rmk_types::keycode::HidKeyCode;
 use usbd_hid::descriptor::{MediaKeyboardReport, SystemControlReport};
 #[cfg(feature = "_ble")]
 use {
@@ -101,6 +103,10 @@ impl QueuedReport {
 }
 
 type ReportChannel = Channel<RawMutex, QueuedReport, REPORT_CHANNEL_SIZE>;
+
+/// Pending Text Scroll taps, delivered directly to the keyboard task.
+#[cfg(feature = "split")]
+pub(crate) static POINTING_KEY_TAPS: Channel<RawMutex, HidKeyCode, 1> = Channel::new();
 
 /// Signal for LED indicator, used in BLE keyboards only since BLE receiving is not async
 #[cfg(feature = "_ble")]
