@@ -23,7 +23,7 @@ for suffix in ["", "_mini", "_micro"]:
 
 board_constants = "\n".join(
     line for line in (ROOT / "keyboards/k04/src/board.rs").read_text().splitlines()
-    if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES"))
+    if line.startswith(("pub const DEFAULT_", "pub const AUTO_MODULES", "pub const K04_EXTENDED_SETTINGS"))
 )
 assert board_constants, "Board factory defaults missing"
 
@@ -107,7 +107,7 @@ fn empty_names_wait_for_keymap_and_keep_populated_or_custom_layers() {
     }
     let old = (api.serialize)();
     (api.deserialize)(&old.data[..old.len as usize]);
-    let read = |index| {
+    let read = |index: u16| {
         let mut bytes = [0u8; 16];
         let len = (api.get_setting)(200 + index, &mut bytes).unwrap();
         String::from_utf8(bytes[..len - 1].to_vec()).unwrap()
