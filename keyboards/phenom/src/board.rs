@@ -22,8 +22,8 @@ pub type TouchpadI2c = embassy_rp::i2c::I2c<'static, I2C0, embassy_rp::i2c::Asyn
 pub const DEFAULT_BALL_AXIS: [u8; 2] = [2, 2];
 pub const DEFAULT_TOUCH_AXIS: [u8; 2] = [3, 1];
 
-/// Phenom's base layer uses the white palette entry, as in its QMK firmware.
-pub const DEFAULT_BASE_LAYER_COLOR: u8 = 1;
+/// The base layer has no color (palette entry 0, black), as in the K:04 build.
+pub const DEFAULT_BASE_LAYER_COLOR: u8 = 0;
 
 /// 30% in Entropy's 0..=255 brightness range.
 pub const DEFAULT_LED_BRIGHTNESS: u8 = 77;

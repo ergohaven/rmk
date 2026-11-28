@@ -9,7 +9,7 @@ use crate::codegen::chip::gpio::convert_gpio_str_to_input_pin;
 ///
 /// `id_offset` is the offset of the encoder id, it is used to distinguish the encoder id between central and peripheral
 pub(crate) fn expand_encoder_device(
-    id_offset: usize,
+    id_offset: Option<usize>,
     name_offset: usize,
     encoder_config: Vec<EncoderConfig>,
     chip: &ChipModel,
@@ -22,7 +22,13 @@ pub(crate) fn expand_encoder_device(
 
     // Create rotary encoders
     for (idx, encoder) in encoder_config.iter().enumerate() {
-        let encoder_id = idx as u8 + id_offset as u8;
+        let encoder_id = match id_offset {
+            Some(offset) => {
+                let id = idx as u8 + offset as u8;
+                quote! { #id }
+            }
+            None => quote! { crate::runtime_encoder_id() },
+        };
 
         let pull = if encoder.internal_pullup {
             Some(true)

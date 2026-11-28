@@ -727,7 +727,7 @@ pub(crate) fn expand_peripheral_input_device_config(
     let encoder_id_offset = num_encoders[0..id + 1].iter().sum::<usize>();
     let (encoder_devices, _encoder_processors) = match board {
         BoardConfig::Split(split_config) => expand_encoder_device(
-            encoder_id_offset,
+            Some(encoder_id_offset),
             encoder_id_offset,
             split_config.peripheral[id]
                 .input_device
